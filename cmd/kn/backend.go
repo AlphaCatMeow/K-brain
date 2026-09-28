@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -25,11 +26,12 @@ import (
 func backendCLI(args []string) error {
 	fs := flag.NewFlagSet("backend", flag.ContinueOnError)
 	listen := fs.String("listen", "127.0.0.1:47321", "HTTP listen address")
+	parentStdio := fs.Bool("parent-stdio", false, "shut down when stdin reaches EOF or returns a read error")
 	token := fs.String("token", os.Getenv("K_BRAIN_BACKEND_TOKEN"), "Bearer token; defaults to K_BRAIN_BACKEND_TOKEN")
 	configPath := fs.String("config", "", "Configuration file; defaults to the user configuration")
 	sessionDir := fs.String("session-dir", "", "Session storage directory; defaults to project storage")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: kn backend [-listen address] [-token bearer-token]")
+		fmt.Fprintln(os.Stderr, "usage: kn backend [-listen address] [-parent-stdio] [-token bearer-token]")
 		fmt.Fprintln(os.Stderr, "serve the K-brain canonical session API for LiveAgent")
 		fs.PrintDefaults()
 	}
@@ -132,11 +134,21 @@ func backendCLI(args []string) error {
 	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
-	fmt.Printf("k-brain backend listening on http://%s\n", listener.Addr())
+	readyAddr := listener.Addr().String()
+	if host, port, splitErr := net.SplitHostPort(readyAddr); splitErr == nil && (host == "" || host == "::" || host == "0.0.0.0") {
+		readyAddr = net.JoinHostPort("127.0.0.1", port)
+	}
+	fmt.Printf("k-brain backend listening on http://%s\n", readyAddr)
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	shutdown := sigCtx.Done()
+	var parentStdioDone <-chan struct{}
+	if *parentStdio {
+		parentStdioDone = watchParentStdio(os.Stdin)
+	}
 	select {
-	case <-sigCtx.Done():
+	case <-shutdown:
+	case <-parentStdioDone:
 	case err := <-serveErr:
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
@@ -145,6 +157,15 @@ func backendCLI(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+func watchParentStdio(r io.Reader) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, r)
+	}()
+	return done
 }
 
 type backendModel struct {

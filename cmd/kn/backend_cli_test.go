@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,9 +110,141 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	}
 }
 
+func TestBackendCLIParentStdioLifecycle(t *testing.T) {
+	fixture := t.TempDir()
+	configPath := filepath.Join(fixture, "config.json")
+	sessionDir := filepath.Join(fixture, "sessions")
+	if err := os.WriteFile(configPath, []byte(`{
+  "defaultModel": "fixture-model",
+  "providers": {
+    "fixture": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:1",
+      "apiKey": "fixture-key",
+      "models": [{"id": "fixture-model", "contextWindow": 4096, "maxTokens": 256}]
+    }
+  }
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := filepath.Join(fixture, "kn")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
+	build.Dir = repoRoot(t)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kn: %v\n%s", err, output)
+	}
+
+	process := startBackendProcessWithEnv(t, binary, ":0", configPath, sessionDir, []string{"K_BRAIN_BACKEND_TOKEN=parent-token"}, "-parent-stdio")
+	t.Cleanup(func() { stopBackendProcess(t, process) })
+	ready := waitForBackendReady(t, process)
+	host, port, err := net.SplitHostPort(ready)
+	if err != nil {
+		t.Fatalf("ready address %q: %v", ready, err)
+	}
+	if host != "127.0.0.1" || port == "0" {
+		t.Fatalf("ready address = %q, want dynamic loopback address", ready)
+	}
+	base := "http://127.0.0.1:" + port
+	unauthorized := doExecutableRequest(t, http.MethodGet, base+"/v1/health", nil)
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		unauthorized.Body.Close()
+		t.Fatalf("health without token status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
+	}
+	unauthorized.Body.Close()
+	waitForBackendHealthWithToken(t, process, base, "parent-token")
+	if process.cmd.ProcessState != nil {
+		t.Fatalf("backend exited while parent stdin remained open")
+	}
+
+	if err := process.stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitBackendProcess(t, process, true)
+	waitForPortClosed(t, ready)
+}
+
+func TestBackendCLIDefaultModeIgnoresStdinEOF(t *testing.T) {
+	fixture := t.TempDir()
+	configPath := filepath.Join(fixture, "config.json")
+	sessionDir := filepath.Join(fixture, "sessions")
+	if err := os.WriteFile(configPath, []byte(`{
+  "defaultModel": "fixture-model",
+  "providers": {
+    "fixture": {
+      "api": "openai-completions",
+      "baseUrl": "http://127.0.0.1:1",
+      "apiKey": "fixture-key",
+      "models": [{"id": "fixture-model", "contextWindow": 4096, "maxTokens": 256}]
+    }
+  }
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := filepath.Join(fixture, "kn")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
+	build.Dir = repoRoot(t)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kn: %v\n%s", err, output)
+	}
+	process := startBackendProcess(t, binary, ":0", configPath, sessionDir)
+	t.Cleanup(func() { stopBackendProcess(t, process) })
+	ready := waitForBackendReady(t, process)
+	_, port, err := net.SplitHostPort(ready)
+	if err != nil {
+		t.Fatalf("ready address %q: %v", ready, err)
+	}
+	base := "http://127.0.0.1:" + port
+	waitForBackend(t, process, base)
+	if err := process.stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if process.cmd.ProcessState != nil {
+		t.Fatalf("default backend exited after stdin EOF: %s", process.output.String())
+	}
+	waitForBackend(t, process, base)
+	stopBackendProcess(t, process)
+}
+
+func waitForPortClosed(t *testing.T, address string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("port %s remained open", address)
+}
+
 type backendProcess struct {
 	cmd    *exec.Cmd
-	output *bytes.Buffer
+	stdin  io.WriteCloser
+	output *lockedBuffer
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func repoRoot(t *testing.T) string {
@@ -138,17 +271,49 @@ func freeListenAddress(t *testing.T) string {
 
 func startBackendProcess(t *testing.T, binary, listen, configPath, sessionDir string) *backendProcess {
 	t.Helper()
-	output := new(bytes.Buffer)
-	cmd := exec.Command(binary, "backend", "-listen", listen, "-config", configPath, "-session-dir", sessionDir)
+	return startBackendProcessWithArgs(t, binary, listen, configPath, sessionDir)
+}
+
+func startBackendProcessWithArgs(t *testing.T, binary, listen, configPath, sessionDir string, args ...string) *backendProcess {
+	t.Helper()
+	return startBackendProcessWithEnv(t, binary, listen, configPath, sessionDir, nil, args...)
+}
+
+func startBackendProcessWithEnv(t *testing.T, binary, listen, configPath, sessionDir string, env []string, args ...string) *backendProcess {
+	t.Helper()
+	output := new(lockedBuffer)
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdArgs := append([]string{"backend", "-listen", listen, "-config", configPath, "-session-dir", sessionDir}, args...)
+	cmd := exec.Command(binary, cmdArgs...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	cmd.Stdin = stdinReader
 	cmd.Stdout = output
 	cmd.Stderr = output
 	if err := cmd.Start(); err != nil {
+		_ = stdinReader.Close()
+		_ = stdinWriter.Close()
 		t.Fatalf("start backend: %v", err)
 	}
-	return &backendProcess{cmd: cmd, output: output}
+	_ = stdinReader.Close()
+	return &backendProcess{cmd: cmd, stdin: stdinWriter, output: output}
 }
 
 func waitForBackend(t *testing.T, process *backendProcess, base string) {
+	t.Helper()
+	waitForBackendHealth(t, process, base, "")
+}
+
+func waitForBackendHealthWithToken(t *testing.T, process *backendProcess, base, token string) {
+	t.Helper()
+	waitForBackendHealth(t, process, base, token)
+}
+
+func waitForBackendHealth(t *testing.T, process *backendProcess, base, token string) {
 	t.Helper()
 	client := &http.Client{Timeout: 250 * time.Millisecond}
 	deadline := time.Now().Add(10 * time.Second)
@@ -156,7 +321,14 @@ func waitForBackend(t *testing.T, process *backendProcess, base string) {
 		if process.cmd.ProcessState != nil {
 			t.Fatalf("backend exited before startup: %s", process.output.String())
 		}
-		resp, err := client.Get(base + "/v1/health")
+		request, err := http.NewRequest(http.MethodGet, base+"/v1/health", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(request)
 		if err == nil {
 			body, readErr := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
@@ -172,25 +344,53 @@ func waitForBackend(t *testing.T, process *backendProcess, base string) {
 	t.Fatalf("backend did not become healthy: %s", process.output.String())
 }
 
+func waitForBackendReady(t *testing.T, process *backendProcess) string {
+	t.Helper()
+	const prefix = "k-brain backend listening on http://"
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, line := range strings.Split(process.output.String(), "\n") {
+			if strings.HasPrefix(line, prefix) {
+				return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			}
+		}
+		if process.cmd.ProcessState != nil {
+			t.Fatalf("backend exited before startup: %s", process.output.String())
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("backend did not print ready line: %s", process.output.String())
+	return ""
+}
+
 func stopBackendProcess(t *testing.T, process *backendProcess) {
 	t.Helper()
 	if process == nil || process.cmd == nil || process.cmd.Process == nil {
 		return
 	}
+	_ = process.stdin.Close()
 	if process.cmd.ProcessState != nil {
 		return
 	}
 	if err := process.cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("stop backend: %v", err)
 	}
+	waitBackendProcess(t, process, true)
+}
+
+func waitBackendProcess(t *testing.T, process *backendProcess, wantSuccess bool) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- process.cmd.Wait() }()
 	select {
 	case err := <-done:
-		if err != nil {
+		if wantSuccess && err != nil {
 			t.Fatalf("backend exited with error: %v\n%s", err, process.output.String())
+		}
+		if !wantSuccess && err == nil {
+			t.Fatalf("backend exited successfully, want failure")
 		}
 	case <-ctx.Done():
 		_ = process.cmd.Process.Kill()
