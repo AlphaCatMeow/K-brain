@@ -73,3 +73,29 @@ func TestAttachmentCancellationAndParallelCalls(t *testing.T) {
 		t.Fatal("cancelled call retained attachments")
 	}
 }
+
+func TestExecuteResultPreservesStructuredStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, output      string
+		err               error
+		failed, cancelled bool
+	}{
+		{name: "success with error text", output: "Error: is ordinary output"},
+		{name: "failed", output: "partial", err: errors.New("broken"), failed: true},
+		{name: "cancelled", err: context.Canceled, failed: true, cancelled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := Tool{Def: ai.NewTool("probe", "", `{}`), Run: func(context.Context, json.RawMessage) (string, error) { return tc.output, tc.err }}
+			result := ExecuteResult(t.Context(), []Tool{tool}, "probe", nil, false)
+			if result.Failed != tc.failed || result.Cancelled != tc.cancelled {
+				t.Fatalf("status = %+v", result)
+			}
+			if !strings.Contains(result.Text, tc.output) {
+				t.Fatalf("lost output: %+v", result)
+			}
+		})
+	}
+	if result := ExecuteResult(t.Context(), nil, "missing", nil, false); !result.Failed || result.Cancelled {
+		t.Fatalf("unknown tool = %+v", result)
+	}
+}

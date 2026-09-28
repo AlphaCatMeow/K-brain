@@ -32,6 +32,12 @@ func (s *Store) Todos(id string) string {
 	}
 	return d.Todos
 }
+func (s *Store) SetModel(id, model, provider string) error {
+	return s.update(id, func(d *sessionData) error {
+		d.Meta.Model, d.Meta.Provider = model, provider
+		return nil
+	})
+}
 func (s *Store) SetEffort(id, effort string) error {
 	return s.update(id, func(d *sessionData) error { d.Meta.Effort = effort; return nil })
 }
@@ -52,6 +58,46 @@ func (s *Store) SetPinned(id string, pinned bool) error {
 }
 func (s *Store) SetArchived(id string, archived bool) error {
 	return s.update(id, func(d *sessionData) error { d.Meta.Archived = archived; return nil })
+}
+func (s *Store) SetShared(id, token string, enabled, redactToolContent bool) error {
+	return s.update(id, func(d *sessionData) error {
+		if enabled && !d.Meta.Shared {
+			d.Meta.ShareCreatedAt = time.Now().UTC()
+		}
+		d.Meta.ShareUpdatedAt = time.Now().UTC()
+		if !enabled {
+			token = ""
+		}
+		d.Meta.Shared = enabled
+		d.Meta.ShareToken = token
+		d.Meta.ShareRedactTool = redactToolContent
+		return nil
+	})
+}
+func (s *Store) SharedByToken(token string) (Meta, []ai.Message, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Meta{}, nil, ErrNotFound
+	}
+	var meta Meta
+	var messages []ai.Message
+	err := s.withLock(func() error {
+		all, err := s.all()
+		if err != nil {
+			return err
+		}
+		for _, d := range all {
+			if d.Meta.Shared && d.Meta.ShareToken == token {
+				meta, messages = d.Meta, d.rawMessages()
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+	return meta, messages, err
+}
+func (s *Store) SharedPage(limit int, after *PageCursor) (Page, error) {
+	return s.listPage(PageOptions{Limit: limit, After: after, SharedOnly: true})
 }
 func (s *Store) Delete(id string) error {
 	return s.withLock(func() error {

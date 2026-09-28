@@ -8,9 +8,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 )
 
@@ -296,21 +298,27 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 		return fmt.Errorf("unsupported sandbox.backend %q", cfg.Sandbox.Backend)
 	}
 	cfg.Models = make(map[string]Model)
+	sharedMetadata := make(map[string]PiModel)
 	for _, name := range slices.Sorted(maps.Keys(cfg.Providers)) {
 		provider := cfg.Providers[name]
-		if provider.API != "" && provider.API != "openai-completions" && provider.API != "openai-responses" && provider.API != "anthropic-messages" {
-			return fmt.Errorf("provider %q: unsupported API %q; use openai-completions, openai-responses, or anthropic-messages with baseUrl and apiKey", name, provider.API)
+		if !ai.SupportedAPI(provider.API) {
+			return fmt.Errorf("provider %q: unsupported API %q; use openai-completions, openai-responses, anthropic-messages, or google-generative-ai with baseUrl and apiKey", name, provider.API)
 		}
 		for _, pm := range provider.Models {
 			if strings.TrimSpace(pm.ID) == "" {
 				return fmt.Errorf("provider %q: each model needs an id", name)
 			}
-			if pm.API != "" && pm.API != "openai-completions" && pm.API != "openai-responses" && pm.API != "anthropic-messages" {
+			if !ai.SupportedAPI(pm.API) {
 				return fmt.Errorf("model %q: unsupported API %q", pm.ID, pm.API)
 			}
 			if pm.ContextWindow < 0 || pm.MaxTokens < 0 {
 				return fmt.Errorf("model %q: contextWindow and maxTokens must be non-negative", pm.ID)
 			}
+
+			if previous, ok := sharedMetadata[pm.ID]; ok && !reflect.DeepEqual(previous, pm) {
+				return fmt.Errorf("model %q has conflicting metadata across providers; shared model IDs require identical metadata", pm.ID)
+			}
+			sharedMetadata[pm.ID] = pm
 			m, exists := cfg.Models[pm.ID]
 			if !exists {
 				m = Model{ID: pm.ID, Name: pm.Name, Context: pm.ContextWindow,
@@ -447,13 +455,33 @@ func (c *Config) Save() error {
 	return nil
 }
 
+func validateProviderModelMetadata(c *Config) error {
+	seen := make(map[string]PiModel)
+	for providerName, provider := range c.Providers {
+		for _, model := range provider.Models {
+			if previous, ok := seen[model.ID]; ok && !reflect.DeepEqual(previous, model) {
+				return fmt.Errorf("model %q has conflicting metadata across providers (including %q)", model.ID, providerName)
+			}
+			seen[model.ID] = model
+		}
+	}
+	return nil
+}
+
 func marshalConfig(c *Config) ([]byte, error) {
+	if err := validateProviderModelMetadata(c); err != nil {
+		return nil, err
+	}
 
 	wire := *c
 	wire.Models = nil
 	wire.Providers = piProviders(c)
 	body, err := json.MarshalIndent(&wire, "", "  ")
 	if err != nil {
+		return nil, err
+	}
+	var validated Config
+	if err := parseConfigJSONC(body, &validated); err != nil {
 		return nil, err
 	}
 	header := "// k-brain configuration — JSONC: comments and trailing commas are allowed.\n" +

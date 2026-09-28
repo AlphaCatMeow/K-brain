@@ -71,22 +71,28 @@ func Defs(ts []Tool) []ai.Tool {
 var Suggester func(name string) []string
 
 func Execute(ctx context.Context, ts []Tool, name string, args json.RawMessage) string {
+	return executeResult(ctx, ts, name, args).Text
+}
+
+func executeResult(ctx context.Context, ts []Tool, name string, args json.RawMessage) Result {
 	if err := ctx.Err(); err != nil {
-		return "Error: " + err.Error()
+		return Result{Text: "Error: " + err.Error(), Failed: true, Cancelled: true}
 	}
 	for _, t := range ts {
 		if t.Def.Function.Name == name {
 			out, err := t.Run(ctx, args)
+			cancelled := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 			if err != nil {
+				text := "Error: " + err.Error()
 				if out != "" {
-					return "Error: " + err.Error() + "\n" + out
+					text += "\n" + out
 				}
-				return "Error: " + err.Error()
+				return Result{Text: text, Failed: true, Cancelled: cancelled}
 			}
 			if out == "" {
 				out = "(no output)"
 			}
-			return out
+			return Result{Text: out, Failed: cancelled, Cancelled: cancelled}
 		}
 	}
 	msg := fmt.Sprintf("Error: unknown tool %q", name)
@@ -95,7 +101,7 @@ func Execute(ctx context.Context, ts []Tool, name string, args json.RawMessage) 
 			msg += " — did you mean " + strings.Join(hints, " or ") + "?"
 		}
 	}
-	return msg
+	return Result{Text: msg, Failed: true}
 }
 
 const maxOutput = 50_000

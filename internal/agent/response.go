@@ -1,8 +1,18 @@
 package agent
 
-import "github.com/Stack-Cairn/K-brain/internal/ai"
+import (
+	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"time"
+)
 
 func (a *Agent) appendResponse(msg ai.Message, usage ai.Usage) {
+	if msg.ID == "" {
+		msg.ID = newMessageID()
+	}
+	if msg.SentAt == nil {
+		now := time.Now()
+		msg.SentAt = &now
+	}
 	msg.Usage = &usage
 	msg.Model = a.Model + " @ " + a.Provider
 	a.msgsMu.Lock()

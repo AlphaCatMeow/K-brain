@@ -10,6 +10,8 @@ const (
 	APIChatCompletions = "openai-completions"
 	APIResponses       = "openai-responses"
 	APIMessages        = "anthropic-messages"
+	APIGemini          = "google-generative-ai"
+	APIGoogleGemini    = "google-gemini"
 )
 
 type ClientOptions struct {
@@ -40,6 +42,8 @@ func NewClient(opts ClientOptions) (Client, error) {
 		client = NewResponses(opts.BaseURL, opts.APIKey)
 	case APIMessages:
 		client = NewAnthropic(opts.BaseURL, opts.APIKey)
+	case APIGemini, APIGoogleGemini:
+		client = NewGemini(opts.BaseURL, opts.APIKey)
 	default:
 		return nil, fmt.Errorf("unsupported API %q", api)
 	}
@@ -50,4 +54,13 @@ func NewClient(opts ClientOptions) (Client, error) {
 		setter.SetCacheOptions(opts.Cache)
 	}
 	return client, nil
+}
+
+func SupportedAPI(api string) bool {
+	switch strings.TrimSpace(api) {
+	case "", APIChatCompletions, APIResponses, APIMessages, APIGemini, APIGoogleGemini:
+		return true
+	default:
+		return false
+	}
 }

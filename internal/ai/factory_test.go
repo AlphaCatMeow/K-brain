@@ -10,6 +10,8 @@ func TestNewClientAdapters(t *testing.T) {
 		{APIChatCompletions, (*OpenAI)(nil)},
 		{APIResponses, (*Responses)(nil)},
 		{APIMessages, (*Anthropic)(nil)},
+		{APIGemini, (*Gemini)(nil)},
+		{APIGoogleGemini, (*Gemini)(nil)},
 	} {
 		client, err := NewClient(ClientOptions{API: tc.api, BaseURL: "https://example.test/v1", APIKey: "key", MaxRetries: 3})
 		if err != nil {
@@ -23,6 +25,10 @@ func TestNewClientAdapters(t *testing.T) {
 		case *Responses:
 			if _, ok := client.(*Responses); !ok {
 				t.Fatalf("%s: got %T", tc.api, client)
+			}
+		case *Gemini:
+			if got, ok := client.(*Gemini); !ok || got.MaxRetries != 3 {
+				t.Fatalf("%s: got %T (%+v)", tc.api, client, client)
 			}
 		case *Anthropic:
 			if _, ok := client.(*Anthropic); !ok {

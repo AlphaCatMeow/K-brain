@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -18,11 +20,20 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/workflow"
 )
 
+func newMessageID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err == nil {
+		return "msg-" + hex.EncodeToString(buf)
+	}
+	return fmt.Sprintf("msg-%d", time.Now().UnixNano())
+}
+
 type Events struct {
-	OnText      func(delta string)
-	OnThink     func(delta string)
-	OnToolStart func(id, name, args string)
-	OnToolEnd   func(id, name, result string)
+	OnText       func(delta string)
+	OnThink      func(delta string)
+	OnToolStart  func(id, name, args string)
+	OnToolEnd    func(id, name, result string)
+	OnToolResult func(id, name string, result tools.Result)
 
 	OnToolCall func(id, name, args string)
 
@@ -444,10 +455,26 @@ func (a *Agent) TurnWithImages(ctx context.Context, input string, parts []ai.Con
 }
 
 func (a *Agent) turn(ctx context.Context, input string, parts []ai.ContentPart, authored bool, ev Events) (string, error) {
+	return a.turnPending(ctx, input, parts, authored, "", ev)
+}
+
+// ContinueUser runs the persisted tail user message without appending another user turn.
+func (a *Agent) ContinueUser(ctx context.Context, messageID string, ev Events) (string, error) {
+	return a.turnPending(ctx, "", nil, true, messageID, ev)
+}
+
+func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.ContentPart, authored bool, resumeID string, ev Events) (string, error) {
 	if !a.turnMu.TryLock() {
 		return "", ErrBusy
 	}
 	defer a.turnMu.Unlock()
+	if resumeID != "" {
+		msgs := a.MessagesSnapshot()
+		if len(msgs) == 0 || msgs[len(msgs)-1].Role != "user" || msgs[len(msgs)-1].ID != resumeID {
+			return "", errors.New("resume message must be the tail user message")
+		}
+		input, parts = msgs[len(msgs)-1].Content, msgs[len(msgs)-1].Parts
+	}
 	a.running.Store(true)
 	defer func() {
 		a.running.Store(false)
@@ -474,13 +501,15 @@ func (a *Agent) turn(ctx context.Context, input string, parts []ai.ContentPart, 
 	defer func() {
 		_ = a.runHook(context.WithoutCancel(ctx), hooks.Event{Name: "Stop"})
 	}()
-	msg := ai.Message{Role: "user", Content: input, Parts: parts, Authored: authored}
+	msg := ai.Message{ID: newMessageID(), Role: "user", Content: input, Parts: parts, Authored: authored}
 	if authored {
 		now := time.Now()
 		msg.SentAt = &now
 	}
 	a.msgsMu.Lock()
-	a.Messages = append(a.Messages, msg)
+	if resumeID == "" {
+		a.Messages = append(a.Messages, msg)
+	}
 	a.msgsMu.Unlock()
 	rounds := 0
 	for {
@@ -557,7 +586,14 @@ func (a *Agent) turn(ctx context.Context, input string, parts []ai.ContentPart, 
 			}
 			a.msgsMu.Lock()
 			for i, tc := range msg.ToolCalls {
+				var stopReason ai.StopReason
+				if results[i].Cancelled {
+					stopReason = ai.StopReasonCancelled
+				} else if results[i].Failed {
+					stopReason = ai.StopReasonError
+				}
 				a.Messages = append(a.Messages, ai.Message{
+					StopReason: stopReason,
 					Role:       "tool",
 					Content:    results[i].Text,
 					Parts:      results[i].Parts,

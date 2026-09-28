@@ -17,7 +17,7 @@ func ClientForProviderContext(ctx context.Context, prov config.Provider, name st
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if prov.API != "" && prov.API != "openai-completions" && prov.API != "openai-responses" && prov.API != "anthropic-messages" {
+	if !ai.SupportedAPI(prov.API) {
 		return nil, fmt.Errorf("unsupported API %q for provider %q", prov.API, name)
 	}
 	key, err := prov.ResolveKeyContext(ctx)

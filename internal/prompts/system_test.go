@@ -98,3 +98,21 @@ func TestWithWorkingDirectoryUpdatesOnlyEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillsPromptUsesSessionWorkspace(t *testing.T) {
+	project := t.TempDir()
+	dir := filepath.Join(project, ".agents", "skills", "backend-workspace-test")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: backend-workspace-test\ndescription: Backend workspace skill.\n---\nUse the backend tools.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prompt := SkillsPrompt(project)
+	if !strings.Contains(prompt, "<name>backend-workspace-test</name>") || !strings.Contains(prompt, filepath.Join(dir, "SKILL.md")) {
+		t.Fatalf("backend workspace skill missing: %s", prompt)
+	}
+	if strings.Contains(SkillsPrompt(t.TempDir()), "<name>backend-workspace-test</name>") {
+		t.Fatal("skill leaked across workspaces")
+	}
+}

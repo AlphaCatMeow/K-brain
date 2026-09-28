@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -26,19 +26,11 @@ func TestDriverParity(t *testing.T) {
 		t.Setenv("LD_LIBRARY_PATH", "/tmp/chromelibs/usr/lib/x86_64-linux-gnu:"+os.Getenv("LD_LIBRARY_PATH"))
 	}
 
-	ln, _ := net.Listen("tcp", "0.0.0.0:0")
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `<!doctype html><title>parity-page</title><h1 id="h">hello</h1><div id="q" contenteditable="true"></div><div id="b" onclick="document.title='clicked'" style="padding:8px">go</div>`)
-	})
-	go http.Serve(ln, mux)
-	defer ln.Close()
-	ip := "127.0.0.1"
-	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
-		ip = conn.LocalAddr().(*net.UDPAddr).IP.String()
-		conn.Close()
-	}
-	url := fmt.Sprintf("http://%s:%d", ip, ln.Addr().(*net.TCPAddr).Port)
+	}))
+	defer srv.Close()
+	url := srv.URL
 
 	drivers := []string{"rod", "chromedp"}
 	type result struct {

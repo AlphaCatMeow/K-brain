@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,11 +61,7 @@ func chromiumPath(t *testing.T) string {
 
 func testPage(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if after, ok := strings.CutPrefix(r.URL.Path, "/marker/"); ok {
 			marker := after
 			fmt.Fprintf(w, `<!doctype html><title>marker-%s</title><h1>%s</h1>`, marker, marker)
@@ -87,16 +84,9 @@ func testPage(t *testing.T) string {
 		default:
 			http.NotFound(w, r)
 		}
-	})}
-	go srv.Serve(ln)
-	t.Cleanup(func() { srv.Close() })
-
-	ip := "127.0.0.1"
-	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
-		ip = conn.LocalAddr().(*net.UDPAddr).IP.String()
-		conn.Close()
-	}
-	return fmt.Sprintf("http://%s:%d", ip, ln.Addr().(*net.TCPAddr).Port)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func TestE2EHeadless(t *testing.T) {

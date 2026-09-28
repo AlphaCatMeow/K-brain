@@ -114,6 +114,34 @@ func (s *Store) DeleteFrom(id string, from int) error {
 	})
 }
 
+// ReplaceFrom atomically removes the raw message suffix starting at from and
+// writes the replacement messages at the same raw offsets.
+func (s *Store) ReplaceFrom(id string, from int, msgs []ai.Message, model, provider string) error {
+	if from < 0 {
+		return fmt.Errorf("invalid message offset %d", from)
+	}
+	return s.update(id, func(d *sessionData) error {
+		for seq := range d.Messages {
+			if seq >= from {
+				delete(d.Messages, seq)
+			}
+		}
+		for seq := range d.Snapshots {
+			if seq >= from {
+				delete(d.Snapshots, seq)
+			}
+		}
+		for i, msg := range msgs {
+			if msg.Role != "" {
+				d.Messages[from+i] = msg
+			}
+		}
+		clear(d.Compactions)
+		d.Meta.Model, d.Meta.Provider, d.Meta.UpdatedAt = model, provider, time.Now().UTC()
+		return nil
+	})
+}
+
 func answerDanglingToolCalls(msgs []ai.Message, refs []int) ([]ai.Message, []int) {
 	answered := make(map[string]bool, len(msgs))
 	dangling := false

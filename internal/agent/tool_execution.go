@@ -49,7 +49,7 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 					if ev.OnToolEnd != nil {
 						ev.OnToolEnd(tc.ID, name, out)
 					}
-					outCh <- outcome{i, tools.Result{Text: out}, 0, 1}
+					outCh <- outcome{i, tools.Result{Text: out, Failed: true, Cancelled: ctx.Err() != nil}, 0, 1}
 					return
 				}
 			}
@@ -63,7 +63,7 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 				if ev.OnToolEnd != nil {
 					ev.OnToolEnd(tc.ID, name, out)
 				}
-				outCh <- outcome{i, tools.Result{Text: out}, 0, 1}
+				outCh <- outcome{i, tools.Result{Text: out, Failed: true, Cancelled: ctx.Err() != nil}, 0, 1}
 				return
 			}
 
@@ -79,7 +79,7 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 				if ev.OnToolEnd != nil {
 					ev.OnToolEnd(tc.ID, name, out)
 				}
-				outCh <- outcome{i, tools.Result{Text: out}, 0, 1}
+				outCh <- outcome{i, tools.Result{Text: out, Failed: true, Cancelled: ctx.Err() != nil}, 0, 1}
 				return
 			}
 			if release != nil {
@@ -120,6 +120,9 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 	}()
 	for oc := range outCh {
 		results[oc.i] = oc.out
+		if ev.OnToolResult != nil {
+			ev.OnToolResult(calls[oc.i].ID, calls[oc.i].Function.Name, oc.out)
+		}
 		calls[oc.i].DurationMs = oc.ms
 		calls[oc.i].ExitCode = oc.code
 	}

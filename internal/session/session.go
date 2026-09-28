@@ -22,22 +22,28 @@ var ErrNotFound = errors.New("session not found")
 var ErrClosed = errors.New("session store is closed")
 
 type Meta struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Model           string   `json:"model"`
-	Provider        string   `json:"provider"`
-	CWD             string   `json:"cwd"`
-	Goal            string   `json:"goal"`
-	ForkedFrom      string   `json:"forked_from"`
-	ForkSeq         int      `json:"fork_seq"`
-	Tags            []string `json:"tags"`
-	Pinned          bool     `json:"pinned"`
-	Archived        bool     `json:"archived"`
-	Effort          string   `json:"effort"`
-	UsageIn         int      `json:"usage_in"`
-	UsageCached     int      `json:"usage_cached"`
-	UsageOut        int      `json:"usage_out"`
-	UsageCacheWrite int      `json:"usage_cache_write,omitempty"`
+	CreatedAt       time.Time `json:"-"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Model           string    `json:"model"`
+	Provider        string    `json:"provider"`
+	CWD             string    `json:"cwd"`
+	Goal            string    `json:"goal"`
+	ForkedFrom      string    `json:"forked_from"`
+	ForkSeq         int       `json:"fork_seq"`
+	Tags            []string  `json:"tags"`
+	Pinned          bool      `json:"pinned"`
+	Archived        bool      `json:"archived"`
+	Shared          bool      `json:"shared"`
+	ShareCreatedAt  time.Time `json:"share_created_at,omitempty"`
+	ShareUpdatedAt  time.Time `json:"share_updated_at,omitempty"`
+	ShareToken      string    `json:"share_token,omitempty"`
+	ShareRedactTool bool      `json:"share_redact_tool,omitempty"`
+	Effort          string    `json:"effort"`
+	UsageIn         int       `json:"usage_in"`
+	UsageCached     int       `json:"usage_cached"`
+	UsageOut        int       `json:"usage_out"`
+	UsageCacheWrite int       `json:"usage_cache_write,omitempty"`
 
 	SubUsage   map[string]ai.Usage `json:"sub_usage"`
 	ModelUsage map[string]ai.Usage `json:"model_usage,omitempty"`
@@ -47,6 +53,8 @@ type Meta struct {
 }
 
 type Task struct {
+	Model       string    `json:"model,omitempty"`
+	Provider    string    `json:"provider,omitempty"`
 	ID          string    `json:"id"`
 	Description string    `json:"description"`
 	Prompt      string    `json:"prompt"`
@@ -94,7 +102,10 @@ type sessionData struct {
 }
 
 func newData(meta Meta) *sessionData {
-	return &sessionData{Meta: meta, CreatedAt: meta.UpdatedAt,
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = meta.UpdatedAt
+	}
+	return &sessionData{Meta: meta, CreatedAt: meta.CreatedAt,
 		Messages: map[int]ai.Message{}, Tasks: map[string]Task{}, Snapshots: map[int]string{},
 		Schedules: map[int]Schedule{}, Compactions: map[int]Compaction{}}
 }

@@ -3,10 +3,12 @@ package ai
 type StopReason string
 
 const (
-	StopReasonStop    StopReason = "stop"
-	StopReasonLength  StopReason = "length"
-	StopReasonToolUse StopReason = "tool_use"
-	StopReasonOther   StopReason = "other"
+	StopReasonStop      StopReason = "stop"
+	StopReasonLength    StopReason = "length"
+	StopReasonToolUse   StopReason = "tool_use"
+	StopReasonOther     StopReason = "other"
+	StopReasonError     StopReason = "error"
+	StopReasonCancelled StopReason = "cancelled"
 )
 
 type OutputLimitError struct {

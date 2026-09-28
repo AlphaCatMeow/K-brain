@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/Stack-Cairn/K-brain/internal/ai"
+import (
+	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/tools"
+)
 
 func FanIn(evs ...Events) Events {
 	return Events{
@@ -36,6 +39,13 @@ func FanIn(evs ...Events) Events {
 			for _, e := range evs {
 				if e.OnToolEnd != nil {
 					e.OnToolEnd(id, name, result)
+				}
+			}
+		},
+		OnToolResult: func(id, name string, result tools.Result) {
+			for _, e := range evs {
+				if e.OnToolResult != nil {
+					e.OnToolResult(id, name, result)
 				}
 			}
 		},

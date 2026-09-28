@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
 func recorder(mu *sync.Mutex, got *[]string) Events {
@@ -174,5 +175,35 @@ func TestFanInPreservesEveryCallback(t *testing.T) {
 		if counts[i] != 2 {
 			t.Errorf("%s delivered %d times, want 2", fan.Type().Field(i).Name, counts[i])
 		}
+	}
+}
+
+func TestToolResultCallbackPreservesIdentityAndStatus(t *testing.T) {
+	ag := New(nil, "model", 0, "system")
+	call := ai.ToolCall{ID: "call-1", Type: "function"}
+	call.Function.Name, call.Function.Arguments = "missing", "{}"
+	var got tools.Result
+	count := 0
+	ev := Events{OnToolResult: func(id, name string, result tools.Result) {
+		count++
+		if id != call.ID || name != call.Function.Name {
+			t.Errorf("identity = %s/%s", id, name)
+		}
+		got = result
+	}}
+	results := ag.runTools(t.Context(), []ai.ToolCall{call}, FanIn(ev))
+	if count != 1 || !got.Failed || got.Cancelled || !reflect.DeepEqual(got, results[0]) {
+		t.Fatalf("callback count=%d result=%+v", count, got)
+	}
+	r := newTaskRegistry()
+	r.tasks["task"] = &BackgroundTask{ID: "task", Status: TaskRunning}
+	_, _, live, unsubscribe := r.WatchTask("task", ev)
+	defer unsubscribe()
+	if !live {
+		t.Fatal("result-only subscriber was not registered")
+	}
+	r.emitter("task").OnToolResult(call.ID, call.Function.Name, got)
+	if count != 2 {
+		t.Fatalf("result callback not forwarded: %d", count)
 	}
 }

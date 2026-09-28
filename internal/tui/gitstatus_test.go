@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,10 +29,15 @@ func TestLoadGitStatusInThisRepo(t *testing.T) {
 	defer cancel()
 	s, err := loadGitStatus(ctx, ".")
 	if err != nil {
-		t.Skipf("not a git worktree: %v", err)
+		t.Fatalf("load git status: %v", err)
 	}
-	if s.Repo != "K-brain" {
-		t.Fatalf("repo=%q, want K-brain", s.Repo)
+	root, err := gitRawAt(ctx, ".", "rev-parse", "--show-toplevel")
+	if err != nil {
+		t.Fatalf("resolve git root: %v", err)
+	}
+	wantRepo := filepath.Base(filepath.Clean(strings.TrimSpace(root)))
+	if s.Repo != wantRepo {
+		t.Fatalf("repo=%q, want %q", s.Repo, wantRepo)
 	}
 	if strings.TrimSpace(s.Branch) == "" {
 		t.Fatal("branch should resolve in this repository")

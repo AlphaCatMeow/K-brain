@@ -887,3 +887,42 @@ func TestLatestInDirSkipsEmptySessions(t *testing.T) {
 		t.Fatalf("LatestInDir(/x) = %s, want the only session with messages %s", meta.ID, full)
 	}
 }
+
+func TestSetModelPreservesSessionHistory(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	id, err := st.Create("/tmp", "old", "old-provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(id, 0, []ai.Message{{Role: "user", Content: "keep history"}}, "old", "old-provider"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetModel(id, "new", "new-provider"); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(st.SessionsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	meta, messages, err := reopened.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Model != "new" || meta.Provider != "new-provider" || len(messages) != 1 || messages[0].Content != "keep history" {
+		t.Fatalf("model update lost session data: %+v / %+v", meta, messages)
+	}
+	if err := st.SetModel("missing", "new", "provider"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing session error = %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetModel(id, "new", "provider"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed store error = %v", err)
+	}
+}

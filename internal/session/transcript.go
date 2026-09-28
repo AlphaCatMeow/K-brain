@@ -103,7 +103,7 @@ func (s *Store) read(id string) (*sessionData, error) {
 				return fail(errors.New("invalid metadata or unsupported version"))
 			}
 			d = newData(m.Meta)
-			d.CreatedAt, d.Todos = m.CreatedAt, m.Todos
+			d.CreatedAt, d.Meta.CreatedAt, d.Todos = m.CreatedAt, m.CreatedAt, m.Todos
 		case "message":
 			var m messageRecord
 			if err := json.Unmarshal(r.Payload, &m); err != nil {

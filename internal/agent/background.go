@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
+	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
 type TaskStatus string
@@ -371,7 +372,7 @@ func (r *taskRegistry) WatchTask(id string, ev Events) (events []JournaledEvent,
 		return
 	}
 	live = true
-	if ev.OnText == nil && ev.OnThink == nil && ev.OnToolStart == nil && ev.OnToolCall == nil && ev.OnToolEnd == nil && ev.OnSteer == nil && ev.OnCompact == nil {
+	if ev.OnText == nil && ev.OnThink == nil && ev.OnToolStart == nil && ev.OnToolCall == nil && ev.OnToolEnd == nil && ev.OnToolResult == nil && ev.OnSteer == nil && ev.OnCompact == nil {
 		return
 	}
 	sub := &taskSubscription{events: ev}
@@ -445,6 +446,13 @@ func (r *taskRegistry) emitter(id string) Events {
 			for _, e := range subs {
 				if e.OnToolEnd != nil {
 					e.OnToolEnd(tcID, n, res)
+				}
+			}
+		},
+		OnToolResult: func(tcID, name string, result tools.Result) {
+			for _, e := range r.emitLocked(id, 0, "", "", false) {
+				if e.OnToolResult != nil {
+					e.OnToolResult(tcID, name, result)
 				}
 			}
 		},

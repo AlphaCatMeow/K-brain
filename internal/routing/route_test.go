@@ -3,8 +3,11 @@ package routing
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 )
 
@@ -40,6 +43,43 @@ func TestResolveRouteUsesConfiguredDefaultsAndLimits(t *testing.T) {
 	sub, err := SubModelFor(cfg, "model1", "demo")
 	if err != nil || !route.Vision || !route.AgentModel().Vision || !sub.Vision {
 		t.Fatalf("vision not propagated through route/model/task: %+v, %+v, %v", route, sub, err)
+	}
+}
+
+func TestResolveRouteContextLoadsNativeGeminiConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("K_BRAIN_HOME", home)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1beta/models/gemini-test:streamGenerateContent" && r.URL.Path != "/v1beta/models/gemini-test:generateContent" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n"))
+	}))
+	defer server.Close()
+	configPath := filepath.Join(home, "config.json")
+	configJSON := `{"defaultModel":"gemini-test","providers":{"gemini":{"api":"google-generative-ai","baseUrl":"` + server.URL + `","apiKey":"test-key","models":[{"id":"gemini-test"}]}}}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := ResolveRouteContext(t.Context(), cfg, "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.ProviderName != "gemini" || route.APIModel != "gemini-test" {
+		t.Fatalf("route = %+v", route)
+	}
+	if _, ok := route.Client.(*ai.Gemini); !ok {
+		t.Fatalf("client = %T, want *ai.Gemini", route.Client)
+	}
+	message, _, err := route.Client.Stream(t.Context(), ai.Request{Model: route.APIModel}, nil, nil, nil)
+	if err != nil || message.StopReason != ai.StopReasonStop {
+		t.Fatalf("Gemini route request = %+v, %v", message, err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 )
 
 type Message struct {
+	ID         string        `json:"id,omitempty"`
 	Role       string        `json:"role"`
 	Content    string        `json:"content"`
 	Parts      []ContentPart `json:"-"`
@@ -59,6 +60,7 @@ func (m Message) ContentParts() []ContentPart {
 }
 
 type messageWire struct {
+	ID            string     `json:"id,omitempty"`
 	Role          string     `json:"role"`
 	Content       any        `json:"content"`
 	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
@@ -75,7 +77,7 @@ type messageWire struct {
 
 func (m Message) MarshalJSON() ([]byte, error) {
 	w := messageWire{
-		Role: m.Role, Content: m.Content, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
+		ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
 		Name: m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
 		Model: m.Model, RewoundFrom: m.RewoundFrom,
 		StopReason: m.StopReason, RawStopReason: m.RawStopReason,
@@ -94,7 +96,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*m = Message{}
+	*m = Message{ID: raw.ID}
 	m.Role, m.ToolCalls, m.ToolCallID, m.Name = raw.Role, raw.ToolCalls, raw.ToolCallID, raw.Name
 	m.Authored, m.SentAt, m.Usage, m.Model, m.RewoundFrom = raw.Authored, raw.SentAt, raw.Usage, raw.Model, raw.RewoundFrom
 	m.StopReason, m.RawStopReason = raw.StopReason, raw.RawStopReason

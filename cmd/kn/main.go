@@ -59,6 +59,14 @@ func main() {
 		return
 	}
 
+	if flag.NArg() > 0 && flag.Arg(0) == "backend" {
+		if err := backendCLI(flag.Args()[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "kn backend:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if flag.NArg() > 0 && flag.Arg(0) == "mcp" {
 		if err := mcpCLI(flag.Args()[1:], version); err != nil {
 			fmt.Fprintln(os.Stderr, "kn:", err)

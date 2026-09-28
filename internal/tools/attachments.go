@@ -9,8 +9,10 @@ import (
 )
 
 type Result struct {
-	Text  string
-	Parts []ai.ContentPart
+	Text      string
+	Parts     []ai.ContentPart
+	Failed    bool
+	Cancelled bool
 }
 
 type attachmentKey struct{}
@@ -26,12 +28,13 @@ func ExecuteResult(ctx context.Context, ts []Tool, name string, args json.RawMes
 	a := &attachments{enabled: vision}
 	defer a.close()
 	callCtx := context.WithValue(ctx, attachmentKey{}, a)
-	out := Execute(callCtx, ts, name, args)
+	result := executeResult(callCtx, ts, name, args)
 	parts := a.close()
 	if ctx.Err() != nil {
 		parts = nil
 	}
-	return Result{Text: out, Parts: parts}
+	result.Parts = parts
+	return result
 }
 
 func (a *attachments) close() []ai.ContentPart {

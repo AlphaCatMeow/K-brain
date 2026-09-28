@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/skills"
 	"github.com/Stack-Cairn/K-brain/internal/tools/bashrun"
 )
 
@@ -83,4 +84,9 @@ Here is some useful information about the environment you are running in:
 	}
 
 	return prompt
+}
+
+// SkillsPrompt discovers skills relative to the backend session's workspace.
+func SkillsPrompt(wd string) string {
+	return skills.PromptBlock(skills.Scan(skills.DirsFor(wd)...))
 }
