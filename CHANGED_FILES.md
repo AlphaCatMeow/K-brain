@@ -4,14 +4,14 @@
 
 This manifest covers both repository working trees relative to their original integration bases, including deleted and untracked files. Existing repository scratch paths are inventoried as found; new verification evidence is stored only in the designated external scratch directory. This records scope, not successful verification of every path.
 
-Generated UTC: 2026-10-02T04:20:02.495697+00:00
+Generated UTC: 2026-10-02T04:24:31.118126+00:00
 
 Statuses: `M` modified, `A` added (including untracked), `D` deleted. The snapshots use temporary Git indexes and preserve the actual repository indexes.
 
 ### K-brain
 
 - Base commit: `7e9b7d5b2c195afa923bd7919b0b81287ffef7b2`
-- Current HEAD: `e6743be5600046f5c0fb3db256dbf2c49abf66af`
+- Current HEAD: `9a1b88153d7c0bd45e777100bff788af21dbe52f`
 - Changed paths: 285
 
 ```text
@@ -305,7 +305,7 @@ M	internal/workflow/persistence.go
 ### LiveAgent
 
 - Base commit: `e63588a1328be66530353ad6d274db14b5f0e68d`
-- Current HEAD: `cc594a60f89f51d737cd132efb3d59e64d3266ec`
+- Current HEAD: `7cfd13daf670cb14b438254eba4e1ec1e8727c44`
 - Changed paths: 508
 
 ```text
