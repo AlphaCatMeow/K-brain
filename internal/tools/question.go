@@ -12,12 +12,39 @@ import (
 type AskOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
+	Recommended bool   `json:"recommended,omitempty"`
+}
+
+type AskQuestion struct {
+	ID       string      `json:"id,omitempty"`
+	Header   string      `json:"header,omitempty"`
+	Prompt   string      `json:"prompt"`
+	Options  []AskOption `json:"options"`
+	Multiple bool        `json:"multiple,omitempty"`
 }
 
 type AskRequest struct {
-	Question string      `json:"question"`
-	Options  []AskOption `json:"options"`
-	Multiple bool        `json:"multiple"`
+	Question  string        `json:"question,omitempty"`
+	Options   []AskOption   `json:"options,omitempty"`
+	Multiple  bool          `json:"multiple,omitempty"`
+	Questions []AskQuestion `json:"questions,omitempty"`
+}
+
+type askContextKey struct{}
+type toolCallIDKey struct{}
+type AskFunc func(context.Context, AskRequest) ([]string, bool)
+
+func WithAsk(ctx context.Context, ask AskFunc) context.Context {
+	return context.WithValue(ctx, askContextKey{}, ask)
+}
+
+func WithToolCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, toolCallIDKey{}, id)
+}
+
+func ToolCallID(ctx context.Context) string {
+	id, _ := ctx.Value(toolCallIDKey{}).(string)
+	return id
 }
 
 var Ask func(ctx context.Context, req AskRequest) (answers []string, ok bool)
@@ -32,10 +59,14 @@ func QuestionTool() Tool {
 			if err := json.Unmarshal(args, &a); err != nil {
 				return "", err
 			}
-			if Ask == nil {
+			ask, scoped := ctx.Value(askContextKey{}).(AskFunc)
+			if !scoped {
+				ask = Ask
+			}
+			if ask == nil {
 				return "", errors.New("no interactive user to ask; make a reasonable assumption and continue")
 			}
-			answers, ok := Ask(ctx, a)
+			answers, ok := ask(ctx, a)
 			if !ok {
 				return "", errors.New("the user dismissed the question")
 			}

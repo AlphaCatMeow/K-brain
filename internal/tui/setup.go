@@ -28,10 +28,10 @@ func runSetupWizard(cfg *config.Config, stdin io.Reader, stderr io.Writer) error
 
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Welcome to k-brain! First-run setup (Enter = skip/keep default).")
-	fmt.Fprintln(w, "Every choice is reversible later: ctrl+p, ~/.k-brain/config.json.")
+	fmt.Fprintln(w, "Every choice is reversible later: ctrl+p, ~/.liveagent/config.json.")
 	fmt.Fprintln(w, "")
 
-	fmt.Fprintln(w, "Configure your API provider baseUrl, apiKey, and model IDs in ~/.k-brain/config.json.")
+	fmt.Fprintln(w, "Configure your API provider baseUrl, apiKey, and model IDs in ~/.liveagent/config.json.")
 
 	if !askYN(r, w, "Show thinking (reasoning) tokens in the transcript?", true) {
 		off := false

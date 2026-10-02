@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 )
 
 type PromptFile struct {
@@ -74,9 +76,10 @@ func projectPromptCandidates(wd string) []string {
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		dir := dirs[i]
+		datapath.Report(datapath.MigrateProjectDir(dir))
 		for _, candidate := range []string{
 			filepath.Join(dir, "AGENTS.md"),
-			filepath.Join(dir, ".k-brain", "brain.md"),
+			filepath.Join(ProjectDir(dir), "brain.md"),
 		} {
 			if filepath.Clean(candidate) == userBrain {
 				continue

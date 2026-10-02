@@ -10,7 +10,7 @@ import (
 
 func TestSystemPromptAppendsUserBrain(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("K_BRAIN_HOME", home)
+	t.Setenv("LIVEAGENT_HOME", home)
 
 	p := Build(t.TempDir(), time.Now())
 	if !strings.Contains(p, "You are K-brain (氪脑)") || !strings.Contains(p, "<env>") {
@@ -28,7 +28,7 @@ func TestSystemPromptAppendsUserBrain(t *testing.T) {
 
 func TestSystemPromptCanReplaceDefault(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("K_BRAIN_HOME", home)
+	t.Setenv("LIVEAGENT_HOME", home)
 	if err := os.WriteFile(filepath.Join(home, "system.md"), []byte("Custom system rules."), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestSystemPromptCanReplaceDefault(t *testing.T) {
 
 func TestSystemPromptEnvBlock(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("K_BRAIN_HOME", home)
+	t.Setenv("LIVEAGENT_HOME", home)
 
 	now := time.Date(2026, 8, 28, 19, 21, 11, 0, time.Local)
 	p := Build("/tmp/work", now)
@@ -65,15 +65,15 @@ func TestSystemPromptEnvBlock(t *testing.T) {
 
 func TestSystemPromptAppendsProjectInstructions(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("K_BRAIN_HOME", home)
+	t.Setenv("LIVEAGENT_HOME", home)
 	project := filepath.Join(t.TempDir(), "project")
-	if err := os.MkdirAll(filepath.Join(project, ".k-brain"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(project, ".liveagent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("- Run gofmt.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(project, ".k-brain", "brain.md"), []byte("- Keep changes small.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(project, ".liveagent", "brain.md"), []byte("- Keep changes small.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,7 +86,7 @@ func TestSystemPromptAppendsProjectInstructions(t *testing.T) {
 }
 
 func TestWithWorkingDirectoryUpdatesOnlyEnvironment(t *testing.T) {
-	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	p := Build("/old", time.Now()) + "\nUser note: /old\n  Working directory: /old\n"
 	want := strings.Replace(p, "\n<env>\n  Working directory: /old\n", "\n<env>\n  Working directory: /new\n", 1)
 	if got := WithWorkingDirectory(p, "/new"); got != want {

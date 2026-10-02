@@ -210,6 +210,20 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 	}
 	rt.deleted = true
 	rt.recorder = nil
+	terminalManager := rt.terminalManager
+	processManager := rt.processManager
+	rt.terminalManager = nil
+	rt.processManager = nil
+	if terminalManager != nil {
+		terminalManager.CloseAll()
+	}
+	if processManager != nil {
+		processManager.CloseAll()
+	}
+	if rt.memoryRuntime != nil {
+		_ = rt.memoryRuntime.Close()
+		rt.memoryRuntime = nil
+	}
 	close(rt.changed)
 	rt.changed = make(chan struct{})
 	for _, suffix := range []string{".jsonl", ".runs.json"} {
@@ -217,6 +231,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 			mutationError(w, err)
 			return
 		}
+	}
+	if err := os.RemoveAll(filepath.Join(s.eventDir, "sections", id)); err != nil {
+		mutationError(w, err)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "session_id": id})
 }
@@ -354,8 +372,19 @@ func (s *Server) mutateHistory(w http.ResponseWriter, r *http.Request, id string
 		rt.mu.Unlock()
 		return
 	}
+	trajectoryPrefix, err := s.trajectoryHistoryPrefix(rt, ref.MessageID, edit)
+	if err != nil {
+		rt.mu.Unlock()
+		mutationError(w, err)
+		return
+	}
 	resultID, err := s.store.MutateHistory(id, ref.MessageID, expected, title, replacement)
 	if err != nil {
+		rt.mu.Unlock()
+		mutationError(w, err)
+		return
+	}
+	if err := s.applyTrajectoryHistory(rt, resultID, trajectoryPrefix, edit); err != nil {
 		rt.mu.Unlock()
 		mutationError(w, err)
 		return

@@ -1,6 +1,6 @@
 # 配置文件
 
-主配置为 `~/.k-brain/config.json`，接受 JSONC（注释和尾逗号）。配置采用 Pi 风格的 provider 字段：`name`、`api`、`baseUrl`、`apiKey`、`models`。
+主配置为 `~/.liveagent/config.json`，接受 JSONC（注释和尾逗号）。配置采用 Pi 风格的 provider 字段：`name`、`api`、`baseUrl`、`apiKey`、`models`。
 
 完整配置示例：
 

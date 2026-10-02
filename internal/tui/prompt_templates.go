@@ -51,7 +51,11 @@ func (m *model) loadPrompts(refresh bool) {
 	}
 	dirs := []string{filepath.Join(home, "prompts")}
 	if trusted {
-		dirs = append(dirs, filepath.Join(root, ".k-brain", "prompts"))
+		if err := config.MigrateProjectDir(root); err != nil {
+			m.promptCatalog = promptCatalog{errors: []error{err}}
+			return
+		}
+		dirs = append(dirs, filepath.Join(config.ProjectDir(root), "prompts"))
 	}
 	items, problems := templates.Load(dirs...)
 	m.promptCatalog = promptCatalog{root: root, home: home, trusted: trusted, loaded: true, errors: problems}
@@ -151,7 +155,7 @@ func (m *model) promptsCommand(args []string) {
 	}
 	m.loadPrompts(len(args) == 1)
 	var b strings.Builder
-	b.WriteString("Prompt templates\nGlobal: ~/.k-brain/prompts/*.md\nProject: .k-brain/prompts/*.md (trusted projects only)\n")
+	b.WriteString("Prompt templates\nGlobal: ~/.liveagent/prompts/*.md\nProject: .liveagent/prompts/*.md (trusted projects only)\n")
 	if !m.promptCatalog.trusted {
 		b.WriteString("Project templates disabled: project is not trusted.\n")
 	}

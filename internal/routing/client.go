@@ -25,9 +25,31 @@ func ClientForProviderContext(ctx context.Context, prov config.Provider, name st
 		return nil, err
 	}
 	if strings.TrimSpace(key) == "" {
-		return nil, fmt.Errorf("no API key for provider %q (set apiKey in ~/.k-brain/config.json)", name)
+		return nil, fmt.Errorf("no API key for provider %q (set apiKey in ~/.liveagent/config.json)", name)
 	}
-	client, err := ai.NewClient(ai.ClientOptions{API: prov.API, BaseURL: prov.BaseURL, APIKey: key, MaxRetries: maxRetries})
+	headers := make(map[string]string, len(prov.CustomHeaders))
+	for _, h := range prov.CustomHeaders {
+		headers[h.Key] = h.Value
+	}
+	api := prov.API
+	if api == "" {
+		switch prov.Type {
+		case "claude_code":
+			api = ai.APIMessages
+		case "gemini":
+			api = ai.APIGemini
+		case "xai":
+			api = ai.APIResponses
+		case "codex":
+			api = prov.RequestFormat
+			if api == "" {
+				api = ai.APIResponses
+			}
+		default:
+			api = ai.APIChatCompletions
+		}
+	}
+	client, err := ai.NewClient(ai.ClientOptions{API: api, BaseURL: prov.BaseURL, APIKey: key, MaxRetries: maxRetries, IsFullURL: prov.IsFullURL, ModelsURL: prov.ModelsURL, Headers: headers})
 	if err != nil {
 		return nil, fmt.Errorf("provider %q: %w", name, err)
 	}

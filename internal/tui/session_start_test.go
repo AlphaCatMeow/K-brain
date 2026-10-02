@@ -24,7 +24,7 @@ func TestModelChangesPreserveSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := t.TempDir()
-	dir := filepath.Join(project, ".k-brain", "plugins", "probe")
+	dir := filepath.Join(project, ".liveagent", "plugins", "probe")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}

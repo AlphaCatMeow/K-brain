@@ -7,6 +7,13 @@ import (
 
 func FanIn(evs ...Events) Events {
 	return Events{
+		OnLifecycle: func(event string) {
+			for _, e := range evs {
+				if e.OnLifecycle != nil {
+					e.OnLifecycle(event)
+				}
+			}
+		},
 		OnText: func(s string) {
 			for _, e := range evs {
 				if e.OnText != nil {
@@ -18,6 +25,13 @@ func FanIn(evs ...Events) Events {
 			for _, e := range evs {
 				if e.OnThink != nil {
 					e.OnThink(s)
+				}
+			}
+		},
+		OnHostedSearch: func(search ai.HostedSearch) {
+			for _, e := range evs {
+				if e.OnHostedSearch != nil {
+					e.OnHostedSearch(search)
 				}
 			}
 		},

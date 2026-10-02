@@ -121,7 +121,7 @@ func mcpTestCLI(name string) error {
 		}
 		return nil
 	case mcp.StatusDisabled:
-		fmt.Println("○ disabled — enable it in ~/.k-brain/config.json")
+		fmt.Println("○ disabled — enable it in ~/.liveagent/config.json")
 		return fmt.Errorf("server %q is disabled", name)
 	default:
 		fmt.Printf("✗ failed after %s: %s\n", res.Elapsed.Round(time.Millisecond), res.Err)

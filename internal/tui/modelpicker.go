@@ -242,7 +242,7 @@ func staleCatalogs(cfg *config.Config, cats map[string]config.Catalog) []string 
 func (m *model) openModelPicker(sessionOnly bool) {
 	items := buildModelItems(m.cfg)
 	if len(items) == 0 {
-		m.append(errStyle.Render(m.tr("no models configured in ~/.k-brain/config.json")))
+		m.append(errStyle.Render(m.tr("no models configured in ~/.liveagent/config.json")))
 		return
 	}
 	mp := &modelPicker{items: items, staleHints: staleCatalogs(m.cfg, config.LoadCatalogs()), sessionOnly: sessionOnly}

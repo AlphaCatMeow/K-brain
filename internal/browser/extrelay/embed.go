@@ -5,13 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 )
 
 //go:embed extension
 var extensionFS embed.FS
 
 func ExtensionDir(home string) string {
-	return filepath.Join(home, ".k-brain", "browser", "extension")
+	dir, err := datapath.Resolve(home, os.Getenv("LIVEAGENT_HOME"), os.Getenv("K_BRAIN_HOME"))
+	if err != nil {
+		datapath.Report(err)
+		return ""
+	}
+	return filepath.Join(dir, "browser", "extension")
 }
 
 func RelayStatePath(home string) string {

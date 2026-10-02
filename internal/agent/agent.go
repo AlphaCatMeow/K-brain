@@ -29,11 +29,13 @@ func newMessageID() string {
 }
 
 type Events struct {
-	OnText       func(delta string)
-	OnThink      func(delta string)
-	OnToolStart  func(id, name, args string)
-	OnToolEnd    func(id, name, result string)
-	OnToolResult func(id, name string, result tools.Result)
+	OnLifecycle    func(event string)
+	OnText         func(delta string)
+	OnThink        func(delta string)
+	OnHostedSearch func(ai.HostedSearch)
+	OnToolStart    func(id, name, args string)
+	OnToolEnd      func(id, name, result string)
+	OnToolResult   func(id, name string, result tools.Result)
 
 	OnToolCall func(id, name, args string)
 
@@ -86,19 +88,24 @@ func (a *Agent) reportRetries(ev Events) func() {
 }
 
 type Agent struct {
-	planMode  *atomic.Bool
-	Client    ai.Client
-	Model     string
-	ModelName string
-	Provider  string
-	MaxTokens int
-	Effort    string
-	Vision    bool
+	planMode        *atomic.Bool
+	Client          ai.Client
+	Model           string
+	ModelName       string
+	Provider        string
+	MaxTokens       int
+	Effort          string
+	Vision          bool
+	NativeWebSearch bool
 
 	Temperature *float64
 	TopP        *float64
 	Tools       []tools.Tool
-	Messages    []ai.Message
+	// RequestToolFilter narrows schemas sent to the model; execution still uses AllTools.
+	RequestToolFilter func([]tools.Tool) []tools.Tool
+	RunTools          []tools.Tool
+	RunToolsSet       bool
+	Messages          []ai.Message
 
 	ContextLimit int
 
@@ -164,13 +171,16 @@ type Agent struct {
 
 	OnOrphanedSteer func(text string)
 
-	Hooks            *hooks.Runner
-	PluginHook       func(context.Context, hooks.Event) error
-	startMu          sync.Mutex
-	sessionStarted   bool
-	startedSessionID string
-	memoryBlock      string
-	memoryDisabled   bool
+	Hooks                *hooks.Runner
+	PluginHook           func(context.Context, hooks.Event) error
+	startMu              sync.Mutex
+	sessionStarted       bool
+	startedSessionID     string
+	memoryBlock          string
+	runtimeMemoryBlock   string
+	memoryDisabled       bool
+	memoryRuntime        MemoryRuntime
+	systemPromptResolver func() (string, error)
 
 	usageMu    sync.Mutex
 	usage      ai.Usage
@@ -363,7 +373,9 @@ func New(client ai.Client, model string, maxTokens int, systemPrompt string, opt
 		sessionTools = append(sessionTools, workflowTool(a))
 	}
 	sessionTools = append(sessionTools, todoTool(a), waitTool(a))
+	sessionTools = append(sessionTools, skillsManagerTool())
 	sessionTools = append(sessionTools, memoryTools(a)...)
+	sessionTools = append(sessionTools, memoryStoreTool(a))
 	for _, tool := range sessionTools {
 		tool.NoInherit = true
 		a.Tools = append(a.Tools, tool)
@@ -393,6 +405,24 @@ func (a *Agent) MessagesSnapshot() []ai.Message {
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
 	return append([]ai.Message(nil), a.Messages...)
+}
+
+func (a *Agent) ContextTokens() int {
+	return EstimateTokens(a.MessagesSnapshot())
+}
+
+func (a *Agent) RestoreMessages(messages []ai.Message) {
+	a.msgsMu.Lock()
+	a.Messages = append([]ai.Message(nil), messages...)
+	a.msgsMu.Unlock()
+}
+
+func (a *Agent) SetMessageRewoundFrom(index int, value string) {
+	a.msgsMu.Lock()
+	if index > 0 && index < len(a.Messages) {
+		a.Messages[index].RewoundFrom = value
+	}
+	a.msgsMu.Unlock()
 }
 
 var (
@@ -432,9 +462,18 @@ func (a *Agent) suggest(name string) []string {
 	return tools.SuggestTool(name, names)
 }
 
+func (a *Agent) AvailableTools() []tools.Tool {
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+}
+
 func (a *Agent) AllTools() []tools.Tool {
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
+	if a.RunToolsSet {
+		return append([]tools.Tool(nil), a.RunTools...)
+	}
 	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
 }
 
@@ -468,6 +507,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		return "", ErrBusy
 	}
 	defer a.turnMu.Unlock()
+	if err := a.refreshSystemPrompt(); err != nil {
+		return "", err
+	}
 	if resumeID != "" {
 		msgs := a.MessagesSnapshot()
 		if len(msgs) == 0 || msgs[len(msgs)-1].Role != "user" || msgs[len(msgs)-1].ID != resumeID {
@@ -486,10 +528,20 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if a.SandboxPolicy != nil && sandbox.FromContext(ctx) == nil {
 		ctx = sandbox.WithPolicy(ctx, a.SandboxPolicy)
 	}
+	lifecycle := newTurnLifecycle(ev.OnLifecycle)
+	defer lifecycle.close()
+	if start := lifecycleStart(ctx); start != nil {
+		start()
+	}
 	if err := a.StartSession(ctx); err != nil {
 		return "", err
 	}
 	a.RefreshMemory()
+	if a.memoryRuntime != nil {
+		if block, err := a.memoryRuntime.Inject(ctx, a.WorkingDir); err == nil && strings.TrimSpace(block) != "" {
+			a.installRuntimeMemory(block)
+		}
+	}
 	prompt := ai.Message{Content: input, Parts: parts}
 	if err := a.runHook(ctx, hooks.Event{Name: "UserPromptSubmit", Prompt: prompt.TextContent()}); err != nil {
 		return "", err
@@ -501,7 +553,15 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	defer func() {
 		_ = a.runHook(context.WithoutCancel(ctx), hooks.Event{Name: "Stop"})
 	}()
-	msg := ai.Message{ID: newMessageID(), Role: "user", Content: input, Parts: parts, Authored: authored}
+	messageID := newMessageID()
+	if requestedID, ok := ctx.Value(userMessageIDKey{}).(string); ok && requestedID != "" {
+		messageID = requestedID
+	}
+	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored}
+	if resumeID != "" {
+		userMessage.ID = resumeID
+	}
+	msg := userMessage
 	if authored {
 		now := time.Now()
 		msg.SentAt = &now
@@ -511,14 +571,24 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		a.Messages = append(a.Messages, msg)
 	}
 	a.msgsMu.Unlock()
+	if err := observeUserMessage(ctx, msg); err != nil {
+		return "", err
+	}
 	rounds := 0
 	for {
+		lifecycle.startRound()
 		if a.MaxTurns > 0 && rounds >= a.MaxTurns {
 
 			return a.finalAnswer(ctx, ev)
 		}
 		rounds++
 		if err := a.maybeCompact(ctx, ev); err != nil {
+			return "", err
+		}
+		// Compact before sending when the estimated input plus the requested output
+		// would exceed the provider context window. This avoids relying on a
+		// provider error to discover an already-overflowing request.
+		if err := a.maybeCompactForRequest(ctx, ev); err != nil {
 			return "", err
 		}
 		msgs := a.Messages
@@ -531,17 +601,21 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				ai.Message{Role: "system", Content: block})
 		}
 
-		clearRetry := a.reportRetries(ev)
-		msg, usage, err := a.Client.Stream(ctx, ai.Request{
-			Model:           a.Model,
-			Messages:        a.modeMessages(msgs),
-			Tools:           tools.Defs(a.AllTools()),
-			MaxTokens:       a.MaxTokens,
-			ReasoningEffort: a.Effort,
-			Temperature:     a.Temperature,
-			TopP:            a.TopP,
-		}, ev.OnText, ev.OnThink, ev.OnToolCall)
-		clearRetry()
+		requestTools := a.AllTools()
+		if a.RequestToolFilter != nil {
+			requestTools = a.RequestToolFilter(requestTools)
+		}
+		msg, usage, err := a.streamObserved(ctx, ai.Request{
+			Model:                a.Model,
+			Messages:             a.modeMessages(msgs),
+			Tools:                tools.Defs(requestTools),
+			MaxTokens:            a.MaxTokens,
+			ReasoningEffort:      a.Effort,
+			NativeWebSearch:      a.NativeWebSearch,
+			NativeSearchProvider: a.Provider,
+			Temperature:          a.Temperature,
+			TopP:                 a.TopP,
+		}, ev)
 		a.AddUsage(usage)
 		a.notePrompt(usage)
 		if ev.OnUsage != nil {
@@ -570,6 +644,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			}
 			return "", err
 		}
+		lifecycle.endMessage()
 		a.appendResponse(msg, usage)
 		if len(msg.ToolCalls) > 0 {
 			results := a.runTools(ctx, msg.ToolCalls, ev)
@@ -605,6 +680,11 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
+			for i, call := range msg.ToolCalls {
+				if a.PlanMode() && call.Function.Name == "ExitPlanMode" && !results[i].Failed {
+					return results[i].Text, nil
+				}
+			}
 		}
 		steered := a.drainPending()
 		if len(steered) > 0 {
@@ -627,6 +707,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				}
 			}
 			a.compacted = false
+			if a.memoryRuntime != nil {
+				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
+			}
 			return msg.Content, nil
 		}
 	}
@@ -728,6 +811,40 @@ func (a *Agent) maybeCompact(ctx context.Context, ev Events) error {
 		ev.OnCompacted(sum, cutoff, info)
 	}
 
+	a.compacted = true
+	return nil
+}
+
+// maybeCompactForRequest handles the pre-send overflow trigger. A normal
+// threshold check can be disabled or set high enough that the output reserve
+// still makes the next request too large.
+func (a *Agent) maybeCompactForRequest(ctx context.Context, ev Events) error {
+	if a.compacted || a.ContextLimit <= 0 || a.MaxTokens <= 0 {
+		return nil
+	}
+	messages := a.MessagesSnapshot()
+	if len(messages) <= 3 {
+		return nil
+	}
+	if EstimateTokens(messages)+a.MaxTokens <= a.ContextLimit {
+		return nil
+	}
+	if ev.OnCompactStart != nil {
+		ev.OnCompactStart(len(messages), EstimateTokens(messages))
+	}
+	sum, cutoff, info, err := a.compact(ctx)
+	if err != nil {
+		if err.Error() == "not enough history to compact" {
+			return nil
+		}
+		return err
+	}
+	if ev.OnCompact != nil {
+		ev.OnCompact(len(messages)-len(a.Messages), len(a.Messages))
+	}
+	if ev.OnCompacted != nil {
+		ev.OnCompacted(sum, cutoff, info)
+	}
 	a.compacted = true
 	return nil
 }
@@ -967,16 +1084,16 @@ func (a *Agent) ManualNewContext(ctx context.Context, ev Events) error {
 func (a *Agent) finalAnswer(ctx context.Context, ev Events) (string, error) {
 	msgs := append(append([]ai.Message(nil), a.Messages...),
 		ai.Message{Role: "system", Content: "You have reached the tool-call limit. Do NOT request any more tools. Give your final answer now using only what you have already gathered."})
-	clearRetry := a.reportRetries(ev)
-	msg, usage, err := a.Client.Stream(ctx, ai.Request{
-		Model:           a.Model,
-		Messages:        a.modeMessages(msgs),
-		Tools:           nil,
-		ReasoningEffort: a.Effort,
-		Temperature:     a.Temperature,
-		TopP:            a.TopP,
-	}, ev.OnText, ev.OnThink, ev.OnToolCall)
-	clearRetry()
+	msg, usage, err := a.streamObserved(ctx, ai.Request{
+		Model:                a.Model,
+		Messages:             a.modeMessages(msgs),
+		Tools:                nil,
+		ReasoningEffort:      a.Effort,
+		NativeWebSearch:      a.NativeWebSearch,
+		NativeSearchProvider: a.Provider,
+		Temperature:          a.Temperature,
+		TopP:                 a.TopP,
+	}, ev)
 	a.AddUsage(usage)
 	a.notePrompt(usage)
 	if ev.OnUsage != nil {

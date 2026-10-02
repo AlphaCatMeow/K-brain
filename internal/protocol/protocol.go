@@ -24,28 +24,35 @@ const (
 	ContentText       = "text"
 	ContentThinking   = "thinking"
 	ContentImage      = "image"
+	ContentFile       = "file"
 	ContentToolCall   = "tool_call"
 	ContentToolResult = "tool_result"
 
-	EventRunAccepted       = "run.accepted"
-	EventUserMessage       = "user.message.appended"
-	EventAssistantMessage  = "assistant.message.created"
-	EventTextDelta         = "assistant.text.delta"
-	EventThinkingDelta     = "assistant.thinking.delta"
-	EventToolCall          = "tool.call"
-	EventToolResult        = "tool.result"
-	EventToolStatus        = "tool.status"
-	EventPermissionRequest = "permission.requested"
-	EventPermissionResult  = "permission.resolved"
-	EventSubagentStarted   = "subagent.started"
-	EventSubagentUpdate    = "subagent.updated"
-	EventSubagentCompleted = "subagent.completed"
-	EventSubagentFailed    = "subagent.failed"
-	EventUsage             = "usage.updated"
-	EventHistoryUpdated    = "history.updated"
-	EventRunCompleted      = "run.completed"
-	EventRunFailed         = "run.failed"
-	EventRunCancelled      = "run.cancelled"
+	EventRunAccepted         = "run.accepted"
+	EventUserMessage         = "user.message.appended"
+	EventAssistantMessage    = "assistant.message.created"
+	EventTextDelta           = "assistant.text.delta"
+	EventThinkingDelta       = "assistant.thinking.delta"
+	EventHostedSearch        = "assistant.sources"
+	EventToolCall            = "tool.call"
+	EventToolResult          = "tool.result"
+	EventToolStatus          = "tool.status"
+	EventPermissionRequest   = "permission.requested"
+	EventPermissionResult    = "permission.resolved"
+	EventQuestionRequested   = "question.requested"
+	EventQuestionResolved    = "question.resolved"
+	EventSubagentStarted     = "subagent.started"
+	EventSubagentUpdate      = "subagent.updated"
+	EventSubagentCompleted   = "subagent.completed"
+	EventSubagentFailed      = "subagent.failed"
+	EventUsage               = "usage.updated"
+	EventHistoryUpdated      = "history.updated"
+	EventCompactionStarted   = "compaction.started"
+	EventCompactionCompleted = "compaction.completed"
+	EventRunCompleted        = "run.completed"
+	EventRunFailed           = "run.failed"
+	EventRunCancelled        = "run.cancelled"
+	EventHookWarning         = "hook.warning"
 )
 
 type ModelRef struct {
@@ -87,23 +94,26 @@ type PageCursor struct {
 }
 
 type Message struct {
-	ID         string         `json:"id,omitempty"`
-	Role       string         `json:"role"`
-	Content    []ContentBlock `json:"content,omitempty"`
-	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Name       string         `json:"name,omitempty"`
-	Model      string         `json:"model,omitempty"`
-	Provider   string         `json:"provider,omitempty"`
-	Usage      *Usage         `json:"usage,omitempty"`
-	StopReason string         `json:"stop_reason,omitempty"`
-	CreatedAt  *time.Time     `json:"created_at,omitempty"`
+	ID           string         `json:"id,omitempty"`
+	Role         string         `json:"role"`
+	Content      []ContentBlock `json:"content,omitempty"`
+	ToolCalls    []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID   string         `json:"tool_call_id,omitempty"`
+	Name         string         `json:"name,omitempty"`
+	Model        string         `json:"model,omitempty"`
+	Provider     string         `json:"provider,omitempty"`
+	Usage        *Usage         `json:"usage,omitempty"`
+	HostedSearch []HostedSearch `json:"hosted_search,omitempty"`
+	StopReason   string         `json:"stop_reason,omitempty"`
+	CreatedAt    *time.Time     `json:"created_at,omitempty"`
 }
 
 type ContentBlock struct {
 	Type       string      `json:"type"`
 	Text       string      `json:"text,omitempty"`
 	ImageURL   string      `json:"image_url,omitempty"`
+	FileURL    string      `json:"file_url,omitempty"`
+	Filename   string      `json:"filename,omitempty"`
 	MimeType   string      `json:"mime_type,omitempty"`
 	ToolCall   *ToolCall   `json:"tool_call,omitempty"`
 	ToolResult *ToolResult `json:"tool_result,omitempty"`
@@ -152,6 +162,37 @@ type TextDelta struct {
 	Text string `json:"text"`
 }
 
+type HostedSearch struct {
+	Type     string               `json:"type"`
+	ID       string               `json:"id"`
+	Provider string               `json:"provider,omitempty"`
+	Status   string               `json:"status"`
+	Queries  []string             `json:"queries"`
+	Sources  []HostedSearchSource `json:"sources"`
+	Error    string               `json:"error,omitempty"`
+}
+
+type HostedSearchSource struct {
+	URL        string `json:"url"`
+	Title      string `json:"title,omitempty"`
+	SourceType string `json:"sourceType,omitempty"`
+}
+
+func fromAIHostedSearch(items []ai.HostedSearch) []HostedSearch {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]HostedSearch, len(items))
+	for i, item := range items {
+		out[i] = HostedSearch{Type: item.Type, ID: item.ID, Provider: item.Provider, Status: item.Status, Queries: item.Queries, Error: item.Error}
+		out[i].Sources = make([]HostedSearchSource, len(item.Sources))
+		for j, source := range item.Sources {
+			out[i].Sources[j] = HostedSearchSource{URL: source.URL, Title: source.Title, SourceType: source.SourceType}
+		}
+	}
+	return out
+}
+
 type ToolCallEvent struct {
 	ToolCall ToolCall `json:"tool_call"`
 }
@@ -189,6 +230,54 @@ type PermissionDecision struct {
 	Reason       string `json:"reason,omitempty"`
 }
 
+type QuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Recommended bool   `json:"recommended,omitempty"`
+}
+
+type Question struct {
+	ID       string           `json:"id"`
+	Header   string           `json:"header,omitempty"`
+	Prompt   string           `json:"prompt"`
+	Options  []QuestionOption `json:"options"`
+	Multiple bool             `json:"multiple,omitempty"`
+}
+
+type QuestionRequest struct {
+	QuestionID string     `json:"question_id"`
+	ToolCallID string     `json:"tool_call_id"`
+	RunID      string     `json:"run_id"`
+	DeadlineAt int64      `json:"deadline_at"`
+	Questions  []Question `json:"questions"`
+}
+
+type QuestionAnswer struct {
+	Prompt        string `json:"prompt,omitempty"`
+	QuestionID    string `json:"question_id"`
+	SelectedLabel string `json:"selected_label"`
+	Custom        bool   `json:"custom,omitempty"`
+}
+
+type QuestionAnswerRequest struct {
+	ConversationID string           `json:"conversation_id"`
+	RunID          string           `json:"run_id"`
+	QuestionID     string           `json:"question_id"`
+	Answers        []QuestionAnswer `json:"answers"`
+}
+
+type QuestionResolution struct {
+	QuestionID string           `json:"question_id"`
+	ToolCallID string           `json:"tool_call_id"`
+	RunID      string           `json:"run_id"`
+	Kind       string           `json:"kind"`
+	Questions  []Question       `json:"questions"`
+	Answers    []QuestionAnswer `json:"answers"`
+	Text       string           `json:"text"`
+	TimedOut   bool             `json:"timed_out,omitempty"`
+	Cancelled  bool             `json:"cancelled,omitempty"`
+}
+
 type Subagent struct {
 	ID          string     `json:"id"`
 	ParentID    string     `json:"parent_id,omitempty"`
@@ -221,13 +310,54 @@ type CreateSessionRequest struct {
 	Messages []Message `json:"messages,omitempty"`
 }
 
+type RunOptions struct {
+	Reasoning       string          `json:"reasoning,omitempty"`
+	Mode            string          `json:"mode,omitempty"`
+	Search          string          `json:"search,omitempty"`
+	ApprovalPolicy  string          `json:"approval_policy,omitempty"`
+	WorkspaceRoots  []WorkspaceRoot `json:"workspace_roots,omitempty"`
+	Tools           *ToolSelection  `json:"tools,omitempty"`
+	PlanModeEnabled bool            `json:"plan_mode_enabled,omitempty"`
+	MCPServerIDs    []string        `json:"mcp_server_ids,omitempty"`
+}
+type WorkspaceRoot struct {
+	Path   string `json:"path"`
+	Access string `json:"access"`
+}
+
+type ToolSelection struct {
+	Policies map[string]string `json:"policies,omitempty"`
+	Enabled  []string          `json:"enabled,omitempty"`
+	Disabled []string          `json:"disabled,omitempty"`
+}
+
 type PromptRequest struct {
 	ResumeMessageID string         `json:"resume_message_id,omitempty"`
+	TurnID          string         `json:"turn_id,omitempty"`
 	ConversationID  string         `json:"conversation_id"`
 	ClientRequestID string         `json:"client_request_id"`
 	Prompt          string         `json:"prompt,omitempty"`
 	Content         []ContentBlock `json:"content,omitempty"`
 	Model           *ModelRef      `json:"model,omitempty"`
+	Options         *RunOptions    `json:"options,omitempty"`
+	HookPolicy      string         `json:"hook_policy,omitempty"`
+	HookScopeID     string         `json:"hook_scope_id,omitempty"`
+	StopRequested   bool           `json:"stop_requested,omitempty"`
+}
+
+type CompactRequest struct {
+	ConversationID   string `json:"conversation_id,omitempty"`
+	ClientRequestID  string `json:"client_request_id"`
+	ExpectedRevision string `json:"expected_revision"`
+}
+
+type CompactAccepted struct {
+	Version        string `json:"version"`
+	ConversationID string `json:"conversation_id"`
+	RunID          string `json:"run_id"`
+	AcceptedSeq    int64  `json:"accepted_seq"`
+	Status         string `json:"status"`
+	Revision       string `json:"revision,omitempty"`
 }
 
 // TextGenerateRequest is the stateless, no-tools auxiliary generation contract.
@@ -356,7 +486,7 @@ func FromAIMessage(m ai.Message) Message {
 	if left, right, ok := strings.Cut(m.Model, " @ "); ok {
 		model, provider = left, right
 	}
-	out := Message{ID: m.ID, Role: m.Role, ToolCallID: m.ToolCallID, Name: m.Name, Model: model, Provider: provider, Usage: FromAIUsage(m.Usage), StopReason: string(m.StopReason), CreatedAt: m.SentAt}
+	out := Message{ID: m.ID, Role: m.Role, ToolCallID: m.ToolCallID, Name: m.Name, Model: model, Provider: provider, Usage: FromAIUsage(m.Usage), HostedSearch: fromAIHostedSearch(m.HostedSearch), StopReason: string(m.StopReason), CreatedAt: m.SentAt}
 	if m.Content != "" {
 		out.Content = append(out.Content, ContentBlock{Type: ContentText, Text: m.Content})
 	}
@@ -369,7 +499,14 @@ func FromAIMessage(m ai.Message) Message {
 			if part.ImageURL != nil {
 				url = part.ImageURL.URL
 			}
-			out.Content = append(out.Content, ContentBlock{Type: ContentImage, ImageURL: url})
+			out.Content = append(out.Content, ContentBlock{Type: ContentImage, ImageURL: url, MimeType: part.MimeType})
+		case ai.AttachmentFile:
+			url := ""
+			var filename string
+			if part.FileURL != nil {
+				url, filename = part.FileURL.URL, part.FileURL.Filename
+			}
+			out.Content = append(out.Content, ContentBlock{Type: ContentFile, FileURL: url, Filename: filename, MimeType: part.MimeType})
 		default:
 			out.Content = append(out.Content, ContentBlock{Type: part.Type, Text: part.Text})
 		}
@@ -391,15 +528,31 @@ func FromAIMessageValidated(m ai.Message) (Message, error) {
 func (b ContentBlock) Validate() error {
 	switch b.Type {
 	case ContentText, ContentThinking:
-		if b.ImageURL != "" || b.MimeType != "" {
+		if b.ImageURL != "" || b.FileURL != "" || b.Filename != "" || b.MimeType != "" {
 			return fmt.Errorf("%s content block has image fields", b.Type)
 		}
 	case ContentImage:
 		if strings.TrimSpace(b.ImageURL) == "" {
 			return errors.New("image content block requires image_url")
 		}
-		if b.Text != "" {
-			return errors.New("image content block has text")
+		if b.Text != "" || b.FileURL != "" || b.Filename != "" {
+			return errors.New("image content block has non-image fields")
+		}
+		if err := validateAttachmentURL(b.ImageURL, "image"); err != nil {
+			return err
+		}
+	case ContentFile:
+		if strings.TrimSpace(b.FileURL) == "" {
+			return errors.New("file content block requires file_url")
+		}
+		if b.Text != "" || b.ImageURL != "" {
+			return errors.New("file content block has non-file fields")
+		}
+		if strings.TrimSpace(b.MimeType) == "" {
+			return errors.New("file content block requires mime_type")
+		}
+		if err := validateAttachmentURL(b.FileURL, "file"); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported canonical content block %q", b.Type)
@@ -481,12 +634,25 @@ func (m Message) ToAIMessage() (ai.Message, error) {
 		case ContentThinking:
 		case ContentImage:
 			seenImage = true
-			parts = append(parts, ai.ContentPart{Type: "image_url", ImageURL: &struct {
+			parts = append(parts, ai.ContentPart{Type: "image_url", MimeType: b.MimeType, ImageURL: &struct {
 				URL string `json:"url"`
 			}{URL: b.ImageURL}})
+		case ContentFile:
+			seenImage = true
+			parts = append(parts, ai.ContentPart{Type: ai.AttachmentFile, MimeType: b.MimeType, FileURL: &struct {
+				URL      string `json:"url"`
+				Filename string `json:"filename,omitempty"`
+			}{URL: b.FileURL, Filename: b.Filename}})
 		}
 	}
 	out.Parts = parts
+	for _, item := range m.HostedSearch {
+		search := ai.HostedSearch{Type: item.Type, ID: item.ID, Provider: item.Provider, Status: item.Status, Queries: append([]string(nil), item.Queries...), Error: item.Error}
+		for _, source := range item.Sources {
+			search.Sources = append(search.Sources, ai.SearchSource{URL: source.URL, Title: source.Title, SourceType: source.SourceType})
+		}
+		out.HostedSearch = append(out.HostedSearch, search)
+	}
 	out.StopReason = ai.StopReason(m.StopReason)
 	if m.Usage != nil {
 		out.Usage = &ai.Usage{PromptTokens: m.Usage.InputTokens, CompletionTokens: m.Usage.OutputTokens, PromptCacheHitTokens: m.Usage.CachedTokens, PromptCacheWriteTokens: m.Usage.CacheWriteTokens}

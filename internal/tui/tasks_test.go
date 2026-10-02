@@ -484,12 +484,26 @@ func TestRunningTaskViewReplaysThenStreams(t *testing.T) {
 	task := m.agent.StartBackground("probe", "p", agent.SubModel{})
 	defer m.agent.Tasks().Cancel(task.ID)
 
-	for range 100 {
-		if events, _, _ := m.agent.Tasks().SubscribeWithJournal(task.ID, agent.Events{}); len(events) > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	preOpen := make(chan struct{}, 1)
+	events, _, live, unsubscribe := m.agent.Tasks().WatchTask(task.ID, agent.Events{
+		OnText: func(string) {
+			select {
+			case preOpen <- struct{}{}:
+			default:
+			}
+		},
+	})
+	if !live {
+		t.Fatal("running task stopped before the view could subscribe")
 	}
+	if len(events) == 0 {
+		select {
+		case <-preOpen:
+		case <-time.After(5 * time.Second):
+			t.Fatal("task did not emit pre-open output")
+		}
+	}
+	unsubscribe()
 	m.openTask(task.ID)
 	if !m.taskVP.live {
 		t.Fatal("a running task's view should subscribe to live events")

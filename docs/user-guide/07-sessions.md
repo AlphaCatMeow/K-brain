@@ -1,6 +1,6 @@
 # 会话、压缩与回退
 
-会话保存在 `~/.k-brain/sessions/` 下，并按项目工作目录分类；每个会话包含稳定的 session id、标题、消息和元数据。`/resume`、`/search`、`/archive`、`/export` 用于管理历史记录。
+会话保存在 `~/.liveagent/sessions/` 下，并按项目工作目录分类；每个会话包含稳定的 session id、标题、消息和元数据。`/resume`、`/search`、`/archive`、`/export` 用于管理历史记录。
 
 ## 上下文压缩
 

@@ -8,6 +8,7 @@ import (
 func (r Route) AgentModel() agent.ModelConfig {
 	m := agent.ModelConfig{Client: r.Client, ID: r.APIModel, Name: r.ModelName, Provider: r.ProviderName, MaxTokens: r.MaxOutput, ContextLimit: r.ContextLimit}
 	m.Vision = r.Vision
+	m.NativeWebSearch = r.Provider.NativeWebSearchEnabled
 	if sp := r.Model.SamplingParams; sp != nil {
 		m.Temperature, m.TopP = sp.Temperature, sp.TopP
 	}

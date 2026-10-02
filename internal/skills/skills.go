@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 )
 
 type Skill struct {
@@ -32,11 +34,16 @@ func DefaultDirs() []string {
 func DirsFor(project string) []string {
 	var dirs []string
 	if project != "" {
-		dirs = append(dirs, filepath.Join(project, ".agents", "skills"))
+		datapath.Report(datapath.MigrateProjectDir(project))
+		dirs = append(dirs, filepath.Join(datapath.ProjectDir(project), "skills"), filepath.Join(project, ".agents", "skills"))
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		dirs = append(dirs, filepath.Join(home, ".k-brain", "skills"))
-		dirs = append(dirs, filepath.Join(home, ".agents", "skills"))
+	if home, err := datapath.UserDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, "skills"))
+		if userHome, err := os.UserHomeDir(); err == nil {
+			dirs = append(dirs, filepath.Join(userHome, ".agents", "skills"))
+		}
+	} else {
+		datapath.Report(err)
 	}
 	return dirs
 }

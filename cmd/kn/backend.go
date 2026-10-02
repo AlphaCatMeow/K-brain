@@ -15,10 +15,15 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/backend"
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/mcp"
+	"github.com/Stack-Cairn/K-brain/internal/memory"
+	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
 	sysprompt "github.com/Stack-Cairn/K-brain/internal/prompts"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
+	"github.com/Stack-Cairn/K-brain/internal/resources"
 	"github.com/Stack-Cairn/K-brain/internal/routing"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
@@ -30,6 +35,7 @@ func backendCLI(args []string) error {
 	token := fs.String("token", os.Getenv("K_BRAIN_BACKEND_TOKEN"), "Bearer token; defaults to K_BRAIN_BACKEND_TOKEN")
 	configPath := fs.String("config", "", "Configuration file; defaults to the user configuration")
 	sessionDir := fs.String("session-dir", "", "Session storage directory; defaults to project storage")
+	memoryOrganizerInterval := fs.Duration("memory-organizer-interval", 24*time.Hour, "interval for backend memory organizer runs; 0 uses 24h")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: kn backend [-listen address] [-parent-stdio] [-token bearer-token]")
 		fmt.Fprintln(os.Stderr, "serve the K-brain canonical session API for LiveAgent")
@@ -73,6 +79,19 @@ func backendCLI(args []string) error {
 	settings := backend.NewSettingsStore(cfg, func(next *config.Config) error {
 		return next.SaveFile(configFilename)
 	})
+	liveMCP, err := mcp.OpenLiveManager(context.Background(), configFilename+".live-mcp.json", mcp.FromConfigMap(cfg.MCPServers))
+	if err != nil {
+		return fmt.Errorf("MCP manager: %w", err)
+	}
+	defer liveMCP.Close()
+	promptRoot, promptErr := config.Dir()
+	if promptErr != nil {
+		return fmt.Errorf("prompt resources: %w", promptErr)
+	}
+	promptStore, promptErr := resources.OpenPrompts(promptRoot)
+	if promptErr != nil {
+		return fmt.Errorf("prompt resources: %w", promptErr)
+	}
 
 	models := make([]backendModel, 0, len(cfg.Models))
 	for name, model := range cfg.Models {
@@ -96,11 +115,22 @@ func backendCLI(args []string) error {
 		if modelName == "" {
 			modelName = current.DefaultModel
 		}
-		route, err := routing.ResolveRouteContext(ctx, current, modelName, provider, false)
+		route, err := routing.ResolveFailoverRouteContext(ctx, current, modelName, provider, false)
 		if err != nil {
 			return nil, err
 		}
-		ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sysprompt.Build(cwd, time.Now())+sysprompt.SkillsPrompt(cwd), agent.WithExperimental(current.Experimental))
+		resolvePrompt := func() (string, error) {
+			base, err := sysprompt.WithResources(sysprompt.Build(cwd, time.Now()), cwd, promptStore)
+			if err != nil {
+				return "", fmt.Errorf("resolve prompt resources: %w", err)
+			}
+			return base + sysprompt.SkillsPrompt(cwd), nil
+		}
+		resolvedPrompt, promptResolveErr := resolvePrompt()
+		if promptResolveErr != nil {
+			return nil, promptResolveErr
+		}
+		ag := agent.New(route.Client, route.APIModel, route.MaxOutput, resolvedPrompt, agent.WithExperimental(current.Experimental), agent.WithSystemPromptResolver(resolvePrompt))
 		ag.ModelName, ag.Provider = route.ModelName, route.ProviderName
 		ag.ContextLimit, ag.Vision, ag.WorkingDir = route.ContextLimit, route.Vision, cwd
 		ag.WorktreeSubagents = current.WorktreeSubagents != nil && *current.WorktreeSubagents
@@ -113,14 +143,41 @@ func backendCLI(args []string) error {
 		return ag, nil
 	}
 
+	memoryStore, memoryErr := memory.OpenStore("")
+	if memoryErr != nil {
+		return fmt.Errorf("memory storage: %w", memoryErr)
+	}
+	memoryRuntimeFactory := func(ctx context.Context, cwd string, selected protocol.ModelRef) (*memoryruntime.Runtime, error) {
+		resolve := func(resolveCtx context.Context, requested string) (ai.Client, string, error) {
+			name := requested
+			if name == "" {
+				name = selected.Model
+			}
+			route, routeErr := routing.ResolveFailoverRouteContext(resolveCtx, settings.Snapshot(), name, selected.Provider, false)
+			if routeErr != nil {
+				return nil, "", routeErr
+			}
+			return route.Client, route.APIModel, nil
+		}
+		return memoryruntime.New(memoryruntime.Config{Store: memoryStore, ResolveModel: resolve, ExtractionModel: selected.Model, OrganizerModel: selected.Model})
+	}
+
+	organizerInterval := *memoryOrganizerInterval
+	if organizerInterval <= 0 {
+		organizerInterval = 24 * time.Hour
+	}
 	server, err := backend.New(backend.Options{
-		Store:      store,
-		Factory:    factory,
-		EventDir:   store.SessionsDir() + string(os.PathSeparator) + "backend-events",
-		Token:      *token,
-		Models:     modelRefs,
-		Settings:   settings,
-		DefaultCWD: cwd(),
+		Store:                   store,
+		Factory:                 factory,
+		MemoryRuntimeFactory:    memoryRuntimeFactory,
+		MemoryOrganizerInterval: organizerInterval,
+		EventDir:                store.SessionsDir() + string(os.PathSeparator) + "backend-events",
+		Token:                   *token,
+		Models:                  modelRefs,
+		Settings:                settings,
+		MCP:                     liveMCP,
+		Prompts:                 promptStore,
+		DefaultCWD:              cwd(),
 	})
 	if err != nil {
 		return err

@@ -7,12 +7,13 @@ import (
 )
 
 type Message struct {
-	ID         string        `json:"id,omitempty"`
-	Role       string        `json:"role"`
-	Content    string        `json:"content"`
-	Parts      []ContentPart `json:"-"`
-	ToolCalls  []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
+	ID           string         `json:"id,omitempty"`
+	Role         string         `json:"role"`
+	Content      string         `json:"content"`
+	Parts        []ContentPart  `json:"-"`
+	ToolCalls    []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID   string         `json:"tool_call_id,omitempty"`
+	HostedSearch []HostedSearch `json:"-"`
 
 	Name string `json:"name,omitempty"`
 
@@ -36,8 +37,13 @@ type ContentPart struct {
 	ImageURL *struct {
 		URL string `json:"url"`
 	} `json:"image_url,omitempty"`
-	W int `json:"w,omitempty"`
-	H int `json:"h,omitempty"`
+	FileURL *struct {
+		URL      string `json:"url"`
+		Filename string `json:"filename,omitempty"`
+	} `json:"file_url,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	W        int    `json:"w,omitempty"`
+	H        int    `json:"h,omitempty"`
 }
 
 func (m Message) TextContent() string {
@@ -60,26 +66,28 @@ func (m Message) ContentParts() []ContentPart {
 }
 
 type messageWire struct {
-	ID            string     `json:"id,omitempty"`
-	Role          string     `json:"role"`
-	Content       any        `json:"content"`
-	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID    string     `json:"tool_call_id,omitempty"`
-	Name          string     `json:"name,omitempty"`
-	Authored      bool       `json:"authored,omitempty"`
-	SentAt        *time.Time `json:"sent_at,omitempty"`
-	Usage         *Usage     `json:"usage,omitempty"`
-	Model         string     `json:"model,omitempty"`
-	StopReason    StopReason `json:"stop_reason,omitempty"`
-	RawStopReason string     `json:"raw_stop_reason,omitempty"`
-	RewoundFrom   string     `json:"rewound_from,omitempty"`
+	ID            string         `json:"id,omitempty"`
+	Role          string         `json:"role"`
+	Content       any            `json:"content"`
+	ToolCalls     []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID    string         `json:"tool_call_id,omitempty"`
+	HostedSearch  []HostedSearch `json:"hosted_search,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Authored      bool           `json:"authored,omitempty"`
+	SentAt        *time.Time     `json:"sent_at,omitempty"`
+	Usage         *Usage         `json:"usage,omitempty"`
+	Model         string         `json:"model,omitempty"`
+	StopReason    StopReason     `json:"stop_reason,omitempty"`
+	RawStopReason string         `json:"raw_stop_reason,omitempty"`
+	RewoundFrom   string         `json:"rewound_from,omitempty"`
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
 	w := messageWire{
 		ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
 		Name: m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
-		Model: m.Model, RewoundFrom: m.RewoundFrom,
+		HostedSearch: m.HostedSearch,
+		Model:        m.Model, RewoundFrom: m.RewoundFrom,
 		StopReason: m.StopReason, RawStopReason: m.RawStopReason,
 	}
 	if len(m.Parts) > 0 {

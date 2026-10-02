@@ -43,6 +43,9 @@ func (c *Responses) Complete(ctx context.Context, req Request) (string, Usage, e
 
 func (c *Responses) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
 	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	if err := validateAttachments(req.Messages, true, "Responses"); err != nil {
+		return nil, err
+	}
 	c.applyCache(&req)
 	payload, err := responsesPayload(req, stream)
 	if err != nil {
@@ -75,6 +78,18 @@ func responsesPayload(req Request, stream bool) (map[string]any, error) {
 			tools = append(tools, map[string]any{"type": "function", "name": t.Function.Name, "description": t.Function.Description, "parameters": params})
 		}
 		p["tools"] = tools
+	}
+	if req.NativeWebSearch {
+		toolType := "web_search"
+		if req.NativeSearchProvider == "xai" {
+			toolType = "x_search"
+		}
+		p["tools"] = appendSearchTool(p["tools"], map[string]any{"type": toolType})
+		include := "web_search_call.action.sources"
+		if req.NativeSearchProvider == "xai" {
+			include = "x_search_call.action.sources"
+		}
+		p["include"] = []string{include}
 	}
 	if req.PromptCacheKey != "" {
 		p["prompt_cache_key"] = req.PromptCacheKey

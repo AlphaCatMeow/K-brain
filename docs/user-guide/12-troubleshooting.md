@@ -10,7 +10,7 @@
 
 ## 配置重置
 
-JSONC 解析错误会在启动时显示文件位置。修正 `~/.k-brain/config.json` 后重启；系统提示词和用户指令分别检查 `system.md`、`brain.md` 及项目 `AGENTS.md`。
+JSONC 解析错误会在启动时显示文件位置。修正 `~/.liveagent/config.json` 后重启；系统提示词和用户指令分别检查 `system.md`、`brain.md` 及项目 `AGENTS.md`。
 
 ## Windows
 

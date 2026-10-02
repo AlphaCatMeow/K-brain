@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,181 @@ func (*testSettingsClient) SetCacheKey(string) {}
 func (*testSettingsClient) Endpoint() string   { return "https://fixture.invalid" }
 func (*testSettingsClient) Stream(context.Context, ai.Request, func(string), func(string), func(string, string, string)) (ai.Message, ai.Usage, error) {
 	return ai.Message{}, ai.Usage{}, nil
+}
+
+func TestSettingsProjectionRetainsDisabledProviderModels(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{
+			"p": {
+				API:          "openai-completions",
+				BaseURL:      "https://api.example/v1",
+				ActiveModels: []string{"active"},
+			},
+		},
+		Models: map[string]config.Model{
+			"active":   {ID: "active", Providers: []string{"p"}, Context: 100},
+			"disabled": {ID: "disabled", Providers: []string{"p"}, Context: 200},
+		},
+	}
+	server := &Server{settings: NewSettingsStore(cfg, nil)}
+	out := httptest.NewRecorder()
+	server.ServeHTTP(out, httptest.NewRequest(http.MethodGet, "/v1/settings", nil))
+	if out.Code != http.StatusOK {
+		t.Fatalf("settings status = %d: %s", out.Code, out.Body.String())
+	}
+	var projection settingsProjection
+	if err := json.Unmarshal(out.Body.Bytes(), &projection); err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.Providers) != 1 || len(projection.Providers[0].Models) != 2 {
+		t.Fatalf("provider model projection lost disabled model: %+v", projection.Providers)
+	}
+	if len(projection.Models) != 1 || projection.Models[0].ID != "active" {
+		t.Fatalf("catalog should contain active models only: %+v", projection.Models)
+	}
+}
+
+func TestSettingsDisabledProviderModelsHTTPRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	const secret = "disabled-roundtrip-private-key"
+	cfg := &config.Config{
+		DefaultModel: "active", DefaultProvider: "p",
+		Providers: map[string]config.Provider{
+			"p": {Name: "Provider", API: "openai-completions", BaseURL: "https://api.example/v1", APIKey: secret},
+		},
+	}
+	save := func(next *config.Config) error { return next.SaveFile(path) }
+	original := httptest.NewServer(&Server{settings: NewSettingsStore(cfg, save)})
+	defer original.Close()
+
+	wantModels := []settingsModel{
+		{Provider: "p", ID: "active", Name: "Active model", DisplayName: "Active display", OwnedBy: "fixture", LimitsSource: "manual", ContextWindow: 8192, MaxOutputTokens: 1024, MaxOutputToken: 1024, InputModalities: []string{"text"}},
+		{Provider: "p", ID: "disabled", Name: "Disabled model", DisplayName: "Disabled display", OwnedBy: "fixture-vision", LimitsSource: "discovery", ContextWindow: 32768, MaxOutputTokens: 4096, MaxOutputToken: 4096, InputModalities: []string{"text", "image"}, Vision: true},
+	}
+	metadata := map[string]any{"region": "test", "ui": map[string]any{"label": "Round trip"}}
+	update := map[string]any{"providers": []any{map[string]any{
+		"id": "p", "activeModels": []string{"active"}, "modelOrder": []string{"disabled", "active"},
+		"metadata": metadata, "models": wantModels,
+	}}}
+	request := func(baseURL, method, endpoint string, input, output any) {
+		t.Helper()
+		var raw json.RawMessage
+		if code := doJSON(t, method, baseURL+endpoint, input, &raw); code != http.StatusOK {
+			t.Fatalf("%s %s: status %d: %s", method, endpoint, code, raw)
+		}
+		if strings.Contains(string(raw), secret) || strings.Contains(string(raw), `"apiKey":`) {
+			t.Fatalf("%s %s leaked API key", method, endpoint)
+		}
+		if err := json.Unmarshal(raw, output); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkProjection := func(got settingsProjection, active []string) {
+		t.Helper()
+		if got.DefaultModel != "active" || got.DefaultProvider != "p" || len(got.Providers) != 1 {
+			t.Fatalf("unexpected settings defaults/providers: %+v", got)
+		}
+		p := got.Providers[0]
+		if p.ID != "p" || p.Name != "Provider" || p.API != "openai-completions" || p.BaseURL != "https://api.example/v1" || !p.APIKeyConfigured {
+			t.Fatalf("provider metadata or configured-key marker changed: %+v", p)
+		}
+		if !reflect.DeepEqual(p.ActiveModels, active) || !reflect.DeepEqual(p.ModelOrder, []string{"disabled", "active"}) || !reflect.DeepEqual(p.Metadata, metadata) {
+			t.Fatalf("provider activation/order/metadata changed: %+v", p)
+		}
+		if !reflect.DeepEqual(p.Models, wantModels) {
+			t.Fatalf("provider models lost disabled model or metadata: got %+v, want %+v", p.Models, wantModels)
+		}
+		if !reflect.DeepEqual(got.Models, wantModels[:len(active)]) {
+			t.Fatalf("settings catalog must contain only active models with metadata: %+v", got.Models)
+		}
+	}
+	checkGET := func(baseURL string, active []string) settingsProjection {
+		t.Helper()
+		var got settingsProjection
+		request(baseURL, http.MethodGet, "/v1/settings", nil, &got)
+		checkProjection(got, active)
+		var catalog struct {
+			Models []struct {
+				Provider        string `json:"provider"`
+				Model           string `json:"model"`
+				Name            string `json:"name"`
+				ContextWindow   int    `json:"contextWindow"`
+				MaxOutputTokens int    `json:"maxOutputTokens"`
+				Vision          bool   `json:"vision"`
+			} `json:"models"`
+		}
+		request(baseURL, http.MethodGet, "/v1/models", nil, &catalog)
+		if len(catalog.Models) != len(active) {
+			t.Fatalf("HTTP catalog must contain only active models: %+v", catalog.Models)
+		}
+		for i, m := range catalog.Models {
+			want := wantModels[i]
+			if m.Provider != want.Provider || m.Model != active[i] || m.Name != want.Name || m.ContextWindow != want.ContextWindow || m.MaxOutputTokens != want.MaxOutputTokens || m.Vision != want.Vision {
+				t.Fatalf("HTTP catalog model metadata changed: %+v", m)
+			}
+		}
+		return got
+	}
+
+	var put settingsProjection
+	request(original.URL, http.MethodPut, "/v1/settings", update, &put)
+	checkProjection(put, []string{"active"})
+	checkGET(original.URL, []string{"active"})
+
+	reloaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Providers["p"].APIKey != secret {
+		t.Fatal("SaveFile/LoadFile did not preserve the API key")
+	}
+	persisted := reloaded.Providers["p"]
+	if len(persisted.Models) != 0 || !reflect.DeepEqual(persisted.ActiveModels, []string{"active"}) {
+		t.Fatalf("unexpected provider model serialization or activation: %+v", persisted)
+	}
+	for _, want := range wantModels {
+		model, ok := reloaded.Models[want.ID]
+		if !ok || !reflect.DeepEqual(model.Providers, []string{"p"}) || model.Name != want.Name || model.DisplayName != want.DisplayName || model.OwnedBy != want.OwnedBy || model.LimitsSource != want.LimitsSource || model.Context != want.ContextWindow || model.MaxOut != want.MaxOutputTokens || !reflect.DeepEqual(model.InputModalities, want.InputModalities) || model.Vision != want.Vision {
+			t.Fatalf("SaveFile/LoadFile lost model %q metadata: %+v", want.ID, reloaded.Models)
+		}
+	}
+	restarted := httptest.NewServer(&Server{settings: NewSettingsStore(reloaded, save)})
+	defer restarted.Close()
+	got := checkGET(restarted.URL, []string{"active"})
+
+	// Save the public provider back without supplying a replacement API key.
+	got.Providers[0].ActiveModels = []string{"active", "disabled"}
+	request(restarted.URL, http.MethodPut, "/v1/settings", map[string]any{"providers": got.Providers}, &put)
+	checkProjection(put, []string{"active", "disabled"})
+	checkGET(restarted.URL, []string{"active", "disabled"})
+	checkGET(original.URL, []string{"active"})
+
+	reenabled, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reenabled.Providers["p"].APIKey != secret || !reflect.DeepEqual(reenabled.Providers["p"].ActiveModels, []string{"active", "disabled"}) || !reflect.DeepEqual(reenabled.Models, reloaded.Models) {
+		t.Fatal("re-enabling did not persist activation, model metadata, and the original API key")
+	}
+}
+
+func TestSettingsGETIncludesExplicitFalseNativeSearch(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{"p": {API: "openai-completions", BaseURL: "https://example.test/v1", NativeWebSearchEnabled: false}}}
+	server := &Server{settings: NewSettingsStore(cfg, nil)}
+	out := httptest.NewRecorder()
+	server.ServeHTTP(out, httptest.NewRequest(http.MethodGet, "/v1/settings", nil))
+	if out.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", out.Code, out.Body.String())
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(out.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	provider := wire["providers"].([]any)[0].(map[string]any)
+	value, ok := provider["nativeWebSearchEnabled"]
+	if !ok || value != false {
+		t.Fatalf("nativeWebSearchEnabled wire value = %#v, body = %s", value, out.Body.String())
+	}
 }
 
 func TestSettingsGETRedactsLegacyURL(t *testing.T) {

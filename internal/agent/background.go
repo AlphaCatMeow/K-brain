@@ -66,6 +66,7 @@ type taskRegistry struct {
 	OnChange func(*BackgroundTask)
 
 	OnRecord  func(sessionID string, t *BackgroundTask)
+	OnEvents  func(taskID string) Events
 	sessionID atomic.Pointer[string]
 }
 
@@ -272,7 +273,7 @@ func (a *Agent) RegisterBackgroundContext(parent context.Context, description, p
 	t := &BackgroundTask{
 		ID: id, Description: description, Prompt: prompt,
 		Status: TaskRunning, StartedAt: time.Now(),
-		Done: make(chan struct{}), ctx: taskCtx, cancel: cancel,
+		Done: make(chan struct{}), ctx: withRequestTask(taskCtx, id), cancel: cancel,
 		sub: sub,
 
 		SubModel: sub.Model,
@@ -410,6 +411,13 @@ func (r *taskRegistry) emitLocked(id string, kind int, s, s2 string, journaled b
 }
 
 func (r *taskRegistry) emitter(id string) Events {
+	if r.OnEvents != nil {
+		return FanIn(r.localEmitter(id), r.OnEvents(id))
+	}
+	return r.localEmitter(id)
+}
+
+func (r *taskRegistry) localEmitter(id string) Events {
 	return Events{
 		OnText: func(s string) {
 			subs := r.emitLocked(id, 0, s, "", true)

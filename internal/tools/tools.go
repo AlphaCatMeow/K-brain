@@ -37,6 +37,18 @@ func All() []Tool {
 }
 
 type updateKey struct{}
+type fileMutationObserverKey struct{}
+
+// WithFileMutationObserver records the pre-image immediately before a file tool mutates it.
+func WithFileMutationObserver(ctx context.Context, observe func(string)) context.Context {
+	return context.WithValue(ctx, fileMutationObserverKey{}, observe)
+}
+
+func BeforeFileMutation(ctx context.Context, path string) {
+	if observe, ok := ctx.Value(fileMutationObserverKey{}).(func(string)); ok && observe != nil {
+		observe(path)
+	}
+}
 
 func WithWorkingDir(ctx context.Context, dir string) context.Context {
 	return bashrun.WithWorkingDir(ctx, dir)
@@ -285,6 +297,7 @@ func writeTool() Tool {
 			}
 
 			old, oldErr := os.ReadFile(a.Path)
+			BeforeFileMutation(ctx, a.Path)
 
 			if err := os.MkdirAll(filepath.Dir(a.Path), 0o755); err != nil {
 				return "", err
@@ -337,6 +350,7 @@ func editTool() Tool {
 				return "", fmt.Errorf("old_string appears %d times in %s; make it unique or set replace_all", n, a.Path)
 			}
 			s = strings.ReplaceAll(s, a.OldString, a.NewString)
+			BeforeFileMutation(ctx, a.Path)
 
 			if err := os.WriteFile(a.Path, []byte(s), 0o644); err != nil {
 				return "", err

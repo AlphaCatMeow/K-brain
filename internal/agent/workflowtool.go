@@ -50,7 +50,7 @@ func workflowTool(parent *Agent) tools.Tool {
 Script persisted at: %s
 It keeps running on its own; when it finishes the result is delivered back here and the conversation continues automatically — the user does not need to do anything.
 To iterate, edit the script file and re-invoke with { scriptPath: %q, resumeFromRunId: %q } — unchanged agent() calls replay from the journal.
-If the completion message is truncated, read the full result with: jq '.result' ~/.k-brain/workflows/runs/%s.json`,
+If the completion message is truncated, read the full result with: jq '.result' ~/.liveagent/workflows/runs/%s.json`,
 				run.ID, run.ScriptPath, run.ScriptPath, run.ID, run.ID), nil
 		},
 	}
@@ -142,7 +142,7 @@ func (a *Agent) onWorkflowSettle(run workflow.RunSummary) {
 		out, _ := json.MarshalIndent(snap.Result, "", "  ")
 		text := string(out)
 		if len(text) > subagentReportCap {
-			text = text[:subagentReportCap] + fmt.Sprintf("\n\n…(truncated — full result via the run journal: jq '.result' ~/.k-brain/workflows/runs/%s.json)", run.ID)
+			text = text[:subagentReportCap] + fmt.Sprintf("\n\n…(truncated — full result via the run journal: jq '.result' ~/.liveagent/workflows/runs/%s.json)", run.ID)
 		}
 		fmt.Fprintf(&b, "\n\n%s", text)
 	}
@@ -206,4 +206,4 @@ Concurrent agent() calls are capped at min(16, cpu cores - 2) per workflow — e
 The tool result includes a runId. To resume after a kill or a script edit, relaunch with { scriptPath, resumeFromRunId } — the longest unchanged prefix of agent() calls returns cached results instantly; the first edited/new call and everything after it run live. Same script + same args → 100% cache hit.
 
 ## Truncated results
-When a completed-workflow message arrives truncated, DO NOT respond from the truncated text alone — read the full result from the persisted journal first: jq '.result' ~/.k-brain/workflows/runs/<runId>.json`
+When a completed-workflow message arrives truncated, DO NOT respond from the truncated text alone — read the full result from the persisted journal first: jq '.result' ~/.liveagent/workflows/runs/<runId>.json`

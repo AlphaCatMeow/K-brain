@@ -12,7 +12,7 @@ import (
 func (m *model) openBrain() tea.Cmd {
 	path := config.BrainPath()
 	if path == "" {
-		m.append(errStyle.Render("/brain: cannot locate ~/.k-brain"))
+		m.append(errStyle.Render("/brain: cannot locate ~/.liveagent"))
 		return nil
 	}
 	c, err := editor.Command(path)
@@ -30,7 +30,7 @@ func (m *model) openBrain() tea.Cmd {
 func (m *model) openSystem() tea.Cmd {
 	path := config.SystemPath()
 	if path == "" {
-		m.append(errStyle.Render("/system: cannot locate ~/.k-brain"))
+		m.append(errStyle.Render("/system: cannot locate ~/.liveagent"))
 		return nil
 	}
 	c, err := editor.Command(path)

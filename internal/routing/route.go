@@ -34,6 +34,9 @@ func ResolveRouteContext(ctx context.Context, cfg *config.Config, modelName, pro
 		return Route{}, err
 	}
 	modelName, providerName = SelectionNames(cfg, mdl, modelName, providerName)
+	if provider := cfg.Providers[providerName]; provider.ActiveModels != nil && !containsModel(provider.ActiveModels, apiID) {
+		return Route{}, fmt.Errorf("model %q is not active for provider %q", apiID, providerName)
+	}
 	if modelName == "" {
 		modelName = apiID
 	}
@@ -57,6 +60,15 @@ func ResolveRouteContext(ctx context.Context, cfg *config.Config, modelName, pro
 		Client: client, ContextLimit: ctxLimit, MaxOutput: maxOut,
 		Vision: SupportsVision(cfg, modelName, apiID, catalogs, providerName),
 	}, nil
+}
+
+func containsModel(models []string, id string) bool {
+	for _, model := range models {
+		if model == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (r Route) Configured() bool {

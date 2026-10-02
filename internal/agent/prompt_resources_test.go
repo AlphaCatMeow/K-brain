@@ -1,0 +1,41 @@
+package agent
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/Stack-Cairn/K-brain/internal/ai"
+)
+
+func TestSystemPromptResolverPreservesHistoryAndMemory(t *testing.T) {
+	current := "base AGENTS brain\nfirst template"
+	a := New(nil, "model", 100, current, WithSystemPromptResolver(func() (string, error) { return current, nil }))
+	a.memoryBlock = "\nlegacy memory"
+	a.runtimeMemoryBlock = "\nruntime memory"
+	a.Messages = append(a.Messages, ai.Message{Role: "user", Content: "history"})
+	current = "base AGENTS brain\nreplacement template"
+	for range 2 {
+		if err := a.refreshSystemPrompt(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages := a.MessagesSnapshot()
+	if len(messages) != 2 || messages[1].Content != "history" {
+		t.Fatalf("history changed: %+v", messages)
+	}
+	if messages[0].Content != current+a.memoryBlock+a.runtimeMemoryBlock || strings.Contains(messages[0].Content, "first template") {
+		t.Fatalf("system prompt = %q", messages[0].Content)
+	}
+}
+
+func TestSystemPromptResolverFailurePreservesHistory(t *testing.T) {
+	failure := errors.New("prompt resources unavailable")
+	a := New(nil, "model", 100, "original", WithSystemPromptResolver(func() (string, error) { return "", failure }))
+	if _, err := a.Turn(t.Context(), "unsent", Events{}); !errors.Is(err, failure) {
+		t.Fatalf("turn error = %v", err)
+	}
+	if messages := a.MessagesSnapshot(); len(messages) != 1 || messages[0].Content != "original" {
+		t.Fatalf("failed resolution changed history: %+v", messages)
+	}
+}

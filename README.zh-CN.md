@@ -53,7 +53,7 @@ Computer-use helper 使用 `k-brain-computer-<os>-<arch>` 命名，重命名为 
 
 ### 2. 配置 API
 
-编辑 `~/.k-brain/config.json`，Windows 对应 `$HOME\.k-brain\config.json`。配置支持 JSONC 注释与末尾逗号；`K_BRAIN_HOME` 可覆盖配置目录。
+编辑 `~/.liveagent/config.json`，Windows 对应 `$HOME\.liveagent\config.json`。配置支持 JSONC 注释与末尾逗号；`LIVEAGENT_HOME` 可覆盖配置目录；未设置时兼容使用 `K_BRAIN_HOME`。
 
 ```json
 {
@@ -92,10 +92,10 @@ Computer-use helper 使用 `k-brain-computer-<os>-<arch>` 命名，重命名为 
 
 ### 提示词层级
 
-氪脑按“系统提示词 → 用户提示词 → 项目提示词”的顺序组装指令。默认系统提示词首次启动时写入 `~/.k-brain/system.md`，可用 `/system` 编辑；`kn run` 可以使用 `-system` 或 `-system-file` 仅替换本次运行的系统提示词。
+氪脑按“系统提示词 → 用户提示词 → 项目提示词”的顺序组装指令。默认系统提示词首次启动时写入 `~/.liveagent/system.md`，可用 `/system` 编辑；`kn run` 可以使用 `-system` 或 `-system-file` 仅替换本次运行的系统提示词。
 
-- **用户级提示词**：`~/.k-brain/brain.md`（Windows：`%USERPROFILE%\.k-brain\brain.md`）。首次启动时自动创建，也可以在 TUI 中使用 `/brain` 编辑。
-- **项目级提示词**：工作区或任意父目录中的 `AGENTS.md` 与 `.k-brain/brain.md`。文件按项目根目录到当前目录的顺序加载，越靠近当前目录的文件越晚追加，可用于细化上层规则。
+- **用户级提示词**：`~/.liveagent/brain.md`（Windows：`%USERPROFILE%\.liveagent\brain.md`）。首次启动时自动创建，也可以在 TUI 中使用 `/brain` 编辑。
+- **项目级提示词**：工作区或任意父目录中的 `AGENTS.md` 与 `.liveagent/brain.md`。文件按项目根目录到当前目录的顺序加载，越靠近当前目录的文件越晚追加，可用于细化上层规则。
 - TUI、`kn run` 和 ACP 都会从各自的工作目录读取项目提示词；空行和注释行会被忽略。
 
 三种协议均按顺序发送混合图文输入。Responses 使用 `input_image`；Anthropic 使用 base64 或 URL 图片来源，并保留全部系统指令。图片能力仍取决于所选模型和服务端，Anthropic 内嵌图片须为 JPEG、PNG、GIF 或 WebP。无效图片引用会在本地报错，不再静默丢弃。会话文件保留图文内容块，ACP 加载会话时也会按顺序回放内嵌图片和文字。
@@ -121,10 +121,10 @@ CLI、TUI 和 ACP 共用配置钩子与已启用插件钩子的事件入口。�
 
 ### 会话文件
 
-会话保存在 `~/.k-brain/sessions/<project-id>/<session-id>/session.jsonl`；设置 `K_BRAIN_HOME` 时位于该目录下的 `sessions`。项目 ID 是工作区路径的稳定哈希，会话按项目分组，同时保留完整 session ID。
+会话保存在 `~/.liveagent/sessions/<project-id>/<session-id>/session.jsonl`；设置 `LIVEAGENT_HOME`（或兼容的 `K_BRAIN_HOME`）时位于该目录下的 `sessions`。项目 ID 是工作区路径的稳定哈希，会话按项目分组，同时保留完整 session ID。
 
 ```text
-~/.k-brain/
+~/.liveagent/
   config.json
   system.md
   brain.md
@@ -133,9 +133,9 @@ CLI、TUI 和 ACP 共用配置钩子与已启用插件钩子的事件入口。�
       session.jsonl
 ```
 
-使用 `kn sessions` 查看按项目分组的会话，使用 `kn sessions search <query>` 搜索，或用 `archive/delete` 管理；使用 `kn --resume <session-id>` 恢复会话。系统提示词保存在 `~/.k-brain/system.md`，通过 `/system` 编辑；用户级常驻指令保存在 `~/.k-brain/brain.md`，通过 `/brain` 编辑；项目级指令放在 `AGENTS.md` 或 `.k-brain/brain.md`。TUI 中 `/status` 显示当前会话文件路径。JSONL 记录包含元数据、消息、任务、压缩、定时任务和回退快照引用。不再支持 SQLite 存储或旧库迁移，也不会读取或修改已有数据库文件。
+使用 `kn sessions` 查看按项目分组的会话，使用 `kn sessions search <query>` 搜索，或用 `archive/delete` 管理；使用 `kn --resume <session-id>` 恢复会话。系统提示词保存在 `~/.liveagent/system.md`，通过 `/system` 编辑；用户级常驻指令保存在 `~/.liveagent/brain.md`，通过 `/brain` 编辑；项目级指令放在 `AGENTS.md` 或 `.liveagent/brain.md`。TUI 中 `/status` 显示当前会话文件路径。JSONL 记录包含元数据、消息、任务、压缩、定时任务和回退快照引用。不再支持 SQLite 存储或旧库迁移，也不会读取或修改已有数据库文件。
 
-项目授权使用 TOML 格式，保存于 `~/.k-brain/trusted_folders.toml`（Windows：`~\.k-brain\trusted_folders.toml`），每个目录使用 `[folders."<绝对路径>"]`，并记录 `trusted` 与 `decided_at`。
+项目授权使用 TOML 格式，保存于 `~/.liveagent/trusted_folders.toml`（Windows：`~\.liveagent\trusted_folders.toml`），每个目录使用 `[folders."<绝对路径>"]`，并记录 `trusted` 与 `decided_at`。
 
 ### OS 级沙箱
 
@@ -149,7 +149,7 @@ Linux 使用 Bubblewrap namespace，macOS 使用 Seatbelt，Windows 使用 WSL2 
 
 ### 插件
 
-项目插件放在 `.k-brain/plugins/<name>/plugin.json`，用户插件放在 `~/.k-brain/plugins/<name>/plugin.json`：
+项目插件放在 `.liveagent/plugins/<name>/plugin.json`，用户插件放在 `~/.liveagent/plugins/<name>/plugin.json`：
 
 ```json
 {"name":"sample","version":"1.0.0","command":["sample-plugin"],"prompt":"附加指令","tools":[{"name":"lookup","description":"查询值","inputSchema":{"type":"object"}}]}
@@ -200,7 +200,7 @@ TUI 使用当前终端的全屏界面，输入区固定在底部。首轮对话�
 <details>
 <summary>Markdown 提示词模板</summary>
 
-全局模板放在 `~/.k-brain/prompts/`，项目模板放在受信任项目的 `.k-brain/prompts/`；仅扫描当前目录，项目同名模板覆盖全局模板，内置命令优先。
+全局模板放在 `~/.liveagent/prompts/`，项目模板放在受信任项目的 `.liveagent/prompts/`；仅扫描当前目录，项目同名模板覆盖全局模板，内置命令优先。
 
 例如 `audit.md`：
 
@@ -221,7 +221,7 @@ argument-hint: "<模块> [关注点]"
 
 ### 界面语言
 
-输入 `/language` 打开选择器，↑/↓ 选择、Enter 应用、Esc 取消；也可以直接执行 `/language zh_cn`、`/language zh_Hant` 或 `/language en`。设置保存到 `~/.k-brain/config.json` 的 `language` 字段，默认英文，未知值回退为英文。
+输入 `/language` 打开选择器，↑/↓ 选择、Enter 应用、Esc 取消；也可以直接执行 `/language zh_cn`、`/language zh_Hant` 或 `/language en`。设置保存到 `~/.liveagent/config.json` 的 `language` 字段，默认英文，未知值回退为英文。
 
 `/export` 根据扩展名生成 Markdown（`.md`）、结构化 JSONL（`.jsonl`）或 HTML（`.html`）文件；`/import <path>` 可将 JSONL 消息追加到当前会话。`/forks` 显示当前会话及其分支关系。
 
@@ -233,7 +233,7 @@ argument-hint: "<模块> [关注点]"
 
 ### MCP 服务
 
-在 `~/.k-brain/config.json` 的 `mcp` 对象中配置服务，或使用 `kn mcp add <name> -- <command...>`、`kn mcp add <name> --url <url>` 添加。通过 `kn mcp list`、`kn mcp test <name>`、`kn mcp remove <name>` 管理服务，TUI 内使用 `/mcp` 管理连接。不自动发现或导入 Claude/Codex 的外部配置；ACP 客户端仍可显式传入当前会话的服务。
+在 `~/.liveagent/config.json` 的 `mcp` 对象中配置服务，或使用 `kn mcp add <name> -- <command...>`、`kn mcp add <name> --url <url>` 添加。通过 `kn mcp list`、`kn mcp test <name>`、`kn mcp remove <name>` 管理服务，TUI 内使用 `/mcp` 管理连接。不自动发现或导入 Claude/Codex 的外部配置；ACP 客户端仍可显式传入当前会话的服务。
 
 旧 `mcpImport` 字段和 `kn mcp import` 命令已删除。如果已有配置含 `mcpImport`，请删去该字段；未知配置字段会被拒绝。
 
@@ -257,7 +257,7 @@ ACP 已支持 `session/new`、`session/prompt`、`session/cancel`、`session/clo
 
 `session/load` 回放已保存的对话，`session/resume` 恢复对话但不回放。两者都保留用于记忆和提示缓存的会话 ID，并拒绝重复激活正在运行或加载的会话。关闭会话会等待当前回合及持久化结束，再释放 MCP 连接。存储失败会明确报错，模型请求同时失败时也会保留两项错误。
 
-全局记忆位于 `~/.k-brain/memory.md`，会话记忆与对话记录一起存放在 `~/.k-brain/sessions/<project>/<session-id>/memory.md`，三个入口均在每轮请求前刷新。删除会话也会删除其记忆，不导入旧的平铺 `<session-id>.memory.md` 文件。子代理保持独立上下文，不注入全局或父会话记忆。ACP 按请求中的工作目录发现项目技能。
+全局记忆位于 `~/.liveagent/memory.md`，会话记忆与对话记录一起存放在 `~/.liveagent/sessions/<project>/<session-id>/memory.md`，三个入口均在每轮请求前刷新。删除会话也会删除其记忆，不导入旧的平铺 `<session-id>.memory.md` 文件。子代理保持独立上下文，不注入全局或父会话记忆。ACP 按请求中的工作目录发现项目技能。
 
 TUI、ACP 与 `kn run` 共用会话历史映射，摘要和对话记录一起写入。不同入口交替续聊时保留最新摘要和消息，不覆盖原始对话。压缩完成后，即使后续模型请求被取消，已完成的摘要仍会保存；达到 `--max-turns` 后产生的最终回答也会保存到下一轮上下文。
 
@@ -297,9 +297,9 @@ Computer-use 运行依赖：Windows 使用系统 PowerShell；macOS 需为终端
 
 ```sh
 # macOS
-python3 -m venv ~/.k-brain/computer-venv
-~/.k-brain/computer-venv/bin/python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices
-export K_BRAIN_COMPUTER_PYTHON="$HOME/.k-brain/computer-venv/bin/python"
+python3 -m venv ~/.liveagent/computer-venv
+~/.liveagent/computer-venv/bin/python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices
+export K_BRAIN_COMPUTER_PYTHON="$HOME/.liveagent/computer-venv/bin/python"
 
 # Debian / Ubuntu (X11)
 sudo apt-get install python3-pyatspi python3-pil python3-pil.imagetk xdotool

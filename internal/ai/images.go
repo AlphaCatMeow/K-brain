@@ -61,7 +61,11 @@ func imageDataURL(ext string, data []byte) string {
 }
 
 func ImagePart(ext string, data []byte) ContentPart {
-	p := ContentPart{Type: "image_url"}
+	mime := "image/" + ext
+	if ext == "jpg" {
+		mime = "image/jpeg"
+	}
+	p := ContentPart{Type: "image_url", MimeType: mime}
 	p.ImageURL = &struct {
 		URL string `json:"url"`
 	}{URL: imageDataURL(ext, data)}

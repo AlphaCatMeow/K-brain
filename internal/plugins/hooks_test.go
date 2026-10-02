@@ -13,7 +13,7 @@ import (
 func TestRunHookUsesEventProjectAndPayload(t *testing.T) {
 	t.Setenv("K_BRAIN_HOME", t.TempDir())
 	project, worktree := t.TempDir(), t.TempDir()
-	dir := filepath.Join(project, ".k-brain", "plugins", "probe")
+	dir := filepath.Join(project, ".liveagent", "plugins", "probe")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}

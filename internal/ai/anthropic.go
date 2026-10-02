@@ -14,12 +14,15 @@ func NewAnthropic(baseURL, apiKey string) *Anthropic { return &Anthropic{OpenAI:
 func (c *Anthropic) Clone() Client                   { cp := *c.OpenAI; return &Anthropic{OpenAI: &cp} }
 
 func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
-	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, modelCatalogURL(c.BaseURL), nil)
+	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, c.modelCatalogURL(), nil)
 	if err != nil {
 		return nil, err
 	}
 	hr.Header.Set("x-api-key", c.APIKey)
 	hr.Header.Set("anthropic-version", "2023-06-01")
+	for name, values := range c.Headers {
+		hr.Header[name] = append([]string(nil), values...)
+	}
 	resp, err := c.HTTP.Do(hr)
 	if err != nil {
 		return nil, err
@@ -40,6 +43,9 @@ func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
 
 func (c *Anthropic) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
 	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	if err := validateAttachments(req.Messages, false, "Anthropic"); err != nil {
+		return nil, err
+	}
 	c.applyCache(&req)
 	if c.CacheRetention != "none" && req.PromptCacheRetention == "" {
 		req.PromptCacheRetention = "short"
@@ -139,6 +145,9 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 			ts = append(ts, map[string]any{"name": t.Function.Name, "description": t.Function.Description, "input_schema": schema})
 		}
 		p["tools"] = ts
+	}
+	if req.NativeWebSearch {
+		p["tools"] = appendSearchTool(p["tools"], map[string]any{"type": "web_search_20250305", "name": "web_search"})
 	}
 	return p, nil
 }

@@ -549,7 +549,7 @@ func (m *model) paletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) pushPanel(it *paletteItem) {
 	pp := it.panel(m)
 	if pp == nil {
-		m.append(errStyle.Render(it.title + ": nothing to choose from (check ~/.k-brain/config.json)"))
+		m.append(errStyle.Render(it.title + ": nothing to choose from (check ~/.liveagent/config.json)"))
 		return
 	}
 	m.palette.stack = append(m.palette.stack, pp)

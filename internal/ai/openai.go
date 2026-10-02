@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -35,6 +37,7 @@ func stripAuthored(msgs []Message) []Message {
 		out[i].Model = ""
 		out[i].RewoundFrom = ""
 		out[i].StopReason, out[i].RawStopReason = "", ""
+		out[i].HostedSearch = nil
 
 		if len(out[i].ToolCalls) > 0 {
 			calls := make([]ToolCall, len(out[i].ToolCalls))
@@ -166,9 +169,12 @@ type Client interface {
 }
 
 type OpenAI struct {
-	BaseURL string
-	APIKey  string
-	HTTP    *http.Client
+	BaseURL   string
+	APIKey    string
+	IsFullURL bool
+	ModelsURL string
+	Headers   http.Header
+	HTTP      *http.Client
 
 	MaxRetries int
 
@@ -181,7 +187,7 @@ type OpenAI struct {
 	SupportsLongCacheRetention bool
 }
 
-func (c *OpenAI) Clone() Client        { cp := *c; return &cp }
+func (c *OpenAI) Clone() Client        { cp := *c; cp.Headers = c.Headers.Clone(); return &cp }
 func (c *OpenAI) SetCacheKey(k string) { c.CacheKey = k }
 func (c *OpenAI) Endpoint() string     { return c.BaseURL }
 
@@ -208,9 +214,16 @@ func (c *OpenAI) SetCacheOptions(o CacheOptions) {
 func (c *OpenAI) policy() retryPolicy { return newRetryPolicy(c.MaxRetries, c.OnRetry) }
 
 func New(baseURL, apiKey string) *OpenAI {
+	return NewWithOptions(baseURL, apiKey, false, "", nil)
+}
+
+func NewWithOptions(baseURL, apiKey string, full bool, modelsURL string, headers map[string]string) *OpenAI {
+	h := make(http.Header)
+	for k, v := range headers {
+		h.Set(k, v)
+	}
 	return &OpenAI{
-		BaseURL:        strings.TrimRight(baseURL, "/"),
-		APIKey:         apiKey,
+		BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, IsFullURL: full, ModelsURL: modelsURL, Headers: h,
 		HTTP:           &http.Client{Transport: privacy.WrapTransport(http.DefaultTransport), Timeout: 10 * time.Minute},
 		CacheRetention: "short",
 	}
@@ -223,11 +236,13 @@ func (c *OpenAI) SetOnRetry(fn func(RetryEvent)) {
 func (c *OpenAI) SetMaxRetries(n int) { c.MaxRetries = n }
 
 type Request struct {
-	Model           string    `json:"model"`
-	Messages        []Message `json:"messages"`
-	Tools           []Tool    `json:"tools,omitempty"`
-	MaxTokens       int       `json:"max_tokens,omitempty"`
-	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	NativeWebSearch      bool      `json:"-"`
+	NativeSearchProvider string    `json:"-"`
+	Model                string    `json:"model"`
+	Messages             []Message `json:"messages"`
+	Tools                []Tool    `json:"tools,omitempty"`
+	MaxTokens            int       `json:"max_tokens,omitempty"`
+	ReasoningEffort      string    `json:"reasoning_effort,omitempty"`
 
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
@@ -341,11 +356,16 @@ func (mi ModelInfo) SupportsVision() bool {
 }
 
 func (c *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
-	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, modelCatalogURL(c.BaseURL), nil)
+	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, c.modelCatalogURL(), nil)
 	if err != nil {
 		return nil, err
 	}
-	hr.Header.Set("Authorization", "Bearer "+c.APIKey)
+	for name, values := range c.Headers {
+		hr.Header[name] = append([]string(nil), values...)
+	}
+	if !hasHeader(c.Headers, "Authorization") {
+		hr.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	resp, err := c.HTTP.Do(hr)
 	if err != nil {
 		return nil, err
@@ -364,8 +384,64 @@ func (c *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
 	return list.Data, nil
 }
 
-func modelCatalogURL(base string) string {
-	return strings.TrimRight(base, "/") + "/models"
+func hasHeader(headers http.Header, name string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *OpenAI) modelCatalogURL() string {
+	if c.ModelsURL != "" {
+		return c.ModelsURL
+	}
+	if c.IsFullURL {
+		return fullURLModelCatalog(c.BaseURL, "v1")
+	}
+	return strings.TrimRight(c.BaseURL, "/") + "/models"
+}
+
+var modelCatalogVersionSuffix = regexp.MustCompile(`(?i)/v\d+(?:beta)?$`)
+
+// Full generation endpoints use LiveAgent's parent API root, not the generation URL.
+func fullURLModelCatalog(endpoint, version string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	u.RawQuery, u.Fragment, u.RawFragment = "", "", ""
+	u.ForceQuery = false
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	lowerPath := strings.ToLower(path)
+	root := ""
+	for _, marker := range []string{"/v1/", "/v1beta/"} {
+		if index := strings.Index(lowerPath, marker); index >= 0 {
+			root = path[:index+len(marker)-1]
+			break
+		}
+	}
+	if root == "" {
+		if index := strings.LastIndex(path, "/"); index > 0 {
+			root = path[:index]
+		}
+	}
+	root = modelCatalogVersionSuffix.ReplaceAllString(strings.TrimRight(root, "/"), "")
+	if root == "" {
+		root = "/"
+	}
+	if strings.HasSuffix(strings.ToLower(path), "/models") && strings.HasSuffix(strings.ToLower(root), "/"+strings.ToLower(version)) {
+		return u.String()
+	}
+	if strings.HasSuffix(strings.ToLower(root), "/"+strings.ToLower(version)) {
+		path = root + "/models"
+	} else {
+		path = strings.TrimRight(root, "/") + "/" + version + "/models"
+	}
+	u.Path, _ = url.PathUnescape(path)
+	u.RawPath = path
+	return u.String()
 }
 
 func clampCacheKey(key string) string {
@@ -409,11 +485,17 @@ func (c *OpenAI) applyCacheHeaders(req *http.Request) {
 }
 
 func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(string), onToolCall func(id, name, args string)) (Message, Usage, error) {
+	if req.NativeWebSearch {
+		return Message{}, Usage{}, fmt.Errorf("native web search is unsupported for Chat Completions; use Responses, Anthropic Messages, or Gemini")
+	}
 	req.Stream = true
 	req.StreamOptions = &struct {
 		IncludeUsage bool `json:"include_usage"`
 	}{IncludeUsage: true}
 	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
+		return Message{}, Usage{}, err
+	}
 	messages, err := chatMessages(req.Messages)
 	if err != nil {
 		return Message{}, Usage{}, err
@@ -563,7 +645,11 @@ func validToolCallArgs(s string) bool {
 
 func (c *OpenAI) Complete(ctx context.Context, req Request) (string, Usage, error) {
 	req.Stream = false
-	messages, err := chatMessages(repairToolHistory(stripAuthored(req.Messages)))
+	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
+		return "", Usage{}, err
+	}
+	messages, err := chatMessages(req.Messages)
 	if err != nil {
 		return "", Usage{}, err
 	}

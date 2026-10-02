@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
+
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
@@ -94,12 +96,13 @@ type Tab struct {
 }
 
 type Browser struct {
-	mode       Mode
-	browser    *rod.Browser
-	page       *rod.Page
-	launcher   *launcher.Launcher
-	obtained   Obtained
-	profileDir string
+	mode          Mode
+	browser       *rod.Browser
+	page          *rod.Page
+	launcher      *launcher.Launcher
+	closeLauncher bool
+	obtained      Obtained
+	profileDir    string
 }
 
 type Obtained int
@@ -162,6 +165,7 @@ func openRod(ctx context.Context, mode Mode, sessionName string) (*Browser, erro
 			if ferr != nil {
 				return nil, fmt.Errorf("%w; dedicated fallback failed: %w", err, ferr)
 			}
+			fb.closeLauncher = true
 			return fb, nil
 		}
 		b.browser = rod.New().ControlURL(ws)
@@ -329,7 +333,7 @@ func (b *Browser) Close() error {
 		if !detach(b.browser) {
 			err = errDetachFailed
 		}
-	case b.mode == ModeDedicated:
+	case b.mode == ModeDedicated && !b.closeLauncher:
 
 		if !detach(b.browser) {
 			err = errDetachFailed
@@ -681,8 +685,13 @@ func (b *Browser) UploadFiles(ctx context.Context, selector string, paths []stri
 }
 
 func dedicatedProfileDir(home, sessionName string) string {
-	if sessionName == "" || sessionName == "default" {
-		return filepath.Join(home, ".k-brain", "browser", "dedicated-profile")
+	dir, err := datapath.Resolve(home, os.Getenv("LIVEAGENT_HOME"), os.Getenv("K_BRAIN_HOME"))
+	if err != nil {
+		datapath.Report(err)
+		return ""
 	}
-	return filepath.Join(home, ".k-brain", "browser", "dedicated-profile-"+sessionName)
+	if sessionName == "" || sessionName == "default" {
+		return filepath.Join(dir, "browser", "dedicated-profile")
+	}
+	return filepath.Join(dir, "browser", "dedicated-profile-"+sessionName)
 }

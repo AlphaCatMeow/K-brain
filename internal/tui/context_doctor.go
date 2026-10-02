@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/mcp"
 	"github.com/Stack-Cairn/K-brain/internal/skills"
 )
@@ -95,7 +94,7 @@ func (m *model) doctorReport() string {
 	}
 	rows = append(rows, ctxRow{fmt.Sprintf("tool schemas (%d tools)", len(m.agent.AllTools())), tb, "sent with every request"})
 
-	hist := agent.EstimateTokens(m.agent.Messages)
+	hist := m.agent.ContextTokens()
 	if hist > 0 {
 		rows = append(rows, ctxRow{"conversation history", hist * 4, "estimated"})
 	}

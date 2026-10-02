@@ -20,6 +20,9 @@ type ClientOptions struct {
 	APIKey     string
 	MaxRetries int
 	Cache      CacheOptions
+	IsFullURL  bool
+	ModelsURL  string
+	Headers    map[string]string
 }
 
 func NewClient(opts ClientOptions) (Client, error) {
@@ -37,13 +40,13 @@ func NewClient(opts ClientOptions) (Client, error) {
 	var client Client
 	switch api {
 	case APIChatCompletions:
-		client = New(opts.BaseURL, opts.APIKey)
+		client = NewWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)
 	case APIResponses:
-		client = NewResponses(opts.BaseURL, opts.APIKey)
+		client = &Responses{OpenAI: NewWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)}
 	case APIMessages:
-		client = NewAnthropic(opts.BaseURL, opts.APIKey)
+		client = &Anthropic{OpenAI: NewWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)}
 	case APIGemini, APIGoogleGemini:
-		client = NewGemini(opts.BaseURL, opts.APIKey)
+		client = NewGeminiWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)
 	default:
 		return nil, fmt.Errorf("unsupported API %q", api)
 	}

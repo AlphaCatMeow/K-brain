@@ -2,6 +2,7 @@ package recording
 
 import (
 	"github.com/Stack-Cairn/K-brain/internal/agent"
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
@@ -28,6 +29,28 @@ func Open(store *session.Store, id string, ag *agent.Agent) (*Recorder, error) {
 	ag.Messages = msgs
 	ag.RestoreUsage(meta.UsageSummary(stored))
 	return &Recorder{store: store, history: history, agent: ag, id: id}, nil
+}
+
+type Snapshot struct {
+	Messages []ai.Message
+	History  *session.History
+	Usage    ai.UsageSummary
+}
+
+func (r *Recorder) Snapshot() Snapshot {
+	if r == nil {
+		return Snapshot{}
+	}
+	return Snapshot{Messages: r.agent.MessagesSnapshot(), History: r.history.Clone(), Usage: r.agent.UsageSummary()}
+}
+
+func (r *Recorder) Restore(snapshot Snapshot) {
+	if r == nil {
+		return
+	}
+	// The Agent transaction restores messages and its complete usage state.
+	r.history = snapshot.History
+	r.err = nil
 }
 
 func (r *Recorder) Events() agent.Events {
@@ -59,11 +82,19 @@ func (r *Recorder) Events() agent.Events {
 }
 
 func (r *Recorder) Save() error {
+	return r.save("")
+}
+
+func (r *Recorder) SaveAtRevision(expectedRevision string) error {
+	return r.save(expectedRevision)
+}
+
+func (r *Recorder) save(expectedRevision string) error {
 	if r == nil {
 		return nil
 	}
 	if r.err != nil {
 		return r.err
 	}
-	return r.store.SaveHistoryWithUsage(r.id, r.history, r.agent.MessagesSnapshot(), r.agent.ModelName, r.agent.Provider, r.agent.UsageSummary())
+	return r.store.SaveHistoryWithUsageAtRevision(r.id, r.history, r.agent.MessagesSnapshot(), r.agent.ModelName, r.agent.Provider, r.agent.UsageSummary(), expectedRevision)
 }

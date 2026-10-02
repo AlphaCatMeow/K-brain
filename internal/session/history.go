@@ -17,6 +17,21 @@ type History struct {
 	compactions []Compaction
 }
 
+func (h *History) Clone() *History {
+	if h == nil {
+		return nil
+	}
+	clone := *h
+	clone.refs = append([]int(nil), h.refs...)
+	clone.raw = append([]int(nil), h.raw...)
+	clone.pending = make(map[int]ai.Message, len(h.pending))
+	for seq, msg := range h.pending {
+		clone.pending[seq] = msg
+	}
+	clone.compactions = append([]Compaction(nil), h.compactions...)
+	return &clone
+}
+
 func (s *Store) History(id string, initial []ai.Message) (*History, []ai.Message, error) {
 	d, err := s.get(id)
 	if err != nil {
@@ -97,18 +112,25 @@ func (h *History) NewContext(cutoff int) error {
 }
 
 func (s *Store) SaveHistory(id string, h *History, msgs []ai.Message, model, provider string) error {
-	return s.saveHistory(id, h, msgs, model, provider, nil)
+	return s.saveHistory(id, h, msgs, model, provider, nil, "")
 }
 
 func (s *Store) SaveHistoryWithUsage(id string, h *History, msgs []ai.Message, model, provider string, usage ai.UsageSummary) error {
-	return s.saveHistory(id, h, msgs, model, provider, &usage)
+	return s.saveHistory(id, h, msgs, model, provider, &usage, "")
 }
 
-func (s *Store) saveHistory(id string, h *History, msgs []ai.Message, model, provider string, usage *ai.UsageSummary) error {
+func (s *Store) SaveHistoryWithUsageAtRevision(id string, h *History, msgs []ai.Message, model, provider string, usage ai.UsageSummary, expectedRevision string) error {
+	return s.saveHistory(id, h, msgs, model, provider, &usage, expectedRevision)
+}
+
+func (s *Store) saveHistory(id string, h *History, msgs []ai.Message, model, provider string, usage *ai.UsageSummary, expectedRevision string) error {
 	if err := h.Observe(msgs); err != nil {
 		return err
 	}
 	err := s.update(id, func(d *sessionData) error {
+		if expectedRevision != "" && expectedRevision != d.revision() {
+			return ErrRevision
+		}
 		if usage != nil {
 			d.Meta.setUsage(*usage)
 		}

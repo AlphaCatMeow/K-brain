@@ -17,8 +17,8 @@ func TestDirsForUsesRequestedProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirs := DirsFor(project)
-	if dirs[0] != filepath.Join(project, ".agents", "skills") {
-		t.Fatalf("dirs = %v", dirs)
+	if len(dirs) < 2 || dirs[0] != filepath.Join(project, ".liveagent", "skills") || dirs[1] != filepath.Join(project, ".agents", "skills") {
+		t.Fatalf("expected requested project directories before global skills, got %v", dirs)
 	}
 	for _, skill := range Scan(dirs...) {
 		if skill.Name == "project-only" {

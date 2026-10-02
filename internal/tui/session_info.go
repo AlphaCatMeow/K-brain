@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/Stack-Cairn/K-brain/internal/agent"
 )
 
 func (m *model) sessionInfo() string {
@@ -31,9 +29,9 @@ func (m *model) sessionInfo() string {
 	if m.agent != nil {
 		u := m.agent.TotalUsage()
 		usage = fmtUsage(u)
-		messages = max(len(m.agent.Messages)-1, 0)
+		messages = max(len(m.agent.MessagesSnapshot())-1, 0)
 		if m.agent.ContextLimit > 0 {
-			context = fmt.Sprintf("\ncontext: %d%% of %s", agent.EstimateTokens(m.agent.Messages)*100/m.agent.ContextLimit, fmtTok(m.agent.ContextLimit))
+			context = fmt.Sprintf("\ncontext: %d%% of %s", m.agent.ContextTokens()*100/m.agent.ContextLimit, fmtTok(m.agent.ContextLimit))
 		}
 	}
 	if m.store != nil && m.sessionID != "" {

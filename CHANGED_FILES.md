@@ -1,210 +1,833 @@
 # Complete changed-file manifest
 
-This delivery spans two independent repositories. Paths below are repository-qualified; LiveAgent entries are not paths inside the K-brain source tree. The complete frontend source and tests are also shipped as `integrations/liveagent/kbrain-backend.patch` in K-brain.
+## Current integration snapshot
 
-## K-brain
+This manifest covers both repository working trees relative to their original integration bases, including deleted and untracked files. Existing repository scratch paths are inventoried as found; new verification evidence is stored only in the designated external scratch directory. This records scope, not successful verification of every path.
+
+Generated UTC: 2026-10-02T04:20:02.495697+00:00
+
+Statuses: `M` modified, `A` added (including untracked), `D` deleted. The snapshots use temporary Git indexes and preserve the actual repository indexes.
+
+### K-brain
 
 - Base commit: `7e9b7d5b2c195afa923bd7919b0b81287ffef7b2`
-- Scope: backend implementation, protocol, adapters, persistence, tests, documentation and companion frontend delivery.
+- Current HEAD: `e6743be5600046f5c0fb3db256dbf2c49abf66af`
+- Changed paths: 285
 
 ```text
-K-brain/CHANGED_FILES.md
-K-brain/cmd/kn/backend.go
-K-brain/cmd/kn/backend_cli_test.go
-K-brain/cmd/kn/main.go
-K-brain/docs/liveagent-backend.md
-K-brain/integrations/liveagent/README.md
-K-brain/integrations/liveagent/kbrain-backend.patch
-K-brain/internal/agent/agent.go
-K-brain/internal/agent/background.go
-K-brain/internal/agent/events.go
-K-brain/internal/agent/events_test.go
-K-brain/internal/agent/response.go
-K-brain/internal/agent/response_metadata_test.go
-K-brain/internal/agent/tool_execution.go
-K-brain/internal/ai/factory.go
-K-brain/internal/ai/factory_test.go
-K-brain/internal/ai/gemini.go
-K-brain/internal/ai/gemini_test.go
-K-brain/internal/ai/message.go
-K-brain/internal/ai/stop.go
-K-brain/internal/backend/cors_test.go
-K-brain/internal/backend/history.go
-K-brain/internal/backend/history_contract_test.go
-K-brain/internal/backend/history_extended_test.go
-K-brain/internal/backend/server.go
-K-brain/internal/backend/server_test.go
-K-brain/internal/backend/settings.go
-K-brain/internal/backend/settings_review_test.go
-K-brain/internal/backend/settings_test.go
-K-brain/internal/backend/subagent_workflow_test.go
-K-brain/internal/backend/text.go
-K-brain/internal/backend/text_test.go
-K-brain/internal/backend/tool_history_test.go
-K-brain/internal/browser/e2e_test.go
-K-brain/internal/browser/parity_test.go
-K-brain/internal/config/config.go
-K-brain/internal/config/conflict_test.go
-K-brain/internal/config/load_file.go
-K-brain/internal/prompts/system.go
-K-brain/internal/prompts/system_test.go
-K-brain/internal/protocol/fixtures_test.go
-K-brain/internal/protocol/protocol.go
-K-brain/internal/protocol/protocol_test.go
-K-brain/internal/protocol/providers_integration_test.go
-K-brain/internal/protocol/testdata/canonical_events.json
-K-brain/internal/protocol/testdata/canonical_messages.json
-K-brain/internal/routing/client.go
-K-brain/internal/routing/route_test.go
-K-brain/internal/session/messages.go
-K-brain/internal/session/metadata.go
-K-brain/internal/session/mutation.go
-K-brain/internal/session/page.go
-K-brain/internal/session/session.go
-K-brain/internal/session/session_test.go
-K-brain/internal/session/transcript.go
-K-brain/internal/tools/attachments.go
-K-brain/internal/tools/attachments_test.go
-K-brain/internal/tools/tools.go
-K-brain/internal/tui/gitstatus_test.go
+M	.gitignore
+A	CHANGED_FILES.md
+M	README.md
+M	README.zh-CN.md
+M	cmd/kn/acp.go
+A	cmd/kn/backend.go
+A	cmd/kn/backend_cli_test.go
+M	cmd/kn/browser.go
+M	cmd/kn/main.go
+M	cmd/kn/mcp.go
+M	cmd/kn/run.go
+A	cron-parity-design.md
+A	docs/aidocs/README.md
+A	docs/aidocs/README.zh-CN.md
+A	docs/aidocs/architecture.md
+A	docs/aidocs/compaction-and-trajectory.md
+A	docs/aidocs/frontend-interactions.md
+A	docs/aidocs/gateway-and-queue.md
+A	docs/aidocs/messages-and-models.md
+A	docs/aidocs/parity-plan.md
+A	docs/aidocs/resources-and-automation.md
+A	docs/aidocs/sessions-and-history.md
+A	docs/aidocs/sources.md
+A	docs/aidocs/tools-and-host.md
+A	docs/aidocs/verification-and-delivery.md
+A	docs/codex-app-server-reference.md
+A	docs/liveagent-backend.md
+A	docs/liveagent-compatibility-matrix.md
+M	docs/user-guide/01-getting-started.md
+M	docs/user-guide/02-prompts.md
+M	docs/user-guide/05-configuration.md
+M	docs/user-guide/07-sessions.md
+M	docs/user-guide/10-headless-acp.md
+M	docs/user-guide/12-troubleshooting.md
+A	integrations/liveagent/README.md
+A	integrations/liveagent/kbrain-backend.patch
+M	internal/agent/agent.go
+M	internal/agent/agent_test.go
+M	internal/agent/background.go
+A	internal/agent/compact_transaction.go
+M	internal/agent/events.go
+M	internal/agent/events_test.go
+A	internal/agent/lifecycle.go
+A	internal/agent/memory_runtime.go
+A	internal/agent/memory_store_tool.go
+M	internal/agent/mode.go
+M	internal/agent/model.go
+A	internal/agent/prompt_resources.go
+A	internal/agent/prompt_resources_test.go
+A	internal/agent/request_observer.go
+M	internal/agent/response.go
+A	internal/agent/response_metadata_test.go
+M	internal/agent/session_start.go
+A	internal/agent/skills.go
+A	internal/agent/skills_test.go
+M	internal/agent/subagent.go
+M	internal/agent/tool_execution.go
+A	internal/agent/trajectory_child.go
+A	internal/agent/turn_observer.go
+M	internal/agent/workflowtool.go
+M	internal/ai/anthropic.go
+M	internal/ai/anthropic_stream.go
+A	internal/ai/attachments.go
+A	internal/ai/attachments_test.go
+M	internal/ai/content.go
+A	internal/ai/diagnostic_observer.go
+M	internal/ai/factory.go
+M	internal/ai/factory_test.go
+A	internal/ai/gemini.go
+A	internal/ai/gemini_test.go
+M	internal/ai/http.go
+M	internal/ai/images.go
+M	internal/ai/message.go
+A	internal/ai/native_search.go
+A	internal/ai/native_search_stream_test.go
+A	internal/ai/native_search_test.go
+M	internal/ai/openai.go
+M	internal/ai/responses.go
+M	internal/ai/responses_stream.go
+M	internal/ai/stop.go
+A	internal/backend/checkpoint.go
+A	internal/backend/checkpoint_capture_test.go
+A	internal/backend/checkpoint_import.go
+A	internal/backend/checkpoint_import_acceptance_test.go
+A	internal/backend/checkpoint_import_test.go
+A	internal/backend/checkpoint_response_test.go
+A	internal/backend/compact.go
+A	internal/backend/compact_failure_test.go
+A	internal/backend/compact_test.go
+A	internal/backend/cors_test.go
+A	internal/backend/cron_canonical.go
+A	internal/backend/cron_canonical_test.go
+A	internal/backend/cron_handler.go
+A	internal/backend/cron_http_test.go
+A	internal/backend/cron_manager.go
+A	internal/backend/cron_store.go
+A	internal/backend/cron_store_test.go
+A	internal/backend/cron_termination_test.go
+A	internal/backend/cron_tool.go
+A	internal/backend/cron_tool_http_test.go
+A	internal/backend/cron_types.go
+A	internal/backend/cron_validate.go
+A	internal/backend/cron_wiring_test.go
+A	internal/backend/failover_integration_test.go
+A	internal/backend/history.go
+A	internal/backend/history_contract_test.go
+A	internal/backend/history_extended_test.go
+A	internal/backend/history_import.go
+A	internal/backend/history_import_edge_test.go
+A	internal/backend/history_import_repair.go
+A	internal/backend/history_import_repair_test.go
+A	internal/backend/history_import_test.go
+A	internal/backend/history_search.go
+A	internal/backend/hooks.go
+A	internal/backend/hooks_handler.go
+A	internal/backend/hooks_test.go
+A	internal/backend/liveagent_process_http_test.go
+A	internal/backend/mcp.go
+A	internal/backend/mcp_optional_test.go
+A	internal/backend/memory.go
+A	internal/backend/memory_lifecycle_test.go
+A	internal/backend/memory_organizer.go
+A	internal/backend/memory_organizer_test.go
+A	internal/backend/prompts.go
+A	internal/backend/prompts_test.go
+A	internal/backend/provider_import_acceptance_test.go
+A	internal/backend/provider_usage.go
+A	internal/backend/provider_usage_http.go
+A	internal/backend/provider_usage_test.go
+A	internal/backend/questions.go
+A	internal/backend/questions_test.go
+A	internal/backend/run_options.go
+A	internal/backend/run_options_http_test.go
+A	internal/backend/run_options_test.go
+A	internal/backend/run_start.go
+A	internal/backend/run_start_test.go
+A	internal/backend/server.go
+A	internal/backend/server_test.go
+A	internal/backend/settings.go
+A	internal/backend/settings_provider.go
+A	internal/backend/settings_provider_test.go
+A	internal/backend/settings_public.go
+A	internal/backend/settings_review_test.go
+A	internal/backend/settings_test.go
+A	internal/backend/shutdown_test.go
+A	internal/backend/skills_http.go
+A	internal/backend/skills_http_test.go
+A	internal/backend/subagent_workflow_test.go
+A	internal/backend/terminal_http.go
+A	internal/backend/terminal_http_test.go
+A	internal/backend/text.go
+A	internal/backend/text_test.go
+A	internal/backend/tool_history_test.go
+A	internal/backend/trajectory.go
+A	internal/backend/trajectory_details.go
+A	internal/backend/trajectory_history.go
+A	internal/backend/trajectory_recording.go
+A	internal/backend/trajectory_remaining_test.go
+A	internal/backend/trajectory_test.go
+M	internal/browser/browser.go
+M	internal/browser/e2e_test.go
+M	internal/browser/extrelay/embed.go
+M	internal/browser/parity_test.go
+M	internal/computer/policy.go
+M	internal/config/brain.go
+M	internal/config/brain_test.go
+M	internal/config/config.go
+M	internal/config/config_test.go
+A	internal/config/conflict_test.go
+A	internal/config/load_file.go
+A	internal/config/paths.go
+M	internal/config/system.go
+A	internal/datapath/paths.go
+A	internal/datapath/paths_test.go
+M	internal/i18n/i18n.go
+A	internal/mcp/live.go
+A	internal/mcp/live_test.go
+A	internal/mcp/search.go
+A	internal/memory/store.go
+A	internal/memory/store_dispatch.go
+A	internal/memory/store_dispatch_test.go
+A	internal/memory/store_mutation.go
+A	internal/memory/store_native.go
+A	internal/memory/store_organizer.go
+A	internal/memory/store_organizer_test.go
+A	internal/memory/store_query.go
+A	internal/memory/store_test.go
+A	internal/memory/store_types.go
+A	internal/memoryruntime/gating_test.go
+A	internal/memoryruntime/organizer.go
+A	internal/memoryruntime/runtime.go
+A	internal/memoryruntime/runtime_test.go
+A	internal/memoryruntime/tool.go
+M	internal/plugins/hooks_test.go
+M	internal/plugins/manager.go
+A	internal/prompts/resources.go
+A	internal/prompts/resources_test.go
+M	internal/prompts/system.go
+M	internal/prompts/system_test.go
+M	internal/prompts/templates/templates.go
+A	internal/protocol/attachments.go
+A	internal/protocol/attachments_test.go
+A	internal/protocol/backend_providers_integration_test.go
+A	internal/protocol/fixtures_test.go
+A	internal/protocol/protocol.go
+A	internal/protocol/protocol_test.go
+A	internal/protocol/providers_integration_test.go
+A	internal/protocol/testdata/canonical_events.json
+A	internal/protocol/testdata/canonical_messages.json
+A	internal/resources/prompts.go
+A	internal/resources/prompts_test.go
+M	internal/routing/client.go
+A	internal/routing/failover.go
+A	internal/routing/failover_retry_http_test.go
+A	internal/routing/failover_route.go
+A	internal/routing/failover_test.go
+M	internal/routing/model.go
+M	internal/routing/route.go
+M	internal/routing/route_test.go
+M	internal/routing/task.go
+A	internal/routing/trajectory_diagnostic_test.go
+A	internal/session/checkpoint.go
+M	internal/session/history.go
+A	internal/session/history_search.go
+A	internal/session/import.go
+A	internal/session/import_test.go
+M	internal/session/messages.go
+M	internal/session/metadata.go
+A	internal/session/mutation.go
+M	internal/session/page.go
+M	internal/session/recording/recorder.go
+M	internal/session/session.go
+M	internal/session/session_test.go
+M	internal/session/transcript.go
+M	internal/skills/directories_test.go
+A	internal/skills/managed.go
+A	internal/skills/managed_test.go
+M	internal/skills/skills.go
+M	internal/skills/skills_test.go
+A	internal/skills/store.go
+A	internal/skills/transport.go
+M	internal/tools/attachments.go
+M	internal/tools/attachments_test.go
+A	internal/tools/liveagent_backend_test.go
+A	internal/tools/liveagent_catalog.go
+A	internal/tools/liveagent_documents.go
+A	internal/tools/liveagent_documents_test.go
+A	internal/tools/liveagent_edit.go
+A	internal/tools/liveagent_http_test.go
+A	internal/tools/liveagent_policy.go
+A	internal/tools/liveagent_process.go
+A	internal/tools/liveagent_process_actions.go
+A	internal/tools/liveagent_process_log_test.go
+A	internal/tools/liveagent_process_sandbox_test.go
+A	internal/tools/liveagent_process_test.go
+A	internal/tools/liveagent_read.go
+A	internal/tools/liveagent_schema_metadata_test.go
+A	internal/tools/liveagent_schemas.go
+A	internal/tools/liveagent_search.go
+A	internal/tools/liveagent_shell.go
+A	internal/tools/liveagent_terminal.go
+A	internal/tools/liveagent_tools.go
+A	internal/tools/liveagent_tools_test.go
+M	internal/tools/question.go
+A	internal/tools/run_identity.go
+A	internal/tools/terminal.go
+A	internal/tools/terminal_test.go
+M	internal/tools/tools.go
+M	internal/tui/brain_cmd.go
+M	internal/tui/compact_cmd_test.go
+M	internal/tui/context_doctor.go
+M	internal/tui/context_doctor_test.go
+M	internal/tui/gitstatus_test.go
+M	internal/tui/menu_key_test.go
+M	internal/tui/modelpicker.go
+M	internal/tui/palette.go
+M	internal/tui/parity_test.go
+M	internal/tui/prompt_templates.go
+M	internal/tui/session_info.go
+M	internal/tui/session_start_test.go
+M	internal/tui/setup.go
+M	internal/tui/tasks_test.go
+M	internal/tui/trust.go
+M	internal/tui/tui.go
+M	internal/workflow/persistence.go
 ```
 
-## LiveAgent
+### LiveAgent
 
 - Base commit: `e63588a1328be66530353ad6d274db14b5f0e68d`
-- Integration commit: `cc594a60f89f51d737cd132efb3d59e64d3266ec`
-- Files: 126
-- All entries below are included in the companion patch.
+- Current HEAD: `cc594a60f89f51d737cd132efb3d59e64d3266ec`
+- Changed paths: 508
 
 ```text
-liveagent/crates/agent-gateway/web/src/lib/sidebar/webSidebarBackend.ts
-liveagent/crates/agent-gui/src/App.tsx
-liveagent/crates/agent-gui/src/agent-ui-adapters/composerImagePreview.ts
-liveagent/crates/agent-gui/src/agent-ui-adapters/directoryPicker.tsx
-liveagent/crates/agent-gui/src/agent-ui-adapters/imagePreview.ts
-liveagent/crates/agent-gui/src/agent-ui-adapters/providerSettings.tsx
-liveagent/crates/agent-gui/src/agent-ui-adapters/sandboxCapability.ts
-liveagent/crates/agent-gui/src/agent-ui-adapters/systemSettings.tsx
-liveagent/crates/agent-gui/src/agent-ui-adapters/workspacePreview.tsx
-liveagent/crates/agent-gui/src/components/MacOsTitleBarSpacer.tsx
-liveagent/crates/agent-gui/src/components/ReleaseAnnouncementDialog.tsx
-liveagent/crates/agent-gui/src/components/cron/CronPromptRunner.tsx
-liveagent/crates/agent-gui/src/lib/appUpdates.ts
-liveagent/crates/agent-gui/src/lib/automation/backend.ts
-liveagent/crates/agent-gui/src/lib/automation/hookRunner.ts
-liveagent/crates/agent-gui/src/lib/backup/index.ts
-liveagent/crates/agent-gui/src/lib/chat/conversation/run/gatewayBridgeEvents.ts
-liveagent/crates/agent-gui/src/lib/chat/history/chatHistory.ts
-liveagent/crates/agent-gui/src/lib/debug/agentDebug.ts
-liveagent/crates/agent-gui/src/lib/git/tauriGitClient.ts
-liveagent/crates/agent-gui/src/lib/host.ts
-liveagent/crates/agent-gui/src/lib/kbrain/catalog.ts
-liveagent/crates/agent-gui/src/lib/kbrain/client.ts
-liveagent/crates/agent-gui/src/lib/kbrain/history.ts
-liveagent/crates/agent-gui/src/lib/kbrain/mapping.ts
-liveagent/crates/agent-gui/src/lib/kbrain/turn.ts
-liveagent/crates/agent-gui/src/lib/kbrain/types.ts
-liveagent/crates/agent-gui/src/lib/managed-process/backend.ts
-liveagent/crates/agent-gui/src/lib/providers/deepSeekAttachments.ts
-liveagent/crates/agent-gui/src/lib/providers/nativeResponsesAttachments.ts
-liveagent/crates/agent-gui/src/lib/providers/runtime/providerRuntimeConfig.ts
-liveagent/crates/agent-gui/src/lib/providers/runtime/streamByApi.ts
-liveagent/crates/agent-gui/src/lib/providers/runtime/textOnlyRuntime.ts
-liveagent/crates/agent-gui/src/lib/providers/runtime/types.ts
-liveagent/crates/agent-gui/src/lib/providers/usageQuery.ts
-liveagent/crates/agent-gui/src/lib/releaseAnnouncement.ts
-liveagent/crates/agent-gui/src/lib/runtimePlatform.ts
-liveagent/crates/agent-gui/src/lib/settings/storage.ts
-liveagent/crates/agent-gui/src/lib/sftp/tauriSftpClient.ts
-liveagent/crates/agent-gui/src/lib/shortcuts/globalShortcuts.ts
-liveagent/crates/agent-gui/src/lib/sidebar/guiSidebarBackend.ts
-liveagent/crates/agent-gui/src/lib/stt/desktopSttSettingsService.ts
-liveagent/crates/agent-gui/src/lib/stt/desktopSttTransport.ts
-liveagent/crates/agent-gui/src/lib/subagents/ipc/store.ts
-liveagent/crates/agent-gui/src/lib/subagents/ipc/worktree.ts
-liveagent/crates/agent-gui/src/lib/system/clipboardText.ts
-liveagent/crates/agent-gui/src/lib/system/powerActivity.ts
-liveagent/crates/agent-gui/src/lib/terminal/tauriSshLocalForwardClient.ts
-liveagent/crates/agent-gui/src/lib/terminal/tauriTerminalClient.ts
-liveagent/crates/agent-gui/src/lib/tools/browserTools.ts
-liveagent/crates/agent-gui/src/lib/tools/builtinRegistry.ts
-liveagent/crates/agent-gui/src/lib/tools/cuaSelfGuard.ts
-liveagent/crates/agent-gui/src/lib/tools/fsTools.ts
-liveagent/crates/agent-gui/src/lib/tools/invokeWithAbort.ts
-liveagent/crates/agent-gui/src/lib/tools/mcpManagerTools.ts
-liveagent/crates/agent-gui/src/lib/tools/mcpTools.ts
-liveagent/crates/agent-gui/src/lib/tools/shellTools.ts
-liveagent/crates/agent-gui/src/lib/tools/sshManagerTools.ts
-liveagent/crates/agent-gui/src/lib/tools/terminalTools.ts
-liveagent/crates/agent-gui/src/lib/tools/tunnelManagerTools.ts
-liveagent/crates/agent-gui/src/lib/tray/trayMenu.ts
-liveagent/crates/agent-gui/src/lib/tunnels/tauriTunnelClient.ts
-liveagent/crates/agent-gui/src/lib/workspace-activity/tauriWorkspaceActivityClient.ts
-liveagent/crates/agent-gui/src/lib/workspaceRootGrants.ts
-liveagent/crates/agent-gui/src/pages/ChatPage.tsx
-liveagent/crates/agent-gui/src/pages/chat/components/DesktopCheckpointRewindProvider.tsx
-liveagent/crates/agent-gui/src/pages/chat/composer/composerDraftText.ts
-liveagent/crates/agent-gui/src/pages/chat/gateway/useGatewayBridgeListeners.ts
-liveagent/crates/agent-gui/src/pages/chat/gateway/useGatewayRunMirrorCoordinator.ts
-liveagent/crates/agent-gui/src/pages/chat/gateway/useGatewayStatus.ts
-liveagent/crates/agent-gui/src/pages/chat/history/useConversationHistoryActions.ts
-liveagent/crates/agent-gui/src/pages/chat/history/useSharedHistory.ts
-liveagent/crates/agent-gui/src/pages/chat/hooks/usePendingUploads.ts
-liveagent/crates/agent-gui/src/pages/chat/hooks/useTauriFileDrop.ts
-liveagent/crates/agent-gui/src/pages/chat/hooks/useUploadZoneDrop.ts
-liveagent/crates/agent-gui/src/pages/chat/queue/useChatTurnQueue.ts
-liveagent/crates/agent-gui/src/pages/chat/runtime/useChatModelSelection.ts
-liveagent/crates/agent-gui/src/pages/chat/runtime/useManualCompaction.ts
-liveagent/crates/agent-gui/src/pages/chat/runtime/useSendChatTurn.ts
-liveagent/crates/agent-gui/src/pages/chat/surfaces/ConversationPaneHost.tsx
-liveagent/crates/agent-gui/src/pages/chat/surfaces/ConversationTrajectorySurface.tsx
-liveagent/crates/agent-gui/src/pages/chat/turns/runAgentConversationTurn.ts
-liveagent/crates/agent-gui/src/pages/chat/turns/runKBrainConversationTurn.ts
-liveagent/crates/agent-gui/src/pages/chat/turns/runTextConversationTurn.ts
-liveagent/crates/agent-gui/src/pages/chat/workspace/cloneTasks.ts
-liveagent/crates/agent-gui/src/pages/chat/workspace/useProjectTerminals.tsx
-liveagent/crates/agent-gui/src/pages/chat/workspace/useWorkspaceProjects.ts
-liveagent/crates/agent-gui/src/pages/settings/AboutSection.tsx
-liveagent/crates/agent-gui/src/pages/settings/BackupSyncSection.tsx
-liveagent/crates/agent-gui/src/shims/tauriCore.ts
-liveagent/crates/agent-gui/src/shims/tauriEvent.ts
-liveagent/crates/agent-gui/src/shims/tauriOpener.ts
-liveagent/crates/agent-gui/src/shims/tauriPath.ts
-liveagent/crates/agent-gui/test/chat/chat-react-performance.test.mjs
-liveagent/crates/agent-gui/test/chat/conversation-title-job.test.mjs
-liveagent/crates/agent-gui/test/chat/gateway-bridge-events.test.mjs
-liveagent/crates/agent-gui/test/chat/history-share-origin.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-conversation-turn.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-host-boundary.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-model-catalog.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-settings-component.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-settings-ui.test.mjs
-liveagent/crates/agent-gui/test/chat/kbrain-sharing-ui.test.mjs
-liveagent/crates/agent-gui/test/chat/mention-app-suggestions.test.mjs
-liveagent/crates/agent-gui/test/chat/sidebar-conversation-menu.test.mjs
-liveagent/crates/agent-gui/test/chat/sidebar-reconcile.test.mjs
-liveagent/crates/agent-gui/test/providers/kbrain-chat-history-seam.test.mjs
-liveagent/crates/agent-gui/test/providers/kbrain-client.test.mjs
-liveagent/crates/agent-gui/test/providers/kbrain-history.test.mjs
-liveagent/crates/agent-gui/test/providers/kbrain-provider-boundary.test.mjs
-liveagent/crates/agent-gui/test/providers/kbrain-turn.test.mjs
-liveagent/crates/agent-gui/test/settings/storage.test.mjs
-liveagent/crates/agent-gui/test/settings/workspace-resource-settings.test.mjs
-liveagent/crates/agent-ui/src/components/chat/ChatHistorySidebarRows.tsx
-liveagent/crates/agent-ui/src/components/chat/HistoryShareModal.tsx
-liveagent/crates/agent-ui/src/components/chat/SharedHistoryManagerModal.tsx
-liveagent/crates/agent-ui/src/components/chat/TranscriptMessageActions.tsx
-liveagent/crates/agent-ui/src/i18n/translations/enUSSettings.ts
-liveagent/crates/agent-ui/src/i18n/translations/zhCNSettings.ts
-liveagent/crates/agent-ui/src/lib/chat/checkpointRewind.tsx
-liveagent/crates/agent-ui/src/lib/chat/historyShareOrigin.ts
-liveagent/crates/agent-ui/src/lib/sidebar/scope.ts
-liveagent/crates/agent-ui/src/lib/sidebar/types.ts
-liveagent/crates/agent-ui/src/pages/settings/KBrainSettingsSection.tsx
-liveagent/crates/agent-ui/src/pages/settings/SettingsPage.tsx
-liveagent/crates/agent-ui/src/pages/settings/providerUtils.ts
+M	.github/workflows/desktop-release.yml
+M	.gitignore
+M	Makefile
+M	README.md
+M	README.zh-CN.md
+M	crates/agent-gateway/internal/config/config.go
+A	crates/agent-gateway/internal/kbrain/client.go
+A	crates/agent-gateway/internal/kbrain/client_test.go
+A	crates/agent-gateway/internal/kbrain/events.go
+A	crates/agent-gateway/internal/kbrain/events_test.go
+A	crates/agent-gateway/internal/kbrain/history.go
+A	crates/agent-gateway/internal/kbrain/history_workdirs_test.go
+A	crates/agent-gateway/internal/kbrain/queue.go
+A	crates/agent-gateway/internal/kbrain/queue_http_test.go
+A	crates/agent-gateway/internal/kbrain/queue_persistence_test.go
+A	crates/agent-gateway/internal/kbrain/queue_test.go
+A	crates/agent-gateway/internal/kbrain/relay.go
+A	crates/agent-gateway/internal/kbrain/relay_cancel_test.go
+A	crates/agent-gateway/internal/kbrain/relay_regression_test.go
+A	crates/agent-gateway/internal/kbrain/relay_test.go
+A	crates/agent-gateway/internal/kbrain/settings.go
+A	crates/agent-gateway/internal/kbrain/settings_contract_test.go
+A	crates/agent-gateway/internal/kbrain/terminal.go
+A	crates/agent-gateway/internal/kbrain/terminal_test.go
+M	crates/agent-gateway/internal/proto/v2/gateway.pb.go
+M	crates/agent-gateway/internal/proto/v2/gateway_ws.pb.go
+M	crates/agent-gateway/internal/protocol/pbws/browser_events.go
+M	crates/agent-gateway/internal/protocol/pbws/browser_local.go
+M	crates/agent-gateway/internal/protocol/pbws/browser_relay.go
+M	crates/agent-gateway/internal/protocol/pbws/guard.go
+M	crates/agent-gateway/internal/protocol/pbws/guard_test.go
+M	crates/agent-gateway/internal/protocol/pbws/server.go
+A	crates/agent-gateway/internal/session/local_workspace_activity.go
+A	crates/agent-gateway/internal/session/local_workspace_activity_test.go
+M	crates/agent-gateway/internal/session/manager.go
+M	crates/agent-gateway/internal/session/manager_dispatch.go
+M	crates/agent-gateway/proto/v2/gateway.proto
+M	crates/agent-gateway/test/helpers/load-web-module.mjs
+A	crates/agent-gateway/test/websocket/v2_kbrain_history_test.go
+A	crates/agent-gateway/test/websocket/v2_kbrain_history_workdirs_test.go
+A	crates/agent-gateway/test/websocket/v2_kbrain_queue_test.go
+A	crates/agent-gateway/test/websocket/v2_kbrain_test.go
+M	crates/agent-gateway/test/websocket/v2_multiagent_test.go
+M	crates/agent-gateway/test/webui/chat-command-pipeline.test.mjs
+M	crates/agent-gateway/test/webui/chat-turn-queue.test.mjs
+A	crates/agent-gateway/test/webui/gateway-conversation-restore.test.mjs
+M	crates/agent-gateway/test/webui/history-chat-ui.test.mjs
+M	crates/agent-gateway/web/package.json
+D	crates/agent-gateway/web/src/agent-ui-adapters/memoryOrganizer.ts
+M	crates/agent-gateway/web/src/agent-ui-adapters/providerSettings.tsx
+M	crates/agent-gateway/web/src/agent-ui-adapters/settingsExtension.tsx
+M	crates/agent-gateway/web/src/app/GatewayApp.tsx
+M	crates/agent-gateway/web/src/app/GatewayAppView.tsx
+M	crates/agent-gateway/web/src/app/gatewayChatCommandActions.ts
+M	crates/agent-gateway/web/src/app/gatewayConversationActions.ts
+A	crates/agent-gateway/web/src/app/gatewayConversationRestore.ts
+M	crates/agent-gateway/web/src/app/gatewayHistoryWindowActions.ts
+M	crates/agent-gateway/web/src/app/hooks/useGatewayClients.ts
+M	crates/agent-gateway/web/src/app/hooks/useGatewayProjectTools.ts
+M	crates/agent-gateway/web/src/app/hooks/useGatewayWorkspaceProjects.ts
+M	crates/agent-gateway/web/src/app/hooks/useProjectToolsRuntime.ts
+M	crates/agent-gateway/web/src/lib/automation/backend.ts
+M	crates/agent-gateway/web/src/lib/chat/stream/chatCommandPipeline.ts
+M	crates/agent-gateway/web/src/lib/chat/transcript/rows.ts
+M	crates/agent-gateway/web/src/lib/chatUi.ts
+M	crates/agent-gateway/web/src/lib/gatewaySocket.ts
+M	crates/agent-gateway/web/src/lib/gatewaySocketRpc.ts
+M	crates/agent-gateway/web/src/lib/gatewaySocketShared.ts
+M	crates/agent-gateway/web/src/lib/gatewaySocketTransport.ts
+M	crates/agent-gateway/web/src/lib/gatewaySocketV2/adapters.ts
+M	crates/agent-gateway/web/src/lib/proto/gen/proto/v2/gateway_pb.ts
+M	crates/agent-gateway/web/src/lib/sidebar/webSidebarBackend.ts
+M	crates/agent-gateway/web/src/lib/terminal/gatewayTerminalClient.ts
+M	crates/agent-gateway/web/src/pages/StatusDashboardPage.tsx
+M	crates/agent-gateway/web/src/pages/settings/types.ts
+M	crates/agent-gateway/web/src/shims/tauriCore.ts
+M	crates/agent-gateway/web/test/chatUi-agent.test.mjs
+A	crates/agent-gateway/web/test/cron-adapter.test.mjs
+A	crates/agent-gateway/web/test/cron-task-view.test.mjs
+M	crates/agent-gateway/web/test/gateway-v2-adapters.test.mjs
+M	crates/agent-gateway/web/test/provider-model-refresh-button.test.mjs
+M	crates/agent-gateway/web/test/search-workspace-navigation.test.mjs
+M	crates/agent-gateway/web/test/sidebar-store.test.mjs
+A	crates/agent-gateway/web/test/status-dashboard-settings.test.mjs
+M	crates/agent-gateway/web/test/transcript-rows.test.mjs
+M	crates/agent-gateway/web/test/web-sidebar-backend.test.mjs
+M	crates/agent-gui/package.json
+M	crates/agent-gui/src-tauri/src/commands/app/update.rs
+M	crates/agent-gui/src-tauri/src/commands/config/settings/ccs_import.rs
+M	crates/agent-gui/src-tauri/src/commands/config/settings/cherry_import.rs
+M	crates/agent-gui/src-tauri/src/commands/config/settings/tests.rs
+A	crates/agent-gui/src-tauri/src/commands/history/chat_history/migration.rs
+A	crates/agent-gui/src-tauri/src/commands/history/chat_history/migration_tests.rs
+M	crates/agent-gui/src-tauri/src/commands/history/chat_history/mod.rs
+M	crates/agent-gui/src-tauri/src/lib.rs
+M	crates/agent-gui/src-tauri/src/services/gateway/envelope_handler.rs
+M	crates/agent-gui/src-tauri/src/services/gateway/terminal.rs
+M	crates/agent-gui/src-tauri/src/services/gateway_bridge.rs
+A	crates/agent-gui/src-tauri/src/services/kbrain_backend.rs
+A	crates/agent-gui/src-tauri/src/services/kbrain_paths.rs
+M	crates/agent-gui/src-tauri/src/services/mod.rs
+D	crates/agent-gui/src-tauri/src/services/provider_models.rs
+M	crates/agent-gui/src-tauri/src/services/proxy.rs
+M	crates/agent-gui/src-tauri/tauri.conf.json
+M	crates/agent-gui/src/App.tsx
+M	crates/agent-gui/src/agent-ui-adapters/composerImagePreview.ts
+M	crates/agent-gui/src/agent-ui-adapters/directoryPicker.tsx
+M	crates/agent-gui/src/agent-ui-adapters/imagePreview.ts
+A	crates/agent-gui/src/agent-ui-adapters/kbrainSettings.ts
+A	crates/agent-gui/src/agent-ui-adapters/kbrainSkills.ts
+D	crates/agent-gui/src/agent-ui-adapters/memoryOrganizer.ts
+M	crates/agent-gui/src/agent-ui-adapters/providerSettings.tsx
+M	crates/agent-gui/src/agent-ui-adapters/sandboxCapability.ts
+M	crates/agent-gui/src/agent-ui-adapters/systemSettings.tsx
+M	crates/agent-gui/src/agent-ui-adapters/trajectory.ts
+M	crates/agent-gui/src/agent-ui-adapters/workspacePreview.tsx
+M	crates/agent-gui/src/components/MacOsTitleBarSpacer.tsx
+M	crates/agent-gui/src/components/ReleaseAnnouncementDialog.tsx
+M	crates/agent-gui/src/components/cron/CronPromptRunner.tsx
+M	crates/agent-gui/src/components/input-context-menu/NativeInputContextMenu.tsx
+D	crates/agent-gui/src/components/memory/useMemoryOrganizer.ts
+M	crates/agent-gui/src/lib/agentTypes.ts
+M	crates/agent-gui/src/lib/appUpdates.ts
+M	crates/agent-gui/src/lib/automation/backend.ts
+M	crates/agent-gui/src/lib/automation/hookRunner.ts
+A	crates/agent-gui/src/lib/automation/kbrainCron.ts
+A	crates/agent-gui/src/lib/automation/kbrainHooks.ts
+M	crates/agent-gui/src/lib/backup/index.ts
+M	crates/agent-gui/src/lib/chat/compaction/controller.ts
+D	crates/agent-gui/src/lib/chat/compaction/engine.ts
+M	crates/agent-gui/src/lib/chat/compaction/fileLedger.ts
+M	crates/agent-gui/src/lib/chat/compaction/payload.ts
+M	crates/agent-gui/src/lib/chat/compaction/prune.ts
+D	crates/agent-gui/src/lib/chat/compaction/summarizer.ts
+M	crates/agent-gui/src/lib/chat/compaction/tokenLedger.ts
+M	crates/agent-gui/src/lib/chat/context/contextTailBlock.ts
+M	crates/agent-gui/src/lib/chat/context/requestContextSanitizer.ts
+M	crates/agent-gui/src/lib/chat/conversation/chatAbort.ts
+M	crates/agent-gui/src/lib/chat/conversation/conversationState.ts
+M	crates/agent-gui/src/lib/chat/conversation/run/gatewayBridgeEvents.ts
+M	crates/agent-gui/src/lib/chat/history/chatHistory.ts
+M	crates/agent-gui/src/lib/chat/history/chatHistoryParser.ts
+D	crates/agent-gui/src/lib/chat/memory/extractionController.ts
+D	crates/agent-gui/src/lib/chat/memory/extractionEngine.ts
+D	crates/agent-gui/src/lib/chat/memory/injectionController.ts
+M	crates/agent-gui/src/lib/chat/messages/uiMessages.ts
+M	crates/agent-gui/src/lib/chat/page/chatPageHelpers.ts
+D	crates/agent-gui/src/lib/chat/runner/agentRunner.ts
+M	crates/agent-gui/src/lib/chat/runner/seedToolCalls.ts
+D	crates/agent-gui/src/lib/chat/runner/toolCallArgumentGuard.ts
+D	crates/agent-gui/src/lib/chat/runner/toolExecutionPrompt.ts
+M	crates/agent-gui/src/lib/chat/skills/mentionInjection.ts
+M	crates/agent-gui/src/lib/debug/agentDebug.ts
+M	crates/agent-gui/src/lib/debug/seedLongConversation.ts
+M	crates/agent-gui/src/lib/git/tauriGitClient.ts
+A	crates/agent-gui/src/lib/host.ts
+A	crates/agent-gui/src/lib/kbrain/bootstrap.ts
+A	crates/agent-gui/src/lib/kbrain/catalog.ts
+A	crates/agent-gui/src/lib/kbrain/client.ts
+A	crates/agent-gui/src/lib/kbrain/history.ts
+A	crates/agent-gui/src/lib/kbrain/historyMigration.ts
+A	crates/agent-gui/src/lib/kbrain/mapping.ts
+A	crates/agent-gui/src/lib/kbrain/mcp.ts
+A	crates/agent-gui/src/lib/kbrain/memory.ts
+A	crates/agent-gui/src/lib/kbrain/prompts.ts
+A	crates/agent-gui/src/lib/kbrain/providerSettings.ts
+A	crates/agent-gui/src/lib/kbrain/questions.ts
+A	crates/agent-gui/src/lib/kbrain/runtimeConnection.ts
+A	crates/agent-gui/src/lib/kbrain/trajectory.ts
+A	crates/agent-gui/src/lib/kbrain/turn.ts
+A	crates/agent-gui/src/lib/kbrain/types.ts
+M	crates/agent-gui/src/lib/managed-process/backend.ts
+D	crates/agent-gui/src/lib/memory/extraction/context.ts
+D	crates/agent-gui/src/lib/memory/extraction/gating.ts
+D	crates/agent-gui/src/lib/memory/extraction/planTool.ts
+D	crates/agent-gui/src/lib/memory/organizer/pipeline.ts
+D	crates/agent-gui/src/lib/memory/organizer/service.ts
+D	crates/agent-gui/src/lib/memory/prompts/injection.ts
+D	crates/agent-gui/src/lib/memory/prompts/turnInjection.ts
+D	crates/agent-gui/src/lib/providers/anthropicModels.ts
+D	crates/agent-gui/src/lib/providers/deepSeekAttachments.ts
+D	crates/agent-gui/src/lib/providers/deepSeekNative.ts
+M	crates/agent-gui/src/lib/providers/hostedSearchEvents.ts
+M	crates/agent-gui/src/lib/providers/llm.ts
+D	crates/agent-gui/src/lib/providers/nativeResponsesAttachments.ts
+M	crates/agent-gui/src/lib/providers/nativeWebSearch.ts
+D	crates/agent-gui/src/lib/providers/runtime/anthropicCache.ts
+D	crates/agent-gui/src/lib/providers/runtime/anthropicLongContext.ts
+D	crates/agent-gui/src/lib/providers/runtime/codexPromptCache.ts
+D	crates/agent-gui/src/lib/providers/runtime/codexStorage.ts
+D	crates/agent-gui/src/lib/providers/runtime/deepSeekResponsesPayload.ts
+D	crates/agent-gui/src/lib/providers/runtime/geminiToolPayload.ts
+D	crates/agent-gui/src/lib/providers/runtime/inlineThinkTagStream.ts
+M	crates/agent-gui/src/lib/providers/runtime/modelFactory.ts
+D	crates/agent-gui/src/lib/providers/runtime/nativeSearchPayload.ts
+D	crates/agent-gui/src/lib/providers/runtime/openAICompletionsStream.ts
+D	crates/agent-gui/src/lib/providers/runtime/payloadPipeline.ts
+D	crates/agent-gui/src/lib/providers/runtime/providerCacheShape.ts
+D	crates/agent-gui/src/lib/providers/runtime/providerFailover.ts
+M	crates/agent-gui/src/lib/providers/runtime/providerRuntimeConfig.ts
+D	crates/agent-gui/src/lib/providers/runtime/requestOptions.ts
+D	crates/agent-gui/src/lib/providers/runtime/streamByApi.ts
+M	crates/agent-gui/src/lib/providers/runtime/streamRetry.ts
+D	crates/agent-gui/src/lib/providers/runtime/textModeToolRecovery.ts
+M	crates/agent-gui/src/lib/providers/runtime/textOnlyRuntime.ts
+D	crates/agent-gui/src/lib/providers/runtime/thinkingLevels.ts
+D	crates/agent-gui/src/lib/providers/runtime/toolResultImageFallback.ts
+M	crates/agent-gui/src/lib/providers/runtime/transportSnapshot.ts
+M	crates/agent-gui/src/lib/providers/runtime/types.ts
+D	crates/agent-gui/src/lib/providers/runtime/xaiResponsesPayload.ts
+D	crates/agent-gui/src/lib/providers/service/deepSeekAdapter.ts
+D	crates/agent-gui/src/lib/providers/service/defaultAdapters.ts
+M	crates/agent-gui/src/lib/providers/service/index.ts
+D	crates/agent-gui/src/lib/providers/service/interceptors.ts
+M	crates/agent-gui/src/lib/providers/service/llmService.ts
+D	crates/agent-gui/src/lib/providers/service/piAiAdapter.ts
+D	crates/agent-gui/src/lib/providers/service/registry.ts
+M	crates/agent-gui/src/lib/providers/service/types.ts
+M	crates/agent-gui/src/lib/providers/usageQuery.ts
+M	crates/agent-gui/src/lib/releaseAnnouncement.ts
+M	crates/agent-gui/src/lib/runtimePlatform.ts
+M	crates/agent-gui/src/lib/settings/storage.ts
+M	crates/agent-gui/src/lib/sftp/tauriSftpClient.ts
+M	crates/agent-gui/src/lib/shortcuts/globalShortcuts.ts
+M	crates/agent-gui/src/lib/sidebar/guiSidebarBackend.ts
+M	crates/agent-gui/src/lib/stt/desktopSttSettingsService.ts
+M	crates/agent-gui/src/lib/stt/desktopSttTransport.ts
+D	crates/agent-gui/src/lib/subagents/agentTool.ts
+M	crates/agent-gui/src/lib/subagents/card.ts
+M	crates/agent-gui/src/lib/subagents/cards.ts
+D	crates/agent-gui/src/lib/subagents/errors.ts
+M	crates/agent-gui/src/lib/subagents/index.ts
+M	crates/agent-gui/src/lib/subagents/ipc/store.ts
+D	crates/agent-gui/src/lib/subagents/ipc/worktree.ts
+D	crates/agent-gui/src/lib/subagents/policy.ts
+D	crates/agent-gui/src/lib/subagents/prompts.ts
+D	crates/agent-gui/src/lib/subagents/run.ts
+D	crates/agent-gui/src/lib/subagents/scheduler.ts
+D	crates/agent-gui/src/lib/subagents/sendMessageTool.ts
+M	crates/agent-gui/src/lib/subagents/store.ts
+M	crates/agent-gui/src/lib/subagents/types.ts
+M	crates/agent-gui/src/lib/subagents/utils.ts
+D	crates/agent-gui/src/lib/subagents/validate.ts
+M	crates/agent-gui/src/lib/system/clipboardText.ts
+M	crates/agent-gui/src/lib/system/powerActivity.ts
+M	crates/agent-gui/src/lib/terminal/tauriSshLocalForwardClient.ts
+M	crates/agent-gui/src/lib/terminal/tauriTerminalClient.ts
+M	crates/agent-gui/src/lib/tools/askUserQuestionTools.ts
+M	crates/agent-gui/src/lib/tools/browserTools.ts
+M	crates/agent-gui/src/lib/tools/builtinRegistry.ts
+M	crates/agent-gui/src/lib/tools/builtinTypes.ts
+M	crates/agent-gui/src/lib/tools/conversationTools.ts
+M	crates/agent-gui/src/lib/tools/cronTools.ts
+M	crates/agent-gui/src/lib/tools/cuaSelfGuard.ts
+M	crates/agent-gui/src/lib/tools/fsTools.ts
+M	crates/agent-gui/src/lib/tools/invokeWithAbort.ts
+M	crates/agent-gui/src/lib/tools/mcpManagerTools.ts
+M	crates/agent-gui/src/lib/tools/mcpTools.ts
+M	crates/agent-gui/src/lib/tools/memoryTools.ts
+M	crates/agent-gui/src/lib/tools/planModeTools.ts
+M	crates/agent-gui/src/lib/tools/shellTools.ts
+M	crates/agent-gui/src/lib/tools/skillTools.ts
+M	crates/agent-gui/src/lib/tools/sshManagerTools.ts
+M	crates/agent-gui/src/lib/tools/taskTools.ts
+M	crates/agent-gui/src/lib/tools/terminalTools.ts
+M	crates/agent-gui/src/lib/tools/toolSchema.ts
+M	crates/agent-gui/src/lib/tools/toolSearchTools.ts
+M	crates/agent-gui/src/lib/tools/tunnelManagerTools.ts
+M	crates/agent-gui/src/lib/tray/trayMenu.ts
+M	crates/agent-gui/src/lib/tunnels/tauriTunnelClient.ts
+M	crates/agent-gui/src/lib/workspace-activity/tauriWorkspaceActivityClient.ts
+M	crates/agent-gui/src/lib/workspaceRootGrants.ts
+M	crates/agent-gui/src/main.tsx
+M	crates/agent-gui/src/pages/ChatPage.tsx
+M	crates/agent-gui/src/pages/chat/chatPageTypes.ts
+M	crates/agent-gui/src/pages/chat/components/ConversationStatsBarHost.tsx
+M	crates/agent-gui/src/pages/chat/components/DesktopCheckpointRewindProvider.tsx
+A	crates/agent-gui/src/pages/chat/components/KBrainCheckpointRewindProvider.tsx
+M	crates/agent-gui/src/pages/chat/composer/composerDraftText.ts
+M	crates/agent-gui/src/pages/chat/gateway/chatRuntimeSnapshot.ts
+M	crates/agent-gui/src/pages/chat/gateway/useGatewayBridgeListeners.ts
+M	crates/agent-gui/src/pages/chat/gateway/useGatewayRunMirrorCoordinator.ts
+M	crates/agent-gui/src/pages/chat/gateway/useGatewayStatus.ts
+M	crates/agent-gui/src/pages/chat/history/useConversationHistoryActions.ts
+M	crates/agent-gui/src/pages/chat/history/useSharedHistory.ts
+M	crates/agent-gui/src/pages/chat/hooks/usePendingUploads.ts
+M	crates/agent-gui/src/pages/chat/hooks/useTauriFileDrop.ts
+M	crates/agent-gui/src/pages/chat/hooks/useUploadZoneDrop.ts
+M	crates/agent-gui/src/pages/chat/queue/useChatTurnQueue.ts
+M	crates/agent-gui/src/pages/chat/runtime/chatPageRuntime.ts
+M	crates/agent-gui/src/pages/chat/runtime/clarifyRunner.ts
+M	crates/agent-gui/src/pages/chat/runtime/conversationContextBuilders.ts
+M	crates/agent-gui/src/pages/chat/runtime/providerRuntimeConfig.ts
+M	crates/agent-gui/src/pages/chat/runtime/useChatModelSelection.ts
+M	crates/agent-gui/src/pages/chat/runtime/useManualCompaction.ts
+M	crates/agent-gui/src/pages/chat/runtime/useSendChatTurn.ts
+M	crates/agent-gui/src/pages/chat/surfaces/ConversationPaneHost.tsx
+M	crates/agent-gui/src/pages/chat/surfaces/ConversationTrajectorySurface.tsx
+M	crates/agent-gui/src/pages/chat/turns/gatewayToolPreview.ts
+M	crates/agent-gui/src/pages/chat/turns/runAgentConversationTurn.ts
+A	crates/agent-gui/src/pages/chat/turns/runKBrainConversationTurn.ts
+M	crates/agent-gui/src/pages/chat/turns/runTextConversationTurn.ts
+M	crates/agent-gui/src/pages/chat/workspace/cloneTasks.ts
+M	crates/agent-gui/src/pages/chat/workspace/useProjectTerminals.tsx
+M	crates/agent-gui/src/pages/chat/workspace/useWorkspaceProjects.ts
+M	crates/agent-gui/src/pages/settings/AboutSection.tsx
+M	crates/agent-gui/src/pages/settings/BackupSyncSection.tsx
+M	crates/agent-gui/src/pages/settings/CherryStudioImportModal.tsx
+M	crates/agent-gui/src/pages/settings/types.ts
+M	crates/agent-gui/src/shims/tauriCore.ts
+M	crates/agent-gui/src/shims/tauriEvent.ts
+M	crates/agent-gui/src/shims/tauriOpener.ts
+A	crates/agent-gui/src/shims/tauriPath.ts
+M	crates/agent-gui/test/backend/release-notes.test.mjs
+D	crates/agent-gui/test/chat/agent-runner.test.mjs
+D	crates/agent-gui/test/chat/agent-turn-bus-delta.test.mjs
+D	crates/agent-gui/test/chat/agent-turn-cancelled-history.test.mjs
+D	crates/agent-gui/test/chat/agent-turn-roster-split.test.mjs
+D	crates/agent-gui/test/chat/agent-turn-task-list-freeze.test.mjs
+D	crates/agent-gui/test/chat/chat-history-persist-queue.test.mjs
+M	crates/agent-gui/test/chat/chat-react-performance.test.mjs
+M	crates/agent-gui/test/chat/chat-stop-timing.test.mjs
+M	crates/agent-gui/test/chat/compaction-controller.test.mjs
+D	crates/agent-gui/test/chat/compaction-summarizer-engine.test.mjs
+M	crates/agent-gui/test/chat/compaction-summary-language.test.mjs
+M	crates/agent-gui/test/chat/composer-model-pages.test.mjs
+M	crates/agent-gui/test/chat/conversation-thinking.test.mjs
+M	crates/agent-gui/test/chat/conversation-title-job.test.mjs
+M	crates/agent-gui/test/chat/gateway-bridge-events.test.mjs
+M	crates/agent-gui/test/chat/gateway-bridge-listeners.test.mjs
+D	crates/agent-gui/test/chat/gateway-run-mirror-coordinator.test.mjs
+M	crates/agent-gui/test/chat/history-share-origin.test.mjs
+M	crates/agent-gui/test/chat/hydration-bucketing.test.mjs
+A	crates/agent-gui/test/chat/kbrain-bootstrap.test.mjs
+A	crates/agent-gui/test/chat/kbrain-conversation-turn.test.mjs
+A	crates/agent-gui/test/chat/kbrain-host-boundary.test.mjs
+A	crates/agent-gui/test/chat/kbrain-managed-mapping.test.mjs
+A	crates/agent-gui/test/chat/kbrain-model-catalog.test.mjs
+A	crates/agent-gui/test/chat/kbrain-runtime-default.test.mjs
+A	crates/agent-gui/test/chat/kbrain-settings-component.test.mjs
+A	crates/agent-gui/test/chat/kbrain-settings-page-runtime.test.mjs
+A	crates/agent-gui/test/chat/kbrain-settings-ui.test.mjs
+A	crates/agent-gui/test/chat/kbrain-sharing-ui.test.mjs
+M	crates/agent-gui/test/chat/markdown-image-policy.test.mjs
+M	crates/agent-gui/test/chat/mention-app-suggestions.test.mjs
+M	crates/agent-gui/test/chat/provider-native-search-status.test.mjs
+M	crates/agent-gui/test/chat/search-workspace-navigation.test.mjs
+M	crates/agent-gui/test/chat/sidebar-conversation-menu.test.mjs
+M	crates/agent-gui/test/chat/sidebar-reconcile.test.mjs
+D	crates/agent-gui/test/chat/tool-call-argument-guard.test.mjs
+M	crates/agent-gui/test/chat/use-scroll-follow-native-scrollbar.test.mjs
+M	crates/agent-gui/test/chat/workbench-dock-focus.test.mjs
+M	crates/agent-gui/test/chat/workbench-dom-boundaries.test.mjs
+M	crates/agent-gui/test/chat/workbench-window-session.test.mjs
+A	crates/agent-gui/test/cron-prompt-runner.test.mjs
+A	crates/agent-gui/test/fixtures/provider-import-acceptance.json
+A	crates/agent-gui/test/helpers/kbrain-trajectory-fixture.mjs
+M	crates/agent-gui/test/helpers/load-ts-module.mjs
+M	crates/agent-gui/test/input-context-menu/standard-context-menu.test.mjs
+D	crates/agent-gui/test/memory/extraction-context.test.mjs
+D	crates/agent-gui/test/memory/extraction-controller.test.mjs
+D	crates/agent-gui/test/memory/extraction-gating.test.mjs
+D	crates/agent-gui/test/memory/injection-prompt.test.mjs
+D	crates/agent-gui/test/memory/organizer-pipeline.test.mjs
+D	crates/agent-gui/test/memory/plan-tool.test.mjs
+M	crates/agent-gui/test/memory/standard-controls.test.mjs
+D	crates/agent-gui/test/memory/turn-injection.test.mjs
+D	crates/agent-gui/test/models/model-thinking-consistency.test.mjs
+D	crates/agent-gui/test/providers/anthropic-long-context.test.mjs
+D	crates/agent-gui/test/providers/codex-cache-shape.test.mjs
+D	crates/agent-gui/test/providers/custom-headers-propagation.test.mjs
+D	crates/agent-gui/test/providers/deepseek-attachments.test.mjs
+D	crates/agent-gui/test/providers/deepseek-native.test.mjs
+D	crates/agent-gui/test/providers/gemini-tool-payload.test.mjs
+D	crates/agent-gui/test/providers/inline-think-tag-stream.test.mjs
+A	crates/agent-gui/test/providers/kbrain-backend-boundary.test.mjs
+A	crates/agent-gui/test/providers/kbrain-chat-history-seam.test.mjs
+A	crates/agent-gui/test/providers/kbrain-checkpoint-acceptance.mjs
+A	crates/agent-gui/test/providers/kbrain-client.test.mjs
+A	crates/agent-gui/test/providers/kbrain-history-migration.test.mjs
+A	crates/agent-gui/test/providers/kbrain-history.test.mjs
+A	crates/agent-gui/test/providers/kbrain-import-acceptance.test.mjs
+A	crates/agent-gui/test/providers/kbrain-provider-migration.test.mjs
+A	crates/agent-gui/test/providers/kbrain-provider-settings.test.mjs
+A	crates/agent-gui/test/providers/kbrain-question-answer.test.mjs
+A	crates/agent-gui/test/providers/kbrain-resource-client.test.mjs
+A	crates/agent-gui/test/providers/kbrain-text-runtime.test.mjs
+A	crates/agent-gui/test/providers/kbrain-turn.test.mjs
+A	crates/agent-gui/test/providers/kbrain-usage-query.test.mjs
+D	crates/agent-gui/test/providers/llm-interceptors.test.mjs
+D	crates/agent-gui/test/providers/llm-service-seam.test.mjs
+D	crates/agent-gui/test/providers/model-factory-anthropic.test.mjs
+D	crates/agent-gui/test/providers/model-factory-xai.test.mjs
+D	crates/agent-gui/test/providers/native-responses-attachments.test.mjs
+D	crates/agent-gui/test/providers/openai-completions-stream.test.mjs
+D	crates/agent-gui/test/providers/pi-ai-adapter-image-fallback.test.mjs
+D	crates/agent-gui/test/providers/prompt-cache-regression.test.mjs
+D	crates/agent-gui/test/providers/provider-cache-shape.test.mjs
+D	crates/agent-gui/test/providers/provider-failover-plan.test.mjs
+D	crates/agent-gui/test/providers/provider-failover.test.mjs
+D	crates/agent-gui/test/providers/provider-retry-policy.test.mjs
+M	crates/agent-gui/test/providers/provider-runtime-config.test.mjs
+D	crates/agent-gui/test/providers/request-options.test.mjs
+D	crates/agent-gui/test/providers/stream-by-api-tool-choice.test.mjs
+M	crates/agent-gui/test/providers/stream-retry.test.mjs
+D	crates/agent-gui/test/providers/text-only-failover.test.mjs
+D	crates/agent-gui/test/providers/thinking-levels.test.mjs
+D	crates/agent-gui/test/providers/tool-result-image-fallback.test.mjs
+D	crates/agent-gui/test/providers/transport-golden.test.mjs
+D	crates/agent-gui/test/providers/wire-payload-golden.test.mjs
+D	crates/agent-gui/test/providers/xai-responses-payload.test.mjs
+M	crates/agent-gui/test/settings/automation-prompt-runner.test.mjs
+M	crates/agent-gui/test/settings/input-modalities.test.mjs
+A	crates/agent-gui/test/settings/kbrain-cron-adapter.test.mjs
+M	crates/agent-gui/test/settings/normalization.test.mjs
+A	crates/agent-gui/test/settings/prompts-backend.test.mjs
+M	crates/agent-gui/test/settings/provider-deepseek.test.mjs
+M	crates/agent-gui/test/settings/provider-models-fetch.test.mjs
+M	crates/agent-gui/test/settings/provider-usage-query.test.mjs
+M	crates/agent-gui/test/settings/settings-storage-errors.test.mjs
+M	crates/agent-gui/test/settings/storage.test.mjs
+M	crates/agent-gui/test/settings/workspace-resource-settings.test.mjs
+M	crates/agent-gui/test/skills/mention-tail-injection.test.mjs
+A	crates/agent-gui/test/skills/resource-backend-boundary.test.mjs
+A	crates/agent-gui/test/skills/resource-http-adapters.test.mjs
+M	crates/agent-gui/test/skills/skill-card-interactions.test.mjs
+M	crates/agent-gui/test/skills/skills-import-rescan.test.mjs
+D	crates/agent-gui/test/subagents/agent-tool.test.mjs
+M	crates/agent-gui/test/subagents/harness.mjs
+D	crates/agent-gui/test/subagents/persistence.test.mjs
+D	crates/agent-gui/test/subagents/send-message.test.mjs
+D	crates/agent-gui/test/subagents/validate.test.mjs
+M	crates/agent-gui/test/tools/ask-user-question-tools.test.mjs
+D	crates/agent-gui/test/tools/builtin-registry-subagent-mcp.test.mjs
+M	crates/agent-gui/test/tools/mcp-manager-tools.test.mjs
+M	crates/agent-gui/test/tools/path-and-system-tools.test.mjs
+M	crates/agent-gui/test/tools/plan-mode-tools.test.mjs
+M	crates/agent-gui/test/tools/ssh-manager-tools.test.mjs
+M	crates/agent-gui/test/tools/task-tools.test.mjs
+M	crates/agent-gui/test/tools/tool-schema-validation.test.mjs
+M	crates/agent-gui/test/tools/tool-search-tools.test.mjs
+M	crates/agent-gui/test/tools/tunnel-manager-tools.test.mjs
+D	crates/agent-gui/test/trajectory/compaction-abort.test.mjs
+D	crates/agent-gui/test/trajectory/compaction-observer.test.mjs
+A	crates/agent-gui/test/trajectory/kbrain-trajectory.test.mjs
+D	crates/agent-gui/test/trajectory/text-mode.test.mjs
+M	crates/agent-ui/src/application/ApplicationView.tsx
+M	crates/agent-ui/src/components/chat/ChatHistorySidebarRows.tsx
+M	crates/agent-ui/src/components/chat/ComposerModelControls.tsx
+M	crates/agent-ui/src/components/chat/HistoryShareModal.tsx
+M	crates/agent-ui/src/components/chat/SharedHistoryManagerModal.tsx
+M	crates/agent-ui/src/components/chat/TranscriptMessageActions.tsx
+M	crates/agent-ui/src/components/chat/clarify/clarifyTypes.ts
+M	crates/agent-ui/src/i18n/translations/enUSSettings.ts
+M	crates/agent-ui/src/i18n/translations/zhCNSettings.ts
+M	crates/agent-ui/src/lib/automation/store.ts
+M	crates/agent-ui/src/lib/automation/types.ts
+A	crates/agent-ui/src/lib/chat/agentTypes.ts
+M	crates/agent-ui/src/lib/chat/assistantBubbleAdapter.ts
+M	crates/agent-ui/src/lib/chat/checkpointRewind.tsx
+M	crates/agent-ui/src/lib/chat/contextUsage.ts
+M	crates/agent-ui/src/lib/chat/historyShareOrigin.ts
+M	crates/agent-ui/src/lib/chat/uiMessages.ts
+M	crates/agent-ui/src/lib/models/modelCatalog.ts
+M	crates/agent-ui/src/lib/models/modelOptions.ts
+M	crates/agent-ui/src/lib/models/modelThinking.ts
+A	crates/agent-ui/src/lib/providers/providerCapabilities.ts
+M	crates/agent-ui/src/lib/providers/proxy.ts
+A	crates/agent-ui/src/lib/resourceHost.ts
+M	crates/agent-ui/src/lib/settings/types.ts
+M	crates/agent-ui/src/lib/sidebar/scope.ts
+M	crates/agent-ui/src/lib/sidebar/store.ts
+M	crates/agent-ui/src/lib/sidebar/types.ts
+M	crates/agent-ui/src/lib/skills/clawHub.ts
+M	crates/agent-ui/src/lib/skills/index.ts
+M	crates/agent-ui/src/lib/terminal/normalization.ts
+M	crates/agent-ui/src/lib/terminal/types.ts
+M	crates/agent-ui/src/pages/resources/ResourceManagementPage.tsx
+M	crates/agent-ui/src/pages/settings/CronTaskViewModal.tsx
+A	crates/agent-ui/src/pages/settings/KBrainSettingsSection.tsx
+M	crates/agent-ui/src/pages/settings/ProviderModal.tsx
+M	crates/agent-ui/src/pages/settings/ResourceHubSection.tsx
+M	crates/agent-ui/src/pages/settings/RetryErrorSection.tsx
+M	crates/agent-ui/src/pages/settings/SettingsPage.tsx
+A	crates/agent-ui/src/pages/settings/kbrainSettingsAdapter.ts
+M	crates/agent-ui/src/pages/settings/memory/MemoryPanel.tsx
+M	crates/agent-ui/src/pages/settings/memory/MemorySettingsDrawer.tsx
+D	crates/agent-ui/src/pages/settings/memory/OrganizerHistoryModal.tsx
+M	crates/agent-ui/src/pages/settings/memory/useMemoryPanelData.ts
+A	crates/agent-ui/src/pages/settings/providerSettingsAdapter.ts
+M	crates/agent-ui/src/pages/settings/providerUtils.ts
+M	crates/agent-ui/src/pages/skills-hub/InstalledSkillCard.tsx
+M	crates/agent-ui/src/pages/skills-hub/InstalledSkillsView.tsx
+M	crates/agent-ui/src/pages/skills-hub/SkillsHubPage.tsx
+M	crates/agent-ui/src/pages/skills-hub/SkillsImportView.tsx
+M	crates/agent-ui/src/pages/skills-hub/SkillsStoreView.tsx
+M	crates/agent-ui/src/pages/skills-hub/StoreSkillCard.tsx
+M	crates/agent-ui/src/shims/nodeFs.ts
+M	docs/architecture/overview.md
+M	package.json
+M	pnpm-lock.yaml
+M	scripts/generate-model-catalog.mjs
+M	scripts/release/create-ai-release-notes.mjs
+A	scripts/release/kbrain.lock.json
+A	scripts/release/prepare-kbrain.mjs
+A	scripts/release/prepare-kbrain.test.mjs
+A	scripts/release/verify-kbrain-packaging.mjs
+A	scripts/release/verify-kbrain-packaging.test.mjs
 ```
 
-## Reproducibility
+## Delivery artifacts
 
-The companion patch was applied to a temporary Git index initialized from the stated LiveAgent base. Its resulting tree matched the integration commit tree exactly. Product code, shared UI and test files are part of that comparison. See `integrations/liveagent/README.md` for application and test commands.
+- Companion patch: `integrations/liveagent/kbrain-backend.patch`
+- Captured LiveAgent tree: `73e40fb3b034886789452401890c2e28cee01f3f`
+- Companion patch SHA-256: `417a687a7502234ea11622505ec71001a35ac7d7a83119b31aeba628669f243f`
+- LiveAgent changed paths in patch: 508
+- Reconstruction: base plus patch applied to a scratch Git index produced the exact captured tree.
+- External verification record: `delivery-closure.json` in the designated evidence directory.
+
+## Verification boundary
+
+This manifest and patch describe the current uncommitted working trees. Feature coverage remains in `docs/liveagent-compatibility-matrix.md`; native services, cross-host recovery and full parity remain incomplete. Release and signing require separate evidence.

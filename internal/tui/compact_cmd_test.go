@@ -49,7 +49,7 @@ func TestCompactCommandNeverTouchesRealHome(t *testing.T) {
 	m := compactCmdModel()
 	m.compactCommand([]string{"glm-5.2-fast"})
 	dir := os.Getenv("K_BRAIN_HOME")
-	if dir == "" || dir == filepath.Join(os.Getenv("HOME"), ".k-brain") {
+	if dir == "" || dir == filepath.Join(os.Getenv("HOME"), ".liveagent") {
 		t.Fatalf("tests must run with an isolated K_BRAIN_HOME, got %q", dir)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {

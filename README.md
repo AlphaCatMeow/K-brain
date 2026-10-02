@@ -53,7 +53,7 @@ For computer-use, rename `k-brain-computer-<os>-<arch>` to `k-brain-computer` (w
 
 ### 2. Configure an API
 
-Edit `~/.k-brain/config.json`, or `$HOME\.k-brain\config.json` on Windows. The file supports JSONC comments and trailing commas. Set `K_BRAIN_HOME` to use another configuration directory.
+Edit `~/.liveagent/config.json`, or `$HOME\.liveagent\config.json` on Windows. The file supports JSONC comments and trailing commas. Set `LIVEAGENT_HOME` to use another configuration directory; `K_BRAIN_HOME` remains a compatible legacy override when `LIVEAGENT_HOME` is unset.
 
 ```json
 {
@@ -92,10 +92,10 @@ Replace `baseUrl`, `apiKey`, `model1`, and `model2` with your provider's values.
 
 ### Prompt hierarchy
 
-K-brain assembles instructions in this order: the system prompt, the user prompt file, then project prompt files. The default system prompt is seeded into `~/.k-brain/system.md` and can be edited with `/system`; `kn run` can replace it for one invocation with `-system` or `-system-file`.
+K-brain assembles instructions in this order: the system prompt, the user prompt file, then project prompt files. The default system prompt is seeded into `~/.liveagent/system.md` and can be edited with `/system`; `kn run` can replace it for one invocation with `-system` or `-system-file`.
 
-- **User-level instructions**: `~/.k-brain/brain.md` (Windows: `%USERPROFILE%\.k-brain\brain.md`). It is created on first start and can be edited with `/brain`.
-- **Project-level instructions**: `AGENTS.md` and `.k-brain/brain.md` in the workspace or any parent directory. Files are loaded from the project root toward the current directory, so a closer file is appended later and can refine parent rules.
+- **User-level instructions**: `~/.liveagent/brain.md` (Windows: `%USERPROFILE%\.liveagent\brain.md`). It is created on first start and can be edited with `/brain`.
+- **Project-level instructions**: `AGENTS.md` and `.liveagent/brain.md` in the workspace or any parent directory. Files are loaded from the project root toward the current directory, so a closer file is appended later and can refine parent rules.
 - Project prompt files are read by the TUI, `kn run`, and ACP from their requested working directory. Comments and blank lines are ignored.
 
 All three protocols send mixed text and image inputs in order. Responses uses `input_image`; Anthropic uses base64 or URL image sources and retains all system instructions. Image support still depends on the selected model and endpoint. Anthropic inline images must use JPEG, PNG, GIF, or WebP. Invalid image references fail locally instead of being silently omitted. Stored conversations retain their content blocks, and ACP session loading replays inline images alongside the surrounding text.
@@ -121,10 +121,10 @@ CLI, TUI, and ACP use the same lifecycle event dispatcher for configured hooks a
 
 ### Session files
 
-Sessions live under `~/.k-brain/sessions/<project-id>/<session-id>/session.jsonl` (or `$K_BRAIN_HOME/sessions`). Project IDs are stable hashes of the workspace path, keeping sessions grouped by project while exposing each full session ID.
+Sessions live under `~/.liveagent/sessions/<project-id>/<session-id>/session.jsonl` (or `$LIVEAGENT_HOME/sessions`; `$K_BRAIN_HOME` remains compatible). Project IDs are stable hashes of the workspace path, keeping sessions grouped by project while exposing each full session ID.
 
 ```text
-~/.k-brain/
+~/.liveagent/
   config.json
   system.md
   brain.md
@@ -133,9 +133,9 @@ Sessions live under `~/.k-brain/sessions/<project-id>/<session-id>/session.jsonl
       session.jsonl
 ```
 
-Run `kn sessions` to list project-grouped session IDs. Use `kn sessions search <query>`, `kn sessions archive <id>`, or `kn sessions delete <id>` for navigation. Resume with `kn --resume <session-id>`; `/status` shows the current session file. The system prompt is stored in `~/.k-brain/system.md` and edited with `/system`; user standing instructions are stored in `~/.k-brain/brain.md` and edited with `/brain`. JSONL records include metadata, messages, tasks, compactions, schedules, and rewind snapshot references. SQLite storage and migration are no longer supported; existing database files are not read or modified.
+Run `kn sessions` to list project-grouped session IDs. Use `kn sessions search <query>`, `kn sessions archive <id>`, or `kn sessions delete <id>` for navigation. Resume with `kn --resume <session-id>`; `/status` shows the current session file. The system prompt is stored in `~/.liveagent/system.md` and edited with `/system`; user standing instructions are stored in `~/.liveagent/brain.md` and edited with `/brain`. JSONL records include metadata, messages, tasks, compactions, schedules, and rewind snapshot references. SQLite storage and migration are no longer supported; existing database files are not read or modified.
 
-Project trust decisions use TOML at `~/.k-brain/trusted_folders.toml` (Windows: `~\.k-brain\trusted_folders.toml`), with one `[folders."<absolute-path>"]` table containing `trusted` and `decided_at` fields.
+Project trust decisions use TOML at `~/.liveagent/trusted_folders.toml` (Windows: `~\.liveagent\trusted_folders.toml`), with one `[folders."<absolute-path>"]` table containing `trusted` and `decided_at` fields.
 
 ### OS sandbox
 
@@ -149,7 +149,7 @@ Linux uses Bubblewrap namespaces, macOS uses Seatbelt, and Windows uses WSL2 plu
 
 ### Plugins
 
-Put a plugin manifest at `.k-brain/plugins/<name>/plugin.json` or `~/.k-brain/plugins/<name>/plugin.json`:
+Put a plugin manifest at `.liveagent/plugins/<name>/plugin.json` or `~/.liveagent/plugins/<name>/plugin.json`:
 
 ```json
 {"name":"sample","version":"1.0.0","command":["sample-plugin"],"prompt":"Additional instructions","tools":[{"name":"lookup","description":"Look up a value","inputSchema":{"type":"object"}}]}
@@ -200,7 +200,7 @@ Use `Ctrl+P` for the command palette, `Ctrl+J` for a newline, `Esc` to interrupt
 <details>
 <summary>Markdown prompt templates</summary>
 
-Put global templates in `~/.k-brain/prompts/` and project templates in a trusted project's `.k-brain/prompts/`. Discovery is non-recursive. Project templates override global templates of the same name; built-in commands take precedence.
+Put global templates in `~/.liveagent/prompts/` and project templates in a trusted project's `.liveagent/prompts/`. Discovery is non-recursive. Project templates override global templates of the same name; built-in commands take precedence.
 
 Example `audit.md`:
 
@@ -221,7 +221,7 @@ Supported substitutions: `$1`, `$2`, `$@`, `$ARGUMENTS`, `${1:-default}`, `${@:-
 
 ### Interface language
 
-Run `/language` to open the language picker, then use ↑/↓ and Enter to apply or Esc to cancel. `/language zh_cn`, `/language zh_Hant`, and `/language en` switch directly and save `language` to `~/.k-brain/config.json`. English is the default; unknown values fall back to English.
+Run `/language` to open the language picker, then use ↑/↓ and Enter to apply or Esc to cancel. `/language zh_cn`, `/language zh_Hant`, and `/language en` switch directly and save `language` to `~/.liveagent/config.json`. English is the default; unknown values fall back to English.
 
 `/export` chooses Markdown (`.md`), structured JSONL (`.jsonl`), or HTML (`.html`) from the file extension. `/import <path>` appends messages from a JSONL transcript, and `/forks` shows the current session and its fork relationships.
 
@@ -233,7 +233,7 @@ Press `Ctrl+G` to edit the current draft, or `/editor` to start a new prompt in 
 
 ### MCP servers
 
-Declare MCP servers in the `mcp` object in `~/.k-brain/config.json`, or use `kn mcp add <name> -- <command...>` and `kn mcp add <name> --url <url>`. Use `kn mcp list`, `kn mcp test <name>`, and `kn mcp remove <name>` to manage them; `/mcp` manages connections in the TUI. External Claude/Codex configuration files are not discovered or imported. ACP clients can still explicitly provide servers for their sessions.
+Declare MCP servers in the `mcp` object in `~/.liveagent/config.json`, or use `kn mcp add <name> -- <command...>` and `kn mcp add <name> --url <url>`. Use `kn mcp list`, `kn mcp test <name>`, and `kn mcp remove <name>` to manage them; `/mcp` manages connections in the TUI. External Claude/Codex configuration files are not discovered or imported. ACP clients can still explicitly provide servers for their sessions.
 
 The old `mcpImport` field and `kn mcp import` command have been removed. Delete `mcpImport` from existing configuration files; unknown fields are rejected.
 
@@ -257,7 +257,7 @@ Use `session/set_mode` to select `auto`, `ask`, or `plan`. Plan exposes file rea
 
 `session/load` replays the saved conversation; `session/resume` restores it without replay. Both retain the session ID for memory and prompt caching and reject sessions that are already active or loading. Closing a session waits for its turn and persistence to finish before releasing its MCP connections. Session storage failures are reported explicitly, including when the model request also fails.
 
-Installation memory lives in `~/.k-brain/memory.md`. Session memory lives beside its transcript at `~/.k-brain/sessions/<project>/<session-id>/memory.md` and is refreshed before each turn across all three entry points. Deleting a session also removes its memory. Old flat `<session-id>.memory.md` files are not imported. Subagents keep their fresh context without installation or parent-session memory. ACP discovers project skills from the requested working directory.
+Installation memory lives in `~/.liveagent/memory.md`. Session memory lives beside its transcript at `~/.liveagent/sessions/<project>/<session-id>/memory.md` and is refreshed before each turn across all three entry points. Deleting a session also removes its memory. Old flat `<session-id>.memory.md` files are not imported. Subagents keep their fresh context without installation or parent-session memory. ACP discovers project skills from the requested working directory.
 
 The TUI, ACP, and `kn run` share session history mapping: summaries and conversation records are saved together. Switching between these entry points retains the latest summary and messages without overwriting the original conversation. Completed compactions are saved even if the following model request is cancelled. The final answer produced at `--max-turns` is also saved for the next turn.
 
@@ -297,9 +297,9 @@ Computer-use runtime setup: Windows uses the built-in PowerShell. macOS requires
 
 ```sh
 # macOS
-python3 -m venv ~/.k-brain/computer-venv
-~/.k-brain/computer-venv/bin/python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices
-export K_BRAIN_COMPUTER_PYTHON="$HOME/.k-brain/computer-venv/bin/python"
+python3 -m venv ~/.liveagent/computer-venv
+~/.liveagent/computer-venv/bin/python -m pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-ApplicationServices
+export K_BRAIN_COMPUTER_PYTHON="$HOME/.liveagent/computer-venv/bin/python"
 
 # Debian / Ubuntu (X11)
 sudo apt-get install python3-pyatspi python3-pil python3-pil.imagetk xdotool

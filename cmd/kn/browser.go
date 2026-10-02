@@ -57,7 +57,7 @@ func browserInstall() error {
 	fmt.Printf("  3. Select this folder:\n       %s\n\n", dir)
 
 	fmt.Println("Then, to let k-brain drive a tab:")
-	fmt.Println("  - Set \"browser\": { \"mode\": \"extension\" } in ~/.k-brain/config.json.")
+	fmt.Println("  - Set \"browser\": { \"mode\": \"extension\" } in ~/.liveagent/config.json.")
 	fmt.Println("  - Open the tab you want, click the k-brain extension icon (a green ● appears).")
 	fmt.Println("  - Click the icon again to detach.")
 	fmt.Println()

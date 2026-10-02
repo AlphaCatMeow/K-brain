@@ -4,15 +4,15 @@
 
 K-brain 提供 HTTP JSON 与 Server-Sent Events（SSE）接口。协议版本为 `kbrain.agent.v1`。供应商原始请求与流格式由 `internal/ai` 适配；LiveAgent 消费 `internal/protocol` 定义的消息与事件。
 
-当前接入是显式启用的迁移路径。LiveAgent 的原有 direct 模式仍然保留；K-brain 模式通过 `VITE_KBRAIN_BACKEND=true` 启用。聊天模型目录、会话列表与历史读取来自后端；本地 conversation ID 与后端 session ID 双向映射。重开会话会恢复消息和子代理报告。
+LiveAgent 使用 K-brain 作为唯一模型与 Agent 执行后端。桌面安装包携带版本配套的 K-brain 二进制，由 Tauri 宿主启动、等待健康检查并将动态 loopback 地址和进程令牌交给前端；启动失败展示错误及重试入口。聊天模型目录、会话列表与历史读取来自后端；本地 conversation ID 与后端 session ID 双向映射，并使用稳定存储作用域跨动态端口恢复。重开会话会恢复消息和子代理报告。
 
 历史的重命名、删除、置顶、分支、编辑重发、分享和分页通过后端接口持久化。编辑和分支使用后端消息 ID 与历史 revision；成功运行后前端重新读取权威历史。辅助文本生成和自动标题通过后端 `/v1/text/generate` 使用同一版本化规范消息模型，后端强制无工具并持有供应商凭据。模型设置页面通过 `/v1/settings` 管理供应商、模型和密钥；模型目录由后端配置维护，前端不执行供应商 discovery。
 
-K-brain 模式下，工具执行、技能扫描、记忆和提示词由后端负责。LiveAgent 保留输入、流式展示、审批及窗口/文件选择等原生宿主交互；前端旧 memory、skills、Gateway、subagent、history 和 checkpoint 运行时命令明确拒绝。手动压缩、文件检查点回退和桌面轨迹统计在界面标记为暂不支持。原生终端、SSH、文件浏览等外围宿主能力保留原有边界，浏览器不提供这些原生命令。
+工具执行、技能扫描、记忆和提示词由后端负责。LiveAgent 保留输入、流式展示、审批及窗口/文件选择等原生宿主交互。手动压缩、检查点 preview/rewind 和轨迹已有后端接口及客户端适配；大文件、目录恢复和跨宿主等语义仍按兼容矩阵逐项验收。Gateway 通过 `/ws/v2` 转发聊天、队列及已接管的资源请求；历史恢复、终端、SSH 和文件浏览需要分别核对后端身份、原生宿主边界和实际 UI 链路。功能对齐目标保持原入口和既有行为，当前完成范围见 [兼容矩阵](liveagent-compatibility-matrix.md)，开发设计见 [aidocs](aidocs/README.md)。
 
 ## 启动
 
-在 K-brain 中配置供应商与模型后运行：
+桌面应用自动管理后端，无需设置 `VITE_KBRAIN_BACKEND`。浏览器开发环境可以独立启动后端，在 K-brain 中配置供应商与模型后运行：
 
 ```sh
 go run ./cmd/kn backend -listen 127.0.0.1:47321
@@ -21,7 +21,6 @@ go run ./cmd/kn backend -listen 127.0.0.1:47321
 后端令牌可用 `K_BRAIN_BACKEND_TOKEN` 设置。LiveAgent 的连接参数为：
 
 ```sh
-VITE_KBRAIN_BACKEND=true
 VITE_KBRAIN_URL=http://127.0.0.1:47321
 VITE_KBRAIN_TOKEN=<backend-token>
 ```
@@ -35,7 +34,7 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | 会话 | `session.Meta.ID` | `conversation_id` / session `id` | 独立的前端 conversation ID 映射 |
 | 一轮运行 | backend run record | `run_id`, `client_request_id` | 前端消息 ID 作为幂等键 |
 | 模型 | Agent model/provider | `{provider, model}` | assistant provider/model |
-| 用户/助手 | `ai.Message` | `Message` | pi-ai `Message` 展示适配 |
+| 用户/助手 | `ai.Message` | `Message` | LiveAgent 自有 `Message` 展示类型 |
 | 工具调用 | `ai.ToolCall` | `{id,name,arguments}` | `ToolCall` 与工具轨迹 |
 | 工具结果 | `tools.Result` | `{id,name,output,failed,cancelled}` | `ToolResultMessage` |
 | 权限 | `tools.GateRequest` | `permission_id`, `tool`, `command`, `options` | 集中审批栏 |
@@ -52,6 +51,11 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | GET | `/v1/health` | 健康状态与协议版本 |
 | GET | `/v1/models` | 当前后端模型路由目录 |
 | GET / PUT | `/v1/settings` | 读取脱敏配置 / 原子持久化供应商、模型与默认选择 |
+| GET / PUT | `/v1/mcp` | 读取脱敏 MCP 配置 / 原子持久化并 reload stdio/http servers |
+| POST | `/v1/mcp/reload` | 从 K-brain-owned MCP 配置重建 live manager |
+| GET | `/v1/mcp/tools` | 按 workspace 与 enabled server IDs 返回 discovered schemas |
+| POST | `/v1/mcp/search` | ToolSearch 语义的动态工具目录检索 |
+| POST | `/v1/mcp/tools/call` | 通过 Go manager 执行 MCP tool call |
 | POST | `/v1/text/generate` | 无状态辅助文本生成；canonical `messages` 仅允许文本与 system/developer/user/assistant，后端不转发 tools |
 | GET / POST | `/v1/sessions` | 列出 / 创建会话 |
 | GET | `/v1/sessions/{id}` | 消息、子代理任务与最近事件序号 |

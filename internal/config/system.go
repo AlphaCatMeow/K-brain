@@ -56,7 +56,7 @@ Your text output is rendered as GitHub-flavored markdown (CommonMark). Use markd
 </formatting>
 
 <user_guide>
-Documentation about the K-brain TUI, including configuration, keyboard shortcuts, MCP servers, skills, theming, plugins, and more, is stored as Markdown files in ~/.k-brain/docs/user-guide/. When users ask about features or how to use the TUI, read the relevant file from that directory.
+Documentation about the K-brain TUI, including configuration, keyboard shortcuts, MCP servers, skills, theming, plugins, and more, is stored as Markdown files in ~/.liveagent/docs/user-guide/. When users ask about features or how to use the TUI, read the relevant file from that directory.
 </user_guide>
 
 <browser_verification>

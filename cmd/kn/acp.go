@@ -28,7 +28,7 @@ import (
 
 func acpCLI(args []string) error {
 	fs := flag.NewFlagSet("acp", flag.ContinueOnError)
-	modelFlag := fs.String("m", "", "model name from ~/.k-brain/config.json (default: defaultModel)")
+	modelFlag := fs.String("m", "", "model name from ~/.liveagent/config.json (default: defaultModel)")
 	providerFlag := fs.String("p", "", "provider to route the model through (default: model's first provider)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: kn acp [-m model] [-p provider]")

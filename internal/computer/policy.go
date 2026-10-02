@@ -82,5 +82,5 @@ func (p *Policy) Summary() string {
 type ApprovalNeeded struct{ App string }
 
 func (e *ApprovalNeeded) Error() string {
-	return fmt.Sprintf("computer-use needs approval to drive %q — approve in the prompt, or add it to computer.allow in ~/.k-brain/config.json", e.App)
+	return fmt.Sprintf("computer-use needs approval to drive %q — approve in the prompt, or add it to computer.allow in ~/.liveagent/config.json", e.App)
 }

@@ -29,7 +29,7 @@ func SubModelFor(cfg *config.Config, model, provider string) (agent.SubModel, er
 }
 
 func SubModelForContext(ctx context.Context, cfg *config.Config, model, provider string) (agent.SubModel, error) {
-	route, err := ResolveRouteContext(ctx, cfg, model, provider, false)
+	route, err := ResolveFailoverRouteContext(ctx, cfg, model, provider, false)
 	if err != nil {
 		return agent.SubModel{}, err
 	}

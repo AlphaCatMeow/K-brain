@@ -90,10 +90,11 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 	}
 	defer resp.Body.Close()
 	msg := Message{Role: "assistant"}
+	search := newSearchStream(ctx, firstNonEmpty(req.NativeSearchProvider, "openai"))
 	var usage Usage
 	calls := responsesCalls{items: map[string]*ToolCall{}, calls: map[string]*ToolCall{}}
 	notify := func(tc *ToolCall) {
-		if onToolCall != nil {
+		if onToolCall != nil && (!req.NativeWebSearch || !nativeSearchName(tc.Function.Name)) {
 			onToolCall(tc.ID, tc.Function.Name, tc.Function.Arguments)
 		}
 	}
@@ -114,6 +115,7 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 			CallID    string          `json:"call_id"`
 			Arguments string          `json:"arguments"`
 		}
+		search.accept(event.Data, event.Type)
 		if err := decodeStreamEvent(event.Data, &ev); err != nil {
 			return Message{}, usage, err
 		}
@@ -214,11 +216,20 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 				return finishTruncatedMessage(msg, ev.Response.stopReason(), hadTools, onText), usage, nil
 			}
 			for _, tc := range calls.order {
+				if req.NativeWebSearch && nativeSearchName(tc.Function.Name) {
+					msg.ToolCalls = append(msg.ToolCalls, *tc)
+					continue
+				}
 				if !validToolCallArgs(tc.Function.Arguments) {
 					msg.Content += fmt.Sprintf("\n[tool call %q discarded: arguments are invalid JSON]", tc.Function.Name)
 					continue
 				}
 				msg.ToolCalls = append(msg.ToolCalls, *tc)
+			}
+			search.finish(false)
+			msg.HostedSearch = append([]HostedSearch(nil), search.blocks...)
+			if req.NativeWebSearch {
+				recoverNativeSearchCalls(&msg, onText)
 			}
 			return finishMessage(msg, msg.ToolCalls, ev.Response.stopReason(), onText), usage, nil
 		}

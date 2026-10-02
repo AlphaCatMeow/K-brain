@@ -21,7 +21,12 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/mcp"
+	"github.com/Stack-Cairn/K-brain/internal/memory"
+	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
+	"github.com/Stack-Cairn/K-brain/internal/resources"
+	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 	"github.com/Stack-Cairn/K-brain/internal/session/recording"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
@@ -30,25 +35,44 @@ import (
 const maxBodyBytes = 4 << 20
 
 type Factory func(context.Context, string, protocol.ModelRef) (*agent.Agent, error)
+type MemoryRuntimeFactory func(context.Context, string, protocol.ModelRef) (*memoryruntime.Runtime, error)
 
 type Options struct {
-	Store      *session.Store
-	Factory    Factory
-	EventDir   string
-	Token      string
-	Models     []protocol.ModelRef
-	DefaultCWD string
-	Settings   *SettingsStore
+	Store                   *session.Store
+	Factory                 Factory
+	EventDir                string
+	Token                   string
+	Models                  []protocol.ModelRef
+	DefaultCWD              string
+	Settings                *SettingsStore
+	Prompts                 *resources.PromptStore
+	MemoryRoot              string
+	MemoryRuntimeFactory    MemoryRuntimeFactory
+	MemoryOrganizerInterval time.Duration
+	QuestionTimeout         time.Duration
+	MCP                     *mcp.LiveManager
+	MCPCredentialBridge     mcp.CredentialBridge
 }
 
 type Server struct {
-	store      *session.Store
-	factory    Factory
-	token      string
-	models     []protocol.ModelRef
-	settings   *SettingsStore
-	eventDir   string
-	defaultCWD string
+	store                *session.Store
+	factory              Factory
+	token                string
+	models               []protocol.ModelRef
+	settings             *SettingsStore
+	usage                *ProviderUsageService
+	prompts              *resources.PromptStore
+	eventDir             string
+	defaultCWD           string
+	memoryStore          *memory.Store
+	questionWait         time.Duration
+	memoryRuntimeFactory MemoryRuntimeFactory
+	organizerRuntime     *memoryruntime.Runtime
+	organizerCancel      func()
+	cron                 *cronManager
+	hookStore            *HookStore
+	hookRunner           *BackendHookRunner
+	mcp                  *mcp.LiveManager
 
 	mu       sync.Mutex
 	sessions map[string]*runtimeSession
@@ -58,9 +82,12 @@ type Server struct {
 type runRecord struct {
 	ClientRequestID string `json:"client_request_id"`
 	PromptHash      string `json:"prompt_hash"`
+	RequestHash     string `json:"request_hash,omitempty"`
+	Kind            string `json:"kind,omitempty"`
 	RunID           string `json:"run_id"`
 	AcceptedSeq     int64  `json:"accepted_seq"`
 	Terminal        bool   `json:"terminal"`
+	State           string `json:"state,omitempty"`
 }
 
 type permissionWaiter struct {
@@ -73,18 +100,28 @@ type runtimeSession struct {
 	settingsRevision uint64
 	id               string
 	deleted          bool
+	closing          bool
+	runWorkers       sync.WaitGroup
 	mu               sync.Mutex
 	agent            *agent.Agent
 	recorder         *recording.Recorder
 	cancel           context.CancelFunc
+	checkpoint       *checkpointCapture
 	runID            string
 	runDone          bool
 	nextSeq          int64
 	events           []protocol.Event
 	changed          chan struct{}
 	runs             map[string]runRecord
+	terminalManager  *tools.TerminalManager
+	processManager   *tools.ManagedProcessManager
+	terminalContexts map[string]context.Context
 	permissions      map[string]*permissionWaiter
+	questions        map[string]*questionWaiter
 	eventDir         string
+	mcpActivation    *mcp.ToolActivation
+	memoryRuntime    agent.MemoryRuntime
+	runtimeErr       error
 }
 
 func New(opts Options) (*Server, error) {
@@ -94,17 +131,48 @@ func New(opts Options) (*Server, error) {
 	if opts.Factory == nil {
 		return nil, errors.New("backend agent factory is required")
 	}
+	if opts.MCP != nil && opts.MCPCredentialBridge != nil {
+		opts.MCP.SetCredentialBridge(opts.MCPCredentialBridge)
+	}
 	if opts.EventDir == "" {
 		opts.EventDir = filepath.Join(opts.Store.SessionsDir(), "backend-events")
 	}
 	if err := os.MkdirAll(opts.EventDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create backend event directory: %w", err)
 	}
-	return &Server{
+	hookStore, err := NewHookStore(filepath.Join(opts.EventDir, "hooks.json"))
+	if err != nil {
+		return nil, err
+	}
+	memoryStore, err := memory.OpenStore(opts.MemoryRoot)
+	if err != nil {
+		return nil, err
+	}
+	cron, err := newCronManager(opts.Store, opts.DefaultCWD, opts.Settings)
+	if err != nil {
+		return nil, err
+	}
+	server := &Server{
 		store: opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
-		settings: opts.Settings,
-		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, sessions: make(map[string]*runtimeSession),
-	}, nil
+		settings: opts.Settings, usage: NewProviderUsageService(opts.Settings), prompts: opts.Prompts,
+		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
+	}
+	cron.promptExecutor = server.executeCronPromptCanonical
+	go cron.loop()
+	if opts.MemoryRuntimeFactory != nil && opts.MemoryOrganizerInterval != 0 {
+		interval := opts.MemoryOrganizerInterval
+		if interval < 0 {
+			interval = 24 * time.Hour
+		}
+		runtime, runtimeErr := opts.MemoryRuntimeFactory(context.Background(), opts.DefaultCWD, protocol.ModelRef{})
+		if runtimeErr != nil {
+			cron.close()
+			return nil, fmt.Errorf("start memory organizer runtime: %w", runtimeErr)
+		}
+		server.organizerRuntime = runtime
+		server.organizerCancel = runtime.StartOrganizerScheduler(context.Background(), opts.DefaultCWD, interval)
+	}
+	return server, nil
 }
 
 func (s *Server) Close() error {
@@ -114,6 +182,19 @@ func (s *Server) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.mu.Unlock()
+	if s.organizerCancel != nil {
+		s.organizerCancel()
+	}
+	var err error
+	if s.organizerRuntime != nil {
+		err = errors.Join(err, s.organizerRuntime.Close())
+		s.organizerRuntime = nil
+	}
+	if s.cron != nil {
+		s.cron.close()
+	}
+	s.mu.Lock()
 	runtimes := make([]*runtimeSession, 0, len(s.sessions))
 	for _, rt := range s.sessions {
 		runtimes = append(runtimes, rt)
@@ -121,13 +202,32 @@ func (s *Server) Close() error {
 	s.mu.Unlock()
 	for _, rt := range runtimes {
 		rt.mu.Lock()
+		rt.closing = true
 		if rt.cancel != nil {
 			rt.cancel()
 		}
-
 		rt.mu.Unlock()
 	}
-	return nil
+	for _, rt := range runtimes {
+		// Runs persist history, checkpoints and terminal events after cancellation.
+		rt.runWorkers.Wait()
+		rt.mu.Lock()
+		memoryRuntime := rt.memoryRuntime
+		rt.memoryRuntime = nil
+		terminalManager := rt.terminalManager
+		processManager := rt.processManager
+		rt.terminalManager = nil
+		rt.processManager = nil
+		rt.mu.Unlock()
+		if terminalManager != nil {
+			terminalManager.CloseAll()
+		}
+		if processManager != nil {
+			processManager.CloseAll()
+		}
+		err = errors.Join(err, closeMemoryRuntime(memoryRuntime))
+	}
+	return err
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -152,12 +252,60 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleModels(w)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/skills") {
+		s.handleSkills(w, r)
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/v1/text/generate" {
 		s.generateText(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/terminal") {
+		s.handleTerminal(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/memory/manage" {
+		s.handleMemory(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/history/search" {
+		s.historySearch(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/memory/organize" {
+		s.handleMemoryOrganizer(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/cron" || strings.HasPrefix(r.URL.Path, "/v1/cron/") {
+		s.handleCron(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/hooks" {
+		s.handleHooks(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/prompts") {
+		s.handlePrompts(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/settings" {
 		s.handleSettings(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/settings/providers/") && strings.HasSuffix(r.URL.Path, "/models") {
+		s.handleProviderModels(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/providers/") {
+		s.providerUsage(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/migrations/liveagent-history" {
+		s.importLegacyHistory(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/mcp" || strings.HasPrefix(r.URL.Path, "/v1/mcp/") {
+		s.handleMCP(w, r)
 		return
 	}
 	if r.URL.Path == "/v1/sessions" {
@@ -185,12 +333,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if r.Method == http.MethodGet && len(parts) >= 2 && parts[1] == "trajectory" {
+		if len(parts) == 2 || (len(parts) == 3 && parts[2] == "stats") {
+			s.trajectory(w, r, id, len(parts) == 3)
+			return
+		}
+		if len(parts) == 3 && (parts[2] == "sections" || parts[2] == "subagents") {
+			s.trajectoryDetails(w, r, id, parts[2])
+			return
+		}
+	}
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		s.deleteSession(w, r, id)
 		return
 	}
 	if len(parts) == 2 {
 		switch parts[1] {
+		case "checkpoints":
+			if r.Method == http.MethodGet {
+				s.checkpointList(w, r, id)
+				return
+			}
+		case "compact":
+			if r.Method == http.MethodPost {
+				s.compactSession(w, r, id)
+				return
+			}
 		case "history":
 			if r.Method == http.MethodGet {
 				s.history(w, r, id)
@@ -224,6 +392,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.startRun(w, r, id)
 		return
 	}
+	if len(parts) == 4 && parts[1] == "checkpoints" && r.Method == http.MethodPost && (parts[3] == "preview" || parts[3] == "rewind") {
+		seq, parseErr := strconv.Atoi(parts[2])
+		if parseErr != nil || seq < 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid checkpoint turn sequence")
+			return
+		}
+		if parts[3] == "preview" {
+			s.checkpointPreview(w, r, id, seq)
+		} else {
+			s.checkpointRewind(w, r, id, seq)
+		}
+		return
+	}
 	if len(parts) == 2 && parts[1] == "close" && r.Method == http.MethodPost {
 		s.closeSession(w, r, id)
 		return
@@ -234,6 +415,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 3 && parts[1] == "permissions" && parts[2] != "" && r.Method == http.MethodPost {
 		s.permission(w, r, id, parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "questions" && parts[2] != "" && r.Method == http.MethodPost {
+		s.answerQuestion(w, r, id, parts[2])
 		return
 	}
 	writeJSONError(w, http.StatusNotFound, "route not found")
@@ -389,7 +574,20 @@ func (s *Server) loadRuntimeByID(id string) (*runtimeSession, error) {
 	return s.loadRuntime(id, protocol.ModelRef{Provider: meta.Provider, Model: meta.Model}, meta.CWD)
 }
 
+func closeMemoryRuntime(runtime agent.MemoryRuntime) error {
+	if runtime == nil {
+		return nil
+	}
+	return runtime.Close()
+}
+
 func (s *Server) switchModelLocked(rt *runtimeSession, selected protocol.ModelRef) error {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return errors.New("backend is closed")
+	}
 	if strings.TrimSpace(selected.Model) == "" {
 		return errors.New("model.model is required")
 	}
@@ -410,8 +608,28 @@ func (s *Server) switchModelLocked(rt *runtimeSession, selected protocol.ModelRe
 		return err
 	}
 	ag.WorkingDir = cwd
+	terminalManager := rt.terminalManager
+	processManager := rt.processManager
+	ag.Tools = append(ag.Tools, tools.LiveAgentCatalogWithManagers([]string{selected.Provider}, terminalManager, processManager)...)
+	if s.cron != nil {
+		s.cron.attachTool(ag, selected)
+	}
 	ag.ModelName, ag.Provider = selected.Model, selected.Provider
 	ag.SetSessionID(rt.id)
+	var memoryRuntime agent.MemoryRuntime
+	if s.memoryRuntimeFactory != nil {
+		memoryRuntime, err = s.memoryRuntimeFactory(context.Background(), cwd, selected)
+		if err != nil {
+			return err
+		}
+		ag.SetMemoryRuntime(memoryRuntime)
+	}
+	adopted := false
+	defer func() {
+		if !adopted {
+			_ = closeMemoryRuntime(memoryRuntime)
+		}
+	}()
 	rec, err := recording.Open(s.store, rt.id, ag)
 	if err != nil {
 		return err
@@ -420,14 +638,30 @@ func (s *Server) switchModelLocked(rt *runtimeSession, selected protocol.ModelRe
 		return err
 	}
 	s.wireTasks(rt, ag)
+	previousMemory := rt.memoryRuntime
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("backend is closed")
+	}
 	rt.agent = ag
+	rt.memoryRuntime = memoryRuntime
+	rt.terminalManager = terminalManager
+	rt.processManager = processManager
 	rt.settingsRevision = 0
 	rt.recorder = rec
+	s.mu.Unlock()
+	adopted = true
+	_ = closeMemoryRuntime(previousMemory)
 	return nil
 }
 
 func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*runtimeSession, error) {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.New("backend is closed")
+	}
 	if rt := s.sessions[id]; rt != nil {
 		s.mu.Unlock()
 		rt.mu.Lock()
@@ -439,23 +673,53 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 		return rt, nil
 	}
 	s.mu.Unlock()
+	activation := mcp.NewToolActivation()
 	ag, err := s.factory(context.Background(), cwd, model)
 	if err != nil {
 		return nil, err
 	}
 	ag.WorkingDir = cwd
+	terminalManager := tools.NewTerminalManager()
+	processManager := tools.NewManagedProcessManager()
+	ag.Tools = append(ag.Tools, tools.LiveAgentCatalogWithManagers([]string{model.Provider}, terminalManager, processManager)...)
+	if s.cron != nil {
+		s.cron.attachTool(ag, model)
+	}
 	ag.ModelName, ag.Provider = model.Model, model.Provider
+	if s.mcp != nil {
+		mcpTools, filter := s.mcp.ToolsForTurn(context.Background(), cwd, nil, activation)
+		ag.SetMCPTools(mcpTools)
+		ag.RequestToolFilter = filter
+	}
 	ag.SetSessionID(id)
+	var memoryRuntime agent.MemoryRuntime
+	if s.memoryRuntimeFactory != nil {
+		memoryRuntime, err = s.memoryRuntimeFactory(context.Background(), cwd, model)
+		if err != nil {
+			return nil, err
+		}
+		ag.SetMemoryRuntime(memoryRuntime)
+	}
+	adopted := false
+	defer func() {
+		if !adopted {
+			_ = closeMemoryRuntime(memoryRuntime)
+		}
+	}()
 	rec, err := recording.Open(s.store, id, ag)
 	if err != nil {
 		return nil, err
 	}
-	rt := &runtimeSession{id: id, agent: ag, recorder: rec, changed: make(chan struct{}), runs: map[string]runRecord{}, permissions: map[string]*permissionWaiter{}, eventDir: s.eventDir}
+	rt := &runtimeSession{id: id, agent: ag, memoryRuntime: memoryRuntime, recorder: rec, changed: make(chan struct{}), runs: map[string]runRecord{}, terminalManager: terminalManager, processManager: processManager, permissions: map[string]*permissionWaiter{}, questions: map[string]*questionWaiter{}, eventDir: s.eventDir, mcpActivation: activation}
 	if err := rt.loadJournal(s.eventDir); err != nil {
 		return nil, err
 	}
 	s.wireTasks(rt, ag)
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.New("backend is closed")
+	}
 	if existing := s.sessions[id]; existing != nil {
 		s.mu.Unlock()
 		existing.mu.Lock()
@@ -468,11 +732,14 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 	}
 	s.sessions[id] = rt
 	s.mu.Unlock()
+	adopted = true
 	return rt, nil
 }
 
 func (s *Server) wireTasks(rt *runtimeSession, ag *agent.Agent) {
+	s.wireQuestions(rt, ag)
 	ag.Tasks().SetSessionID(rt.id)
+	ag.Tasks().OnEvents = rt.trajectoryChildEvents
 	ag.Tasks().OnRecord = func(id string, task *agent.BackgroundTask) {
 		model, provider, _ := strings.Cut(task.SubModel, " @ ")
 		stored := session.Task{Model: model, Provider: provider, ID: task.ID, Description: task.Description, Prompt: task.Prompt, Status: string(task.Status), Report: task.Report, StartedAt: task.StartedAt, EndedAt: task.EndedAt}
@@ -502,7 +769,10 @@ func (rt *runtimeSession) taskEvent(t *agent.BackgroundTask) {
 	case agent.TaskError, agent.TaskCancelled:
 		typ = protocol.EventSubagentFailed
 	}
-	_, _ = rt.publish(typ, protocol.SubagentEvent{Subagent: view}, "")
+	rt.mu.Lock()
+	runID := rt.trajectoryTaskRunLocked(t.ID)
+	rt.mu.Unlock()
+	_, _ = rt.publishTrajectory(runID, typ, protocol.SubagentEvent{Subagent: view}, "")
 }
 
 func subagentView(t agent.BackgroundTask) protocol.Subagent {
@@ -591,8 +861,8 @@ func (rt *runtimeSession) publish(typ string, payload any, parent string) (proto
 	if rt.deleted {
 		return protocol.Event{}, session.ErrNotFound
 	}
-	rt.nextSeq++
-	e, err := protocol.NewEvent(rt.nextSeq, rt.id, rt.runID, typ, payload)
+	seq := rt.nextSeq + 1
+	e, err := protocol.NewEvent(seq, rt.id, rt.runID, typ, payload)
 	if err != nil {
 		return protocol.Event{}, err
 	}
@@ -600,6 +870,7 @@ func (rt *runtimeSession) publish(typ string, payload any, parent string) (proto
 	if err = rt.persistEvent(rt.eventDir, e); err != nil {
 		return protocol.Event{}, err
 	}
+	rt.nextSeq = seq
 	rt.events = append(rt.events, e)
 	old := rt.changed
 	rt.changed = make(chan struct{})
@@ -617,8 +888,8 @@ func (s *Server) publish(rt *runtimeSession, typ string, payload any, parent str
 	if rt.deleted {
 		return protocol.Event{}, session.ErrNotFound
 	}
-	rt.nextSeq++
-	e, err := protocol.NewEvent(rt.nextSeq, rt.id, rt.runID, typ, payload)
+	seq := rt.nextSeq + 1
+	e, err := protocol.NewEvent(seq, rt.id, rt.runID, typ, payload)
 	if err != nil {
 		return protocol.Event{}, err
 	}
@@ -626,11 +897,23 @@ func (s *Server) publish(rt *runtimeSession, typ string, payload any, parent str
 	if err = rt.persistEvent(s.eventDir, e); err != nil {
 		return protocol.Event{}, err
 	}
+	rt.nextSeq = seq
 	rt.events = append(rt.events, e)
 	old := rt.changed
 	rt.changed = make(chan struct{})
 	close(old)
 	return e, nil
+}
+
+type unattendedRunContextKey struct{}
+
+func withUnattendedRun(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unattendedRunContextKey{}, true)
+}
+
+func isUnattendedRun(ctx context.Context) bool {
+	value, _ := ctx.Value(unattendedRunContextKey{}).(bool)
+	return value
 }
 
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request, id string) {
@@ -640,113 +923,147 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var in protocol.PromptRequest
-	if err = decodeJSON(w, r, &in); err != nil {
+	if err := decodeJSON(w, r, &in); err != nil {
 		return
 	}
-	if strings.TrimSpace(in.ClientRequestID) == "" {
-		writeJSONError(w, http.StatusBadRequest, "client_request_id is required")
-		return
-	}
-	if strings.TrimSpace(in.Prompt) == "" && len(in.Content) == 0 {
-		writeJSONError(w, http.StatusBadRequest, "prompt or content is required")
-		return
-	}
-	userMessage := protocol.Message{Role: protocol.RoleUser}
-	if in.Prompt != "" {
-		userMessage.Content = append(userMessage.Content, protocol.ContentBlock{Type: protocol.ContentText, Text: in.Prompt})
-	}
-	userMessage.Content = append(userMessage.Content, in.Content...)
-	if err := userMessage.Validate(); err != nil {
-		writeJSONError(w, 400, err.Error())
-		return
-	}
-	for _, block := range userMessage.Content {
-		if block.Type == protocol.ContentThinking {
-			writeJSONError(w, 400, "user content must be text or image")
-			return
-		}
-	}
-	promptHash := hashPrompt(in)
-	rt.mu.Lock()
-	if old, ok := rt.runs[in.ClientRequestID]; ok {
-		rt.mu.Unlock()
-		if old.PromptHash != promptHash {
-			writeJSONError(w, http.StatusConflict, "client_request_id was already used with a different prompt")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "conversation_id": rt.id, "run_id": old.RunID, "accepted_seq": old.AcceptedSeq})
-		return
-	}
-	if rt.deleted {
-		rt.mu.Unlock()
-		writeJSONError(w, 404, "session not found")
-		return
-	}
-	if rt.activeLocked() {
-		rt.mu.Unlock()
-		writeJSONError(w, http.StatusConflict, "session already has a running turn")
-		return
-	}
-	if in.Model != nil && (in.Model.Model != "" || in.Model.Provider != "") {
-		selected := *in.Model
-		if err := s.switchModelLocked(rt, selected); err != nil {
-			rt.mu.Unlock()
-			writeJSONError(w, http.StatusBadRequest, "model switch failed: "+err.Error())
-			return
-		}
-	}
-	if err := s.refreshSettingsLocked(rt); err != nil {
-		rt.mu.Unlock()
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if in.ResumeMessageID != "" {
-		messages := rt.agent.MessagesSnapshot()
-		submitted, _ := userMessage.ToAIMessage()
-		if len(messages) == 0 || messages[len(messages)-1].Role != "user" || messages[len(messages)-1].ID != in.ResumeMessageID || !sameUserContent(messages[len(messages)-1], submitted) {
-			rt.mu.Unlock()
-			writeJSONError(w, 409, "resume_message_id and content must match the tail user message")
-			return
-		}
-		userMessage = protocol.FromAIMessage(messages[len(messages)-1])
-	}
-	runID := newRunID()
-	rt.runID = runID
-	rt.runDone = false
-	ctx, cancel := context.WithCancel(context.Background())
-	rt.cancel = cancel
-	rt.mu.Unlock()
-	accepted, err := rt.publish(protocol.EventRunAccepted, map[string]any{"client_request_id": in.ClientRequestID}, "")
+	accepted, status, err := s.startCanonicalRun(context.Background(), rt, in)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		writeJSONError(w, status, err.Error())
 		return
 	}
-	if in.ResumeMessageID == "" {
-		if _, err := rt.publish(protocol.EventUserMessage, userMessage, ""); err != nil {
-			cancel()
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	rec := runRecord{ClientRequestID: in.ClientRequestID, PromptHash: promptHash, RunID: runID, AcceptedSeq: accepted.Seq}
-	rt.mu.Lock()
-	rt.runs[in.ClientRequestID] = rec
-	_ = rt.persistRuns(s.eventDir)
-	rt.mu.Unlock()
-	writeJSON(w, http.StatusAccepted, map[string]any{"version": protocol.Version, "conversation_id": id, "run_id": runID, "accepted_seq": accepted.Seq})
-	go s.executeRun(rt, ctx, runID, in)
+	writeJSON(w, status, accepted)
 }
 
-func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID string, in protocol.PromptRequest) {
+func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID string, in protocol.PromptRequest, options protocol.RunOptions) {
+	rt.mu.Lock()
+	restoreRunOptions := applyRunOptions(rt.agent, options)
+	rt.mu.Unlock()
+	defer func() {
+		rt.mu.Lock()
+		restoreRunOptions()
+		if rt.cancel != nil {
+			rt.cancel()
+		}
+		rt.runDone = true
+		rt.cancel = nil
+		if rec, ok := rt.runs[in.ClientRequestID]; ok {
+			rec.Terminal = true
+			rt.runs[in.ClientRequestID] = rec
+			if err := rt.persistRuns(s.eventDir); err != nil {
+				rt.runtimeErr = errors.Join(rt.runtimeErr, fmt.Errorf("persist run completion: %w", err))
+			}
+		}
+		old := rt.changed
+		rt.changed = make(chan struct{})
+		close(old)
+		rt.mu.Unlock()
+	}()
 	message := protocol.Message{Role: protocol.RoleUser}
 	if in.Prompt != "" {
 		message.Content = append(message.Content, protocol.ContentBlock{Type: protocol.ContentText, Text: in.Prompt})
 	}
 	message.Content = append(message.Content, in.Content...)
 	converted, _ := message.ToAIMessage()
-	gate := func(req tools.GateRequest) (tools.GateDecision, string) { return s.waitPermission(rt, runID, req, ctx) }
+	gate := func(req tools.GateRequest) (tools.GateDecision, string) {
+		if options.Mode == "chat" {
+			return tools.GateReject, "chat mode disables tools"
+		}
+		if isUnattendedRun(req.Context) {
+			return tools.GateReject, "unattended scheduled runs cannot request interactive approval"
+		}
+		return runToolGate(options, req, func(req tools.GateRequest) (tools.GateDecision, string) {
+			rt.mu.Lock()
+			active := rt.runID == runID && !rt.runDone && !rt.deleted
+			rt.mu.Unlock()
+			if !active {
+				return tools.GateReject, "interactive approval requires the owning active run"
+			}
+			return s.waitPermission(rt, runID, req, req.Context)
+		})
+	}
+	roots := make([]tools.WorkspaceRoot, len(options.WorkspaceRoots))
+	for i, root := range options.WorkspaceRoots {
+		roots[i] = tools.WorkspaceRoot{Path: root.Path, Access: root.Access}
+	}
+	ctx = tools.WithWorkspaceRoots(ctx, roots)
 	ctx = tools.WithGate(ctx, gate)
-	ev := agent.Events{OnText: func(d string) { _, _ = rt.publish(protocol.EventTextDelta, protocol.TextDelta{Text: d}, "") }, OnThink: func(d string) { _, _ = rt.publish(protocol.EventThinkingDelta, protocol.TextDelta{Text: d}, "") }, OnToolStart: func(id, name, args string) {
+	ctx = tools.WithAsk(ctx, func(questionCtx context.Context, req tools.AskRequest) ([]string, bool) {
+		if isUnattendedRun(questionCtx) {
+			return nil, false
+		}
+		questions := make([]protocol.Question, len(req.Questions))
+		if len(req.Questions) == 0 {
+			questions = []protocol.Question{{Prompt: req.Question, Multiple: req.Multiple, Options: make([]protocol.QuestionOption, len(req.Options))}}
+			for i, option := range req.Options {
+				questions[0].Options[i] = protocol.QuestionOption{Label: option.Label, Description: option.Description, Recommended: option.Recommended}
+			}
+		} else {
+			for i, question := range req.Questions {
+				questions[i] = protocol.Question{ID: question.ID, Header: question.Header, Prompt: question.Prompt, Multiple: question.Multiple, Options: make([]protocol.QuestionOption, len(question.Options))}
+				for j, option := range question.Options {
+					questions[i].Options[j] = protocol.QuestionOption{Label: option.Label, Description: option.Description, Recommended: option.Recommended}
+				}
+			}
+		}
+		normalized, normalizeErr := normalizeQuestions(questions)
+		if normalizeErr != nil {
+			return nil, false
+		}
+		result, waitErr := s.waitQuestion(questionCtx, rt, runID, tools.ToolCallID(questionCtx), normalized)
+		if waitErr != nil || result == nil || result.Cancelled {
+			return nil, false
+		}
+		answers := make([]string, len(result.Answers))
+		for i, answer := range result.Answers {
+			answers[i] = answer.SelectedLabel
+		}
+		return answers, true
+	})
+	ctx = context.WithValue(ctx, questionRunKey{}, runID)
+	ctx = tools.WithRunIdentity(ctx, tools.RunIdentity{ConversationID: rt.id, RunID: runID})
+	ctx = tools.WithWorkingDir(ctx, rt.agent.WorkingDir)
+	ctx = sandbox.WithPolicy(ctx, rt.agent.SandboxPolicy)
+	rt.mu.Lock()
+	if rt.terminalContexts == nil {
+		rt.terminalContexts = make(map[string]context.Context)
+	}
+	rt.terminalContexts[runID] = ctx
+	rt.mu.Unlock()
+	rt.mu.Lock()
+	capture := rt.checkpoint
+	rt.mu.Unlock()
+	if capture != nil {
+		messageID := in.TurnID
+		if in.ResumeMessageID != "" {
+			messageID = in.ResumeMessageID
+		}
+		if messageID != "" {
+			ctx = agent.WithUserMessageID(ctx, messageID)
+		}
+		ctx = tools.WithFileMutationObserver(ctx, capture.capture)
+		ctx = agent.WithUserMessageObserver(ctx, func(message ai.Message) error {
+			capture.mu.Lock()
+			if capture.turnID == "" {
+				capture.turnID = message.ID
+			}
+			capture.mu.Unlock()
+			return nil
+		})
+	}
+	ctx = agent.WithRequestObserver(ctx, &trajectoryObserver{rt: rt, runID: runID})
+	hookEvents := s.hookRunner.Scope(ctx, rt.id, runID, rt.agent.WorkingDir, func(hook BackendHook, event string, err error) {
+		_, _ = rt.publish(protocol.EventHookWarning, map[string]any{"hookName": hook.Name, "hookType": hook.Type, "event": event, "message": err.Error()}, "")
+	})
+	ctx = agent.WithLifecycleStart(ctx, func() { hookEvents("agent_start") })
+	ev := agent.Events{OnLifecycle: hookEvents, OnText: func(d string) { _, _ = rt.publish(protocol.EventTextDelta, protocol.TextDelta{Text: d}, "") }, OnThink: func(d string) { _, _ = rt.publish(protocol.EventThinkingDelta, protocol.TextDelta{Text: d}, "") }, OnHostedSearch: func(search ai.HostedSearch) {
+		_, _ = rt.publish(protocol.EventHostedSearch, protocol.HostedSearch{Type: search.Type, ID: search.ID, Provider: search.Provider, Status: search.Status, Queries: search.Queries, Sources: func() []protocol.HostedSearchSource {
+			out := make([]protocol.HostedSearchSource, len(search.Sources))
+			for i, source := range search.Sources {
+				out[i] = protocol.HostedSearchSource{URL: source.URL, Title: source.Title, SourceType: source.SourceType}
+			}
+			return out
+		}(), Error: search.Error}, "")
+	}, OnToolStart: func(id, name, args string) {
 		_, _ = rt.publish(protocol.EventToolCall, protocol.ToolCallEvent{ToolCall: protocol.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}}, "")
 	}, OnToolResult: func(id, name string, result tools.Result) {
 		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Failed: result.Failed, Cancelled: result.Cancelled}}, "")
@@ -756,21 +1073,89 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		_, _ = rt.publish(protocol.EventUsage, protocol.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, CachedTokens: u.Cached(), CacheWriteTokens: u.CacheWrite()}, "")
 	}}
 	ev = agent.FanIn(rt.recorder.Events(), ev)
+	assistantCount := 0
+	for _, message := range rt.agent.MessagesSnapshot() {
+		if message.Role == protocol.RoleAssistant {
+			assistantCount++
+		}
+	}
 	var err error
 	if in.ResumeMessageID != "" {
 		_, err = rt.agent.ContinueUser(ctx, in.ResumeMessageID, ev)
 	} else {
 		_, err = rt.agent.TurnParts(ctx, converted.Content, converted.Parts, ev)
 	}
+	var failedAssistant *protocol.Message
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		messages := rt.agent.MessagesSnapshot()
+		currentAssistantCount := 0
+		var latestAssistant ai.Message
+		for _, message := range messages {
+			if message.Role != protocol.RoleAssistant {
+				continue
+			}
+			currentAssistantCount++
+			if currentAssistantCount > assistantCount {
+				latestAssistant = message
+			}
+		}
+		if currentAssistantCount > assistantCount && latestAssistant.StopReason == ai.StopReasonError {
+			if canonical, canonicalErr := protocol.FromAIMessageValidated(latestAssistant); canonicalErr == nil {
+				failedAssistant = &canonical
+			}
+		} else {
+			now := time.Now().UTC()
+			failureMessage := ai.Message{
+				ID:         "assistant-error-" + runID,
+				Role:       protocol.RoleAssistant,
+				Content:    err.Error(),
+				Model:      rt.agent.Model + " @ " + rt.agent.Provider,
+				StopReason: ai.StopReasonError,
+				SentAt:     &now,
+			}
+			messages = append(messages, failureMessage)
+			rt.agent.RestoreMessages(messages)
+			if canonical, canonicalErr := protocol.FromAIMessageValidated(failureMessage); canonicalErr == nil {
+				failedAssistant = &canonical
+			}
+		}
+	}
 	rt.mu.Lock()
 	if rt.recorder != nil {
 		err = errors.Join(err, rt.recorder.Save())
 	}
+	checkpointRun := rt.checkpoint
+	rt.checkpoint = nil
 	rt.mu.Unlock()
+	if checkpointRun != nil {
+		sequence, sequenceErr := s.store.MessageSequence(rt.id, checkpointRun.turnID)
+		if sequenceErr != nil {
+			err = errors.Join(err, sequenceErr)
+		} else if record, checkpointErr := checkpointRun.commit(sequence); checkpointErr != nil {
+			err = errors.Join(err, checkpointErr)
+		} else if snapshotErr := s.store.SetSnapshot(rt.id, sequence, record.ID); snapshotErr != nil {
+			err = errors.Join(err, snapshotErr)
+		}
+	}
+	finish := func(kind string, terminal protocol.RunTerminal) {
+		_, publishErr := rt.publish(kind, terminal, "")
+		rt.mu.Lock()
+		defer rt.mu.Unlock()
+		if publishErr != nil {
+			rt.runtimeErr = errors.Join(rt.runtimeErr, fmt.Errorf("persist run terminal: %w", publishErr))
+		}
+		if rec, ok := rt.runs[in.ClientRequestID]; ok {
+			rec.State = terminal.State
+			rt.runs[in.ClientRequestID] = rec
+		}
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		_, _ = rt.publish(protocol.EventRunCancelled, protocol.RunTerminal{State: "cancelled"}, "")
+		finish(protocol.EventRunCancelled, protocol.RunTerminal{State: "cancelled"})
 	} else if err != nil {
-		_, _ = rt.publish(protocol.EventRunFailed, protocol.RunTerminal{State: "failed", Error: err.Error()}, "")
+		if failedAssistant != nil {
+			_, _ = rt.publish(protocol.EventAssistantMessage, *failedAssistant, "")
+		}
+		finish(protocol.EventRunFailed, protocol.RunTerminal{State: "failed", Error: err.Error()})
 	} else {
 		messages := rt.agent.MessagesSnapshot()
 		for i := len(messages) - 1; i >= 0; i-- {
@@ -782,20 +1167,8 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			}
 			break
 		}
-		_, _ = rt.publish(protocol.EventRunCompleted, protocol.RunTerminal{State: "completed"}, "")
+		finish(protocol.EventRunCompleted, protocol.RunTerminal{State: "completed"})
 	}
-	rt.mu.Lock()
-	rt.runDone = true
-	rt.cancel = nil
-	if rec, ok := rt.runs[in.ClientRequestID]; ok {
-		rec.Terminal = true
-		rt.runs[in.ClientRequestID] = rec
-		_ = rt.persistRuns(s.eventDir)
-	}
-	old := rt.changed
-	rt.changed = make(chan struct{})
-	close(old)
-	rt.mu.Unlock()
 }
 
 func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.GateRequest, ctx context.Context) (tools.GateDecision, string) {
@@ -847,13 +1220,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 	for {
 		rt.mu.Lock()
 		pending := make([]protocol.Event, 0)
+		active := rt.cancel != nil && !rt.runDone
 		for _, e := range rt.events {
 			if e.Seq > after {
+				// Consumers may submit the next run as soon as they receive a terminal event.
+				if active && e.RunID == rt.runID && (e.Type == protocol.EventRunCompleted || e.Type == protocol.EventRunFailed || e.Type == protocol.EventRunCancelled) {
+					break
+				}
 				pending = append(pending, e)
 			}
 		}
 		changed := rt.changed
-		active := rt.cancel != nil && !rt.runDone
 		rt.mu.Unlock()
 		for _, e := range pending {
 			if err := writeSSE(w, e); err != nil {

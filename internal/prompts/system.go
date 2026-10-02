@@ -77,7 +77,7 @@ Here is some useful information about the environment you are running in:
 		}
 	}
 	if extra := config.BrainInstructions(); extra != "" {
-		prompt += "\n\nStanding instructions from the user (~/.k-brain/brain.md — treat as user rules):\n" + extra
+		prompt += "\n\nStanding instructions from the user (~/.liveagent/brain.md — treat as user rules):\n" + extra
 	}
 	for _, file := range config.ProjectPromptFiles(wd) {
 		prompt += fmt.Sprintf("\n\nProject instructions from %s (%s — treat as project rules):\n%s", file.Scope, file.Path, file.Text)
@@ -88,5 +88,11 @@ Here is some useful information about the environment you are running in:
 
 // SkillsPrompt discovers skills relative to the backend session's workspace.
 func SkillsPrompt(wd string) string {
+	if manager, err := skills.NewManager(); err == nil {
+		if selected, _, err := manager.Effective(wd); err == nil {
+			return skills.PromptBlock(selected)
+		}
+	}
+	// Preserve compatibility discovery when the managed root is unavailable.
 	return skills.PromptBlock(skills.Scan(skills.DirsFor(wd)...))
 }

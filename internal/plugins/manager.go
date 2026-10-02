@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 	"github.com/Stack-Cairn/K-brain/internal/hooks"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 	"github.com/Stack-Cairn/K-brain/internal/tools/bashrun"
@@ -32,7 +33,8 @@ type Manager struct {
 func Dirs(project string) []string {
 	var out []string
 	if project != "" {
-		out = append(out, filepath.Join(project, ".k-brain", "plugins"))
+		datapath.Report(datapath.MigrateProjectDir(project))
+		out = append(out, filepath.Join(datapath.ProjectDir(project), "plugins"))
 	}
 	if home := pluginHome(); home != "" {
 		out = append(out, filepath.Join(home, "plugins"))
@@ -41,6 +43,11 @@ func Dirs(project string) []string {
 }
 
 func New(project string) (*Manager, error) {
+	if project != "" {
+		if err := datapath.MigrateProjectDir(project); err != nil {
+			return nil, err
+		}
+	}
 	home, err := pluginHomeOrUserHome()
 	if err != nil {
 		return nil, err
@@ -56,22 +63,14 @@ func New(project string) (*Manager, error) {
 }
 
 func pluginHome() string {
-	if dir := strings.TrimSpace(os.Getenv("K_BRAIN_HOME")); dir != "" {
-		return dir
-	}
-	home, err := os.UserHomeDir()
+	dir, err := datapath.UserDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".k-brain")
+	return dir
 }
 
-func pluginHomeOrUserHome() (string, error) {
-	if dir := pluginHome(); dir != "" {
-		return dir, nil
-	}
-	return "", fmt.Errorf("user home is unavailable")
-}
+func pluginHomeOrUserHome() (string, error) { return datapath.UserDir() }
 
 func (m *Manager) Reload() error {
 	found := map[string]Plugin{}

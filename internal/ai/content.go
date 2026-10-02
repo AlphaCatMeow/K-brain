@@ -1,33 +1,22 @@
 package ai
 
 import (
-	"encoding/base64"
 	"fmt"
-	"io"
-	"net/url"
 	"strings"
 )
 
 func imageSource(p ContentPart) (map[string]any, error) {
-	if p.ImageURL == nil || p.ImageURL.URL == "" {
-		return nil, fmt.Errorf("image_url requires a URL")
+	mimeType, value, isData, err := AttachmentData(p)
+	if err != nil {
+		return nil, err
 	}
-	s := p.ImageURL.URL
-	if strings.HasPrefix(s, "data:") {
-		header, data, ok := strings.Cut(strings.TrimPrefix(s, "data:"), ";base64,")
-		if !ok || !strings.HasPrefix(header, "image/") || data == "" {
-			return nil, fmt.Errorf("image data URL must contain a media type and base64 data")
-		}
-		if _, err := io.Copy(io.Discard, base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))); err != nil {
-			return nil, fmt.Errorf("image data URL contains invalid base64")
-		}
-		return map[string]any{"type": "base64", "media_type": header, "data": data}, nil
+	if p.Type != "image_url" || (mimeType != "" && !strings.HasPrefix(mimeType, "image/")) {
+		return nil, fmt.Errorf("image attachment requires an image media type")
 	}
-	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, fmt.Errorf("image URL must use HTTP, HTTPS, or base64 data")
+	if isData {
+		return map[string]any{"type": "base64", "media_type": mimeType, "data": value}, nil
 	}
-	return map[string]any{"type": "url", "url": s}, nil
+	return map[string]any{"type": "url", "url": value}, nil
 }
 
 func responsesContent(m Message) ([]any, error) {
@@ -48,6 +37,22 @@ func responsesContent(m Message) ([]any, error) {
 				return nil, err
 			}
 			blocks = append(blocks, map[string]any{"type": "input_image", "image_url": part.ImageURL.URL, "detail": "auto"})
+		case AttachmentFile:
+			if m.Role != "user" && m.Role != "tool" {
+				return nil, fmt.Errorf("Responses files require a user or tool message")
+			}
+			mimeType, value, isData, err := AttachmentData(part)
+			if err != nil {
+				return nil, err
+			}
+			if !isData {
+				return nil, fmt.Errorf("Responses supports only inline base64 file attachments")
+			}
+			block := map[string]any{"type": "input_file", "file_data": "data:" + mimeType + ";base64," + value}
+			if part.FileURL != nil && part.FileURL.Filename != "" {
+				block["filename"] = part.FileURL.Filename
+			}
+			blocks = append(blocks, block)
 		default:
 			return nil, fmt.Errorf("unsupported message content type %q", part.Type)
 		}

@@ -560,6 +560,48 @@ func TestProactiveCompactAtFiftyPercent(t *testing.T) {
 	}
 }
 
+func TestPreSendCompactsWhenOutputReserveWouldOverflow(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req ai.Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if !req.Stream {
+			w.Write([]byte(`{"choices":[{"message":{"content":"pre-send summary"}}]}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	ag := New(ai.New(srv.URL, "k"), "m", 6000, "sys")
+	ag.ContextLimit = 10000
+	ag.CompactThreshold = 0.99
+	for range 4 {
+		ag.Messages = append(ag.Messages,
+			ai.Message{Role: "user", Content: strings.Repeat("u", 2000)},
+			ai.Message{Role: "assistant", Content: strings.Repeat("a", 2000)},
+		)
+	}
+	final, err := ag.Turn(context.Background(), "continue", Events{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final != "done" {
+		t.Fatalf("final = %q, want done", final)
+	}
+	if calls != 2 {
+		t.Fatalf("provider calls = %d, want summary plus request", calls)
+	}
+	if !strings.Contains(ag.Messages[1].Content, "Summary of the conversation") {
+		t.Fatalf("pre-send compaction did not install a summary: %q", ag.Messages[1].Content)
+	}
+}
+
 func TestCompactThresholdExplicitOverride(t *testing.T) {
 	srv := textServer(t, func(n int, req ai.Request) string { return "done" })
 	defer srv.Close()

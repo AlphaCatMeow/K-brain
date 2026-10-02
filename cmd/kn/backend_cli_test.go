@@ -25,25 +25,64 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	configPath := filepath.Join(fixture, "config.json")
 	sessionDir := filepath.Join(fixture, "sessions")
 	upstreamCalls := atomic.Int64{}
+	chatCalls := atomic.Int64{}
+	memoryCalls := atomic.Int64{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request", http.StatusBadRequest)
+			return
+		}
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			http.Error(w, "decode request", http.StatusBadRequest)
+			return
+		}
+		hasMemoryPlanTool := false
+		for _, tool := range request.Tools {
+			if tool.Function.Name == "SubmitMemoryPlan" {
+				hasMemoryPlanTool = true
+				break
+			}
+		}
+		kind := "chat"
+		if hasMemoryPlanTool {
+			kind = "memory extraction"
+			memoryCalls.Add(1)
+		} else {
+			chatCalls.Add(1)
+		}
 		upstreamCalls.Add(1)
+		t.Logf("fixture upstream request kind=%s tools=%d", kind, len(request.Tools))
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			return
 		}
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"fixture response\"}}]}\n\n")
+		if hasMemoryPlanTool {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"memory-call\",\"type\":\"function\",\"function\":{\"name\":\"SubmitMemoryPlan\",\"arguments\":\"{\\\"decisions\\\":[]}\"}}]}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
+		} else {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"fixture response\"}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
+		}
 		flusher.Flush()
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n")
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 	}))
 	defer upstream.Close()
+	t.Setenv("LIVEAGENT_HOME", filepath.Join(fixture, "liveagent-home"))
 
 	config := fmt.Sprintf(`{
   "defaultModel": "fixture-model",
@@ -69,26 +108,41 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	}
 
 	listen := freeListenAddress(t)
+	t.Logf("backend start #1: binary=%s listen=%s config=%s session_dir=%s", binary, listen, configPath, sessionDir)
 	first := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	base := "http://" + listen
 	waitForBackend(t, first, base)
+	t.Logf("backend start #1 ready: base=%s output=%q", base, first.output.String())
 
 	sessionID := createExecutableSession(t, base, fixture)
+	t.Logf("session created: id=%s cwd=%s", sessionID, fixture)
 	session := getExecutableSession(t, base, sessionID)
 	if session.MessageCount != 0 || len(session.Messages) != 0 {
 		t.Fatalf("new session was not empty: %+v", session)
 	}
 	accepted := runExecutablePrompt(t, base, sessionID, "request-1", "first prompt")
 	events := readExecutableSSE(t, base, sessionID, accepted.AcceptedSeq-1)
+	logExecutableSSE(t, "prompt #1", events)
 	assertExecutableResponse(t, events, "fixture response")
-
-	if got := upstreamCalls.Load(); got != 1 {
-		t.Fatalf("upstream calls after first prompt = %d, want 1", got)
+	waitForAtomicCount(t, &memoryCalls, 1)
+	if got := memoryCalls.Load(); got != 1 {
+		t.Fatalf("memory extraction calls after first prompt = %d, want 1", got)
 	}
-	stopBackendProcess(t, first)
 
+	if got := chatCalls.Load(); got != 1 {
+		t.Fatalf("chat upstream calls after first prompt = %d, want 1", got)
+	}
+	if got := upstreamCalls.Load(); got != chatCalls.Load()+memoryCalls.Load() {
+		t.Fatalf("upstream call accounting after first prompt = %d, chat=%d memory=%d", got, chatCalls.Load(), memoryCalls.Load())
+	}
+	t.Logf("prompt #1 terminal observed: session=%s accepted_seq=%d chat_calls=%d memory_calls=%d upstream_calls=%d", sessionID, accepted.AcceptedSeq, chatCalls.Load(), memoryCalls.Load(), upstreamCalls.Load())
+	stopBackendProcess(t, first)
+	t.Logf("backend start #1 stopped: output=%q", first.output.String())
+
+	t.Logf("backend start #2: binary=%s listen=%s config=%s session_dir=%s", binary, listen, configPath, sessionDir)
 	second := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	waitForBackend(t, second, base)
+	t.Logf("backend start #2 ready: base=%s output=%q", base, second.output.String())
 	defer stopBackendProcess(t, second)
 
 	session = getExecutableSession(t, base, sessionID)
@@ -104,10 +158,16 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 
 	accepted = runExecutablePrompt(t, base, sessionID, "request-2", "second prompt")
 	events = readExecutableSSE(t, base, sessionID, accepted.AcceptedSeq-1)
+	logExecutableSSE(t, "prompt #2", events)
 	assertExecutableResponse(t, events, "fixture response")
-	if got := upstreamCalls.Load(); got != 2 {
-		t.Fatalf("upstream calls after restart = %d, want 2", got)
+	waitForAtomicCount(t, &memoryCalls, 2)
+	if got := chatCalls.Load(); got != 2 {
+		t.Fatalf("chat upstream calls after restart = %d, want 2", got)
 	}
+	if got := upstreamCalls.Load(); got != chatCalls.Load()+memoryCalls.Load() {
+		t.Fatalf("upstream call accounting after restart = %d, chat=%d memory=%d", got, chatCalls.Load(), memoryCalls.Load())
+	}
+	t.Logf("prompt #2 terminal observed: session=%s accepted_seq=%d chat_calls=%d memory_calls=%d upstream_calls=%d", sessionID, accepted.AcceptedSeq, chatCalls.Load(), memoryCalls.Load(), upstreamCalls.Load())
 }
 
 func TestBackendCLIParentStdioLifecycle(t *testing.T) {
@@ -472,6 +532,30 @@ func runExecutablePrompt(t *testing.T, base, sessionID, requestID, prompt string
 		t.Fatalf("invalid run acceptance: %+v", run)
 	}
 	return run
+}
+
+func waitForAtomicCount(t *testing.T, counter *atomic.Int64, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if counter.Load() >= want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("counter did not reach %d: got %d", want, counter.Load())
+}
+
+func logExecutableSSE(t *testing.T, label string, events []map[string]any) {
+	t.Helper()
+	terminal := make([]string, 0, 2)
+	for _, event := range events {
+		typeName, _ := event["type"].(string)
+		if strings.HasPrefix(typeName, "run.") || typeName == "assistant.text.delta" {
+			terminal = append(terminal, typeName)
+		}
+	}
+	t.Logf("SSE %s: events=%d terminal=%v", label, len(events), terminal)
 }
 
 func readExecutableSSE(t *testing.T, base, sessionID string, after int64) []map[string]any {

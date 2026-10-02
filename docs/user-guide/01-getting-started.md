@@ -14,11 +14,11 @@ go build -o kn ./cmd/kn
 kn
 ```
 
-首次运行时 K-brain 会创建 `~/.k-brain/`（Windows 为 `%USERPROFILE%\\.k-brain`）。没有 API 配置时仍可进入 TUI，之后可编辑配置再发送请求。
+首次运行时 K-brain 会创建 `~/.liveagent/`（Windows 为 `%USERPROFILE%\\.liveagent`）。没有 API 配置时仍可进入 TUI，之后可编辑配置再发送请求。
 
 ## 最小配置
 
-在 `~/.k-brain/config.json` 写入一个 Pi 风格 provider：
+在 `~/.liveagent/config.json` 写入一个 Pi 风格 provider：
 
 ```json
 {

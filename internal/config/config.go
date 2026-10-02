@@ -13,31 +13,59 @@ import (
 	"strings"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 )
 
 type Provider struct {
-	Name                 string `json:"name,omitempty"`
-	BaseURL              string `json:"baseUrl"`
-	API                  string `json:"api"`
-	APIKey               string `json:"apiKey"`
-	PromptCachingEnabled *bool  `json:"promptCachingEnabled,omitempty"`
-	PromptCacheRetention string `json:"promptCacheRetention,omitempty"`
-	CacheSessionAffinity *bool  `json:"cacheSessionAffinity,omitempty"`
-	CacheControlFormat   string `json:"cacheControlFormat,omitempty"`
+	Name                   string         `json:"name,omitempty"`
+	Type                   string         `json:"type,omitempty"`
+	BaseURL                string         `json:"baseUrl"`
+	IsFullURL              bool           `json:"isFullUrl,omitempty"`
+	ModelsURL              string         `json:"modelsUrl,omitempty"`
+	API                    string         `json:"api"`
+	APIKey                 string         `json:"apiKey"`
+	CustomHeaders          []CustomHeader `json:"customHeaders,omitempty"`
+	ActiveModels           []string       `json:"activeModels"`
+	ModelOrder             []string       `json:"modelOrder,omitempty"`
+	RequestFormat          string         `json:"requestFormat,omitempty"`
+	Reasoning              string         `json:"reasoning,omitempty"`
+	PromptCacheHintMode    string         `json:"promptCacheHintMode,omitempty"`
+	NativeWebSearchEnabled bool           `json:"nativeWebSearchEnabled,omitempty"`
+	UseSystemProxy         bool           `json:"useSystemProxy,omitempty"`
+	Metadata               map[string]any `json:"metadata,omitempty"`
+	PromptCachingEnabled   *bool          `json:"promptCachingEnabled,omitempty"`
+	PromptCacheRetention   string         `json:"promptCacheRetention,omitempty"`
+	RetryPolicy            map[string]any `json:"retryPolicy,omitempty"`
+	UsageQuery             map[string]any `json:"usageQuery,omitempty"`
+	CacheSessionAffinity   *bool          `json:"cacheSessionAffinity,omitempty"`
+	CacheControlFormat     string         `json:"cacheControlFormat,omitempty"`
 
 	Models []PiModel `json:"models"`
 }
 
+type CustomHeader struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type PiModel struct {
-	ID             string          `json:"id"`
-	Name           string          `json:"name,omitempty"`
-	API            string          `json:"api,omitempty"`
-	Reasoning      bool            `json:"reasoning,omitempty"`
-	Input          []string        `json:"input,omitempty"`
-	ContextWindow  int             `json:"contextWindow,omitempty"`
-	MaxTokens      int             `json:"maxTokens,omitempty"`
-	SamplingParams *SamplingParams `json:"samplingParams,omitempty"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name,omitempty"`
+	DisplayName     string          `json:"displayName,omitempty"`
+	OwnedBy         string          `json:"ownedBy,omitempty"`
+	LimitsSource    string          `json:"limitsSource,omitempty"`
+	InputModalities []string        `json:"inputModalities,omitempty"`
+	API             string          `json:"api,omitempty"`
+	Reasoning       bool            `json:"reasoning,omitempty"`
+	Input           []string        `json:"input,omitempty"`
+	ContextWindow   int             `json:"contextWindow,omitempty"`
+	MaxTokens       int             `json:"maxTokens,omitempty"`
+	SamplingParams  *SamplingParams `json:"samplingParams,omitempty"`
+}
+
+func (p Provider) ModelActive(id string) bool {
+	return p.ActiveModels == nil || slices.Contains(p.ActiveModels, id)
 }
 
 func (p Provider) Key() string {
@@ -61,9 +89,13 @@ func (p Provider) ResolveKeyContext(ctx context.Context) (string, error) {
 }
 
 type Model struct {
-	Name      string   `json:"name,omitempty"`
-	Providers []string `json:"providers"`
-	ID        string   `json:"id,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	DisplayName     string   `json:"displayName,omitempty"`
+	OwnedBy         string   `json:"ownedBy,omitempty"`
+	LimitsSource    string   `json:"limitsSource,omitempty"`
+	InputModalities []string `json:"inputModalities,omitempty"`
+	Providers       []string `json:"providers"`
+	ID              string   `json:"id,omitempty"`
 
 	Context int `json:"context,omitempty"`
 
@@ -189,15 +221,7 @@ type MCPServer struct {
 }
 
 func Dir() (string, error) {
-	if d := os.Getenv("K_BRAIN_HOME"); d != "" {
-		return d, os.MkdirAll(d, 0o700)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(home, ".k-brain")
-	return dir, os.MkdirAll(dir, 0o700)
+	return datapath.UserDir()
 }
 
 func path() (string, error) {
@@ -301,6 +325,23 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 	sharedMetadata := make(map[string]PiModel)
 	for _, name := range slices.Sorted(maps.Keys(cfg.Providers)) {
 		provider := cfg.Providers[name]
+		if provider.API == "" {
+			switch provider.Type {
+			case "claude_code":
+				provider.API = ai.APIMessages
+			case "gemini":
+				provider.API = ai.APIGemini
+			case "xai":
+				provider.API = ai.APIResponses
+			case "codex":
+				provider.API = provider.RequestFormat
+				if provider.API == "" {
+					provider.API = ai.APIResponses
+				}
+			case "deepseek":
+				provider.API = ai.APIChatCompletions
+			}
+		}
 		if !ai.SupportedAPI(provider.API) {
 			return fmt.Errorf("provider %q: unsupported API %q; use openai-completions, openai-responses, anthropic-messages, or google-generative-ai with baseUrl and apiKey", name, provider.API)
 		}
@@ -321,8 +362,8 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 			sharedMetadata[pm.ID] = pm
 			m, exists := cfg.Models[pm.ID]
 			if !exists {
-				m = Model{ID: pm.ID, Name: pm.Name, Context: pm.ContextWindow,
-					MaxOut: pm.MaxTokens, Vision: slices.Contains(pm.Input, "image"),
+				m = Model{ID: pm.ID, Name: pm.Name, DisplayName: pm.DisplayName, OwnedBy: pm.OwnedBy, LimitsSource: pm.LimitsSource, InputModalities: pm.InputModalities, Context: pm.ContextWindow,
+					MaxOut: pm.MaxTokens, Vision: slices.Contains(pm.Input, "image") || slices.Contains(pm.InputModalities, "image"),
 					SamplingParams: pm.SamplingParams}
 			}
 			if !slices.Contains(m.Providers, name) {
@@ -505,7 +546,7 @@ func piProviders(c *Config) map[string]Provider {
 			if id == "" {
 				id = modelName
 			}
-			pm := PiModel{ID: id, Name: model.Name, ContextWindow: model.ContextWindow(),
+			pm := PiModel{ID: id, Name: model.Name, DisplayName: model.DisplayName, OwnedBy: model.OwnedBy, LimitsSource: model.LimitsSource, InputModalities: model.InputModalities, ContextWindow: model.ContextWindow(),
 				MaxTokens: model.MaxOut, SamplingParams: model.SamplingParams}
 			if model.Vision {
 				pm.Input = []string{"text", "image"}
@@ -609,9 +650,19 @@ func (c *Config) resolveFromCatalog(model, provider string) (Model, string, erro
 func (c *Config) Snapshot() *Config {
 	snap := *c
 	snap.Providers = make(map[string]Provider, len(c.Providers))
-	maps.Copy(snap.Providers, c.Providers)
+	for id, provider := range c.Providers {
+		data, _ := json.Marshal(provider)
+		var cloned Provider
+		_ = json.Unmarshal(data, &cloned)
+		snap.Providers[id] = cloned
+	}
 	snap.Models = make(map[string]Model, len(c.Models))
-	maps.Copy(snap.Models, c.Models)
+	for id, model := range c.Models {
+		data, _ := json.Marshal(model)
+		var cloned Model
+		_ = json.Unmarshal(data, &cloned)
+		snap.Models[id] = cloned
+	}
 	return &snap
 }
 

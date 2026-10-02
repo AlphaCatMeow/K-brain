@@ -11,16 +11,14 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf16"
+
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 )
 
 func homeDir() (string, error) {
-	dir := os.Getenv("K_BRAIN_HOME")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, ".k-brain")
+	dir, err := datapath.UserDir()
+	if err != nil {
+		return "", err
 	}
 	dir = filepath.Join(dir, "workflows")
 

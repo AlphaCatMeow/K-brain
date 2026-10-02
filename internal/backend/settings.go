@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
-	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
@@ -43,23 +44,42 @@ func (s *SettingsStore) Snapshot() *config.Config {
 }
 
 type settingsProvider struct {
-	ID               string          `json:"id"`
-	Name             string          `json:"name"`
-	API              string          `json:"api"`
-	BaseURL          string          `json:"baseUrl"`
-	APIKeyConfigured bool            `json:"apiKeyConfigured"`
-	Models           []settingsModel `json:"models"`
+	ID                     string                `json:"id"`
+	Name                   string                `json:"name"`
+	Type                   string                `json:"type,omitempty"`
+	API                    string                `json:"api"`
+	BaseURL                string                `json:"baseUrl"`
+	IsFullURL              bool                  `json:"isFullUrl,omitempty"`
+	ModelsURL              string                `json:"modelsUrl,omitempty"`
+	APIKeyConfigured       bool                  `json:"apiKeyConfigured"`
+	CustomHeaders          []config.CustomHeader `json:"customHeaders,omitempty"`
+	ModelOrder             []string              `json:"modelOrder,omitempty"`
+	ActiveModels           []string              `json:"activeModels"`
+	RequestFormat          string                `json:"requestFormat,omitempty"`
+	Reasoning              string                `json:"reasoning,omitempty"`
+	PromptCachingEnabled   *bool                 `json:"promptCachingEnabled,omitempty"`
+	PromptCacheHintMode    string                `json:"promptCacheHintMode,omitempty"`
+	PromptCacheRetention   string                `json:"promptCacheRetention,omitempty"`
+	NativeWebSearchEnabled bool                  `json:"nativeWebSearchEnabled"`
+	UseSystemProxy         bool                  `json:"useSystemProxy,omitempty"`
+	RetryPolicy            map[string]any        `json:"retryPolicy,omitempty"`
+	UsageQuery             map[string]any        `json:"usageQuery,omitempty"`
+	Metadata               map[string]any        `json:"metadata,omitempty"`
+	Models                 []settingsModel       `json:"models"`
 }
-
 type settingsModel struct {
-	Provider        string `json:"provider"`
-	ID              string `json:"id"`
-	Name            string `json:"name,omitempty"`
-	ContextWindow   int    `json:"contextWindow,omitempty"`
-	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
-	Vision          bool   `json:"vision,omitempty"`
+	Provider        string   `json:"provider"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name,omitempty"`
+	DisplayName     string   `json:"displayName,omitempty"`
+	OwnedBy         string   `json:"ownedBy,omitempty"`
+	LimitsSource    string   `json:"limitsSource,omitempty"`
+	ContextWindow   int      `json:"contextWindow,omitempty"`
+	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	MaxOutputToken  int      `json:"maxOutputToken,omitempty"`
+	InputModalities []string `json:"inputModalities,omitempty"`
+	Vision          bool     `json:"vision,omitempty"`
 }
-
 type settingsProjection struct {
 	Version         string             `json:"version"`
 	Mode            string             `json:"mode"`
@@ -68,26 +88,46 @@ type settingsProjection struct {
 	Providers       []settingsProvider `json:"providers"`
 	Models          []settingsModel    `json:"models"`
 }
-
 type settingsModelUpdate struct {
-	Provider        string  `json:"provider,omitempty"`
-	ID              string  `json:"id"`
-	Name            *string `json:"name,omitempty"`
-	ContextWindow   *int    `json:"contextWindow,omitempty"`
-	MaxOutputTokens *int    `json:"maxOutputTokens,omitempty"`
-	Vision          *bool   `json:"vision,omitempty"`
+	Provider        string    `json:"provider,omitempty"`
+	ID              string    `json:"id"`
+	Name            *string   `json:"name,omitempty"`
+	DisplayName     *string   `json:"displayName,omitempty"`
+	OwnedBy         *string   `json:"ownedBy,omitempty"`
+	LimitsSource    *string   `json:"limitsSource,omitempty"`
+	ContextWindow   *int      `json:"contextWindow,omitempty"`
+	MaxOutputTokens *int      `json:"maxOutputTokens,omitempty"`
+	MaxOutputToken  *int      `json:"maxOutputToken,omitempty"`
+	InputModalities *[]string `json:"inputModalities,omitempty"`
+	Vision          *bool     `json:"vision,omitempty"`
 }
-
 type settingsProviderUpdate struct {
-	ID          string                `json:"id"`
-	Name        string                `json:"name"`
-	API         string                `json:"api"`
-	BaseURL     string                `json:"baseUrl"`
-	APIKey      *string               `json:"apiKey,omitempty"`
-	ClearAPIKey bool                  `json:"clearApiKey,omitempty"`
-	Models      []settingsModelUpdate `json:"models"`
+	ID                     string                `json:"id"`
+	Name                   string                `json:"name"`
+	Type                   string                `json:"type,omitempty"`
+	API                    string                `json:"api,omitempty"`
+	BaseURL                string                `json:"baseUrl"`
+	IsFullURL              *bool                 `json:"isFullUrl,omitempty"`
+	ModelsURL              *string               `json:"modelsUrl,omitempty"`
+	APIKey                 *string               `json:"apiKey,omitempty"`
+	Key                    *string               `json:"key,omitempty"`
+	APIKeyConfigured       bool                  `json:"apiKeyConfigured,omitempty"`
+	ClearAPIKey            bool                  `json:"clearApiKey,omitempty"`
+	CustomHeaders          []config.CustomHeader `json:"customHeaders,omitempty"`
+	ModelOrder             []string              `json:"modelOrder,omitempty"`
+	ActiveModels           []string              `json:"activeModels,omitempty"`
+	RequestFormat          string                `json:"requestFormat,omitempty"`
+	Reasoning              string                `json:"reasoning,omitempty"`
+	PromptCachingEnabled   *bool                 `json:"promptCachingEnabled,omitempty"`
+	PromptCacheHintMode    string                `json:"promptCacheHintMode,omitempty"`
+	PromptCacheRetention   string                `json:"promptCacheRetention,omitempty"`
+	NativeWebSearchEnabled *bool                 `json:"nativeWebSearchEnabled,omitempty"`
+	UseSystemProxy         *bool                 `json:"useSystemProxy,omitempty"`
+	RetryPolicy            map[string]any        `json:"retryPolicy,omitempty"`
+	UsageQuery             map[string]any        `json:"usageQuery,omitempty"`
+	Metadata               map[string]any        `json:"metadata,omitempty"`
+	Models                 []settingsModelUpdate `json:"models"`
 }
-
 type settingsUpdate struct {
 	DefaultModel    *string                  `json:"defaultModel,omitempty"`
 	DefaultProvider *string                  `json:"defaultProvider,omitempty"`
@@ -110,16 +150,26 @@ func publicBaseURL(raw string) string {
 func projectSettings(cfg *config.Config) settingsProjection {
 	out := settingsProjection{Version: protocol.Version, Mode: "kbrain", DefaultModel: cfg.DefaultModel, DefaultProvider: cfg.DefaultProvider, Providers: []settingsProvider{}, Models: []settingsModel{}}
 	for id, p := range cfg.Providers {
-		providerView := settingsProvider{ID: id, Name: p.Name, API: p.API, BaseURL: publicBaseURL(p.BaseURL), APIKeyConfigured: p.APIKey != "", Models: []settingsModel{}}
+		pv := settingsProvider{ID: id, Name: p.Name, Type: p.Type, API: p.API, BaseURL: publicBaseURL(p.BaseURL), IsFullURL: p.IsFullURL, ModelsURL: publicModelsURL(p.ModelsURL), APIKeyConfigured: p.APIKey != "", CustomHeaders: publicHeaders(p.CustomHeaders), ModelOrder: slices.Clone(p.ModelOrder), ActiveModels: slices.Clone(p.ActiveModels), RequestFormat: p.RequestFormat, Reasoning: p.Reasoning, PromptCachingEnabled: p.PromptCachingEnabled, PromptCacheHintMode: p.PromptCacheHintMode, PromptCacheRetention: p.PromptCacheRetention, NativeWebSearchEnabled: p.NativeWebSearchEnabled, UseSystemProxy: p.UseSystemProxy, RetryPolicy: p.RetryPolicy, UsageQuery: publicMetadata(p.UsageQuery), Metadata: publicMetadata(p.Metadata), Models: []settingsModel{}}
 		for modelID, m := range cfg.Models {
 			if !slices.Contains(m.Providers, id) {
 				continue
 			}
-			modelView := settingsModel{Provider: id, ID: modelID, Name: m.Name, ContextWindow: m.Context, MaxOutputTokens: m.MaxOut, Vision: m.Vision}
-			providerView.Models = append(providerView.Models, modelView)
-			out.Models = append(out.Models, modelView)
+			mv := settingsModel{Provider: id, ID: modelID, Name: m.Name, DisplayName: m.DisplayName, OwnedBy: m.OwnedBy, LimitsSource: m.LimitsSource, ContextWindow: m.Context, MaxOutputTokens: m.MaxOut, MaxOutputToken: m.MaxOut, InputModalities: slices.Clone(m.InputModalities), Vision: m.Vision}
+			// Provider settings must expose disabled models so editing and saving a
+			// provider cannot delete them. The top-level catalog remains active-only.
+			pv.Models = append(pv.Models, mv)
+			if p.ModelActive(modelID) {
+				out.Models = append(out.Models, mv)
+			}
 		}
-		out.Providers = append(out.Providers, providerView)
+		if pv.ActiveModels == nil {
+			for _, m := range pv.Models {
+				pv.ActiveModels = append(pv.ActiveModels, m.ID)
+			}
+		}
+		sort.Slice(pv.Models, func(i, j int) bool { return pv.Models[i].ID < pv.Models[j].ID })
+		out.Providers = append(out.Providers, pv)
 	}
 	sort.Slice(out.Providers, func(i, j int) bool { return out.Providers[i].ID < out.Providers[j].ID })
 	sort.Slice(out.Models, func(i, j int) bool {
@@ -195,69 +245,55 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 	if cfg.Models == nil {
 		cfg.Models = map[string]config.Model{}
 	}
-	removeProviderModels := func(id string) {
-		for modelID, m := range cfg.Models {
-			m.Providers = slices.DeleteFunc(slices.Clone(m.Providers), func(p string) bool { return p == id })
+	remove := func(id string) {
+		for mid, m := range cfg.Models {
+			m.Providers = slices.DeleteFunc(slices.Clone(m.Providers), func(x string) bool { return x == id })
 			if len(m.Providers) == 0 {
-				delete(cfg.Models, modelID)
+				delete(cfg.Models, mid)
 			} else {
-				cfg.Models[modelID] = m
+				cfg.Models[mid] = m
 			}
 		}
 	}
 	for _, id := range update.DeleteProviders {
 		delete(cfg.Providers, id)
-		removeProviderModels(id)
+		remove(id)
 	}
 	seen := map[string]bool{}
-	for _, input := range update.Providers {
-		id := strings.TrimSpace(input.ID)
+	for _, in := range update.Providers {
+		id := strings.TrimSpace(in.ID)
 		if id == "" || seen[id] {
 			return fmt.Errorf("provider IDs must be non-empty and unique")
 		}
 		seen[id] = true
-		if input.API == "" || !ai.SupportedAPI(input.API) {
-			return fmt.Errorf("unsupported provider API")
+		p, err := updateProvider(cfg.Providers[id], in)
+		if err != nil {
+			return err
 		}
-		endpoint, err := url.Parse(strings.TrimSpace(input.BaseURL))
-		if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-			return fmt.Errorf("base URL must be an HTTP(S) endpoint without credentials, query or fragment")
-		}
-		if input.ClearAPIKey && input.APIKey != nil {
-			return fmt.Errorf("cannot replace and clear an API key together")
-		}
-		p := cfg.Providers[id]
-		p.Name, p.API, p.BaseURL = strings.TrimSpace(input.Name), input.API, strings.TrimRight(endpoint.String(), "/")
-		if input.ClearAPIKey {
-			p.APIKey = ""
-		}
-		if input.APIKey != nil {
-			key := strings.TrimSpace(*input.APIKey)
-			if key == "" || strings.HasPrefix(key, "!") {
-				return fmt.Errorf("API key must be non-empty and cannot execute a command")
-			}
-			p.APIKey = key
-		}
-		if input.Models != nil {
-			removeProviderModels(id)
-			modelIDs := map[string]bool{}
-			for _, item := range input.Models {
-				modelID := strings.TrimSpace(item.ID)
-				if modelID == "" || modelIDs[modelID] {
+		if in.Models != nil {
+			old := maps.Clone(cfg.Models)
+			remove(id)
+			ids := map[string]bool{}
+			for _, item := range in.Models {
+				mid := strings.TrimSpace(item.ID)
+				if mid == "" || ids[mid] {
 					return fmt.Errorf("models require unique IDs")
 				}
-				modelIDs[modelID] = true
-				m, exists := cfg.Models[modelID]
-				if !exists {
-					m.ID = modelID
-				}
-				if len(m.Providers) > 0 {
-					if item.Name != nil && *item.Name != m.Name || item.ContextWindow != nil && *item.ContextWindow != m.Context || item.MaxOutputTokens != nil && *item.MaxOutputTokens != m.MaxOut || item.Vision != nil && *item.Vision != m.Vision {
-						return fmt.Errorf("shared model IDs must use identical metadata across providers")
-					}
-				}
+				ids[mid] = true
+				m := old[mid]
+				m.ID = mid
+				m.Providers = nil
 				if item.Name != nil {
 					m.Name = *item.Name
+				}
+				if item.DisplayName != nil {
+					m.DisplayName = *item.DisplayName
+				}
+				if item.OwnedBy != nil {
+					m.OwnedBy = *item.OwnedBy
+				}
+				if item.LimitsSource != nil {
+					m.LimitsSource = *item.LimitsSource
 				}
 				if item.ContextWindow != nil {
 					if *item.ContextWindow < 0 {
@@ -265,17 +301,42 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 					}
 					m.Context = *item.ContextWindow
 				}
-				if item.MaxOutputTokens != nil {
-					if *item.MaxOutputTokens < 0 {
+				mo := item.MaxOutputTokens
+				if mo == nil {
+					mo = item.MaxOutputToken
+				}
+				if mo != nil {
+					if *mo < 0 {
 						return fmt.Errorf("max output tokens must be non-negative")
 					}
-					m.MaxOut = *item.MaxOutputTokens
+					m.MaxOut = *mo
+				}
+				if item.InputModalities != nil {
+					m.InputModalities = slices.Clone(*item.InputModalities)
+					m.Vision = slices.Contains(m.InputModalities, "image")
 				}
 				if item.Vision != nil {
 					m.Vision = *item.Vision
 				}
-				m.ID, m.Providers = modelID, append(m.Providers, id)
-				cfg.Models[modelID] = m
+				if shared, exists := old[mid]; exists {
+					providers := slices.DeleteFunc(slices.Clone(shared.Providers), func(providerID string) bool { return providerID == id })
+					if len(providers) > 0 {
+						shared.Providers = nil
+						shared.ID = mid
+						m.Providers = nil
+						if !reflect.DeepEqual(shared, m) {
+							return fmt.Errorf("shared model %q requires identical metadata across providers", mid)
+						}
+					}
+					m.Providers = providers
+				}
+				m.Providers = append(m.Providers, id)
+				cfg.Models[mid] = m
+			}
+		}
+		for _, mid := range p.ActiveModels {
+			if m, ok := cfg.Models[mid]; !ok || !slices.Contains(m.Providers, id) {
+				return fmt.Errorf("active model is not configured for provider")
 			}
 		}
 		cfg.Providers[id] = p
@@ -286,16 +347,13 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 	if update.DefaultProvider != nil {
 		cfg.DefaultProvider = strings.TrimSpace(*update.DefaultProvider)
 	}
-	if len(cfg.Models) == 0 {
-		cfg.DefaultModel, cfg.DefaultProvider = "", ""
-		return nil
-	}
-	m, ok := cfg.Models[cfg.DefaultModel]
-	if !ok || (cfg.DefaultProvider != "" && !slices.Contains(m.Providers, cfg.DefaultProvider)) {
-		projection := projectSettings(cfg)
-		cfg.DefaultModel, cfg.DefaultProvider = projection.Models[0].ID, projection.Models[0].Provider
-	} else if cfg.DefaultProvider == "" {
-		cfg.DefaultProvider = m.Providers[0]
+	projection := projectSettings(cfg)
+	if len(projection.Models) == 0 {
+		cfg.DefaultModel = ""
+		cfg.DefaultProvider = ""
+	} else if !slices.ContainsFunc(projection.Models, func(m settingsModel) bool { return m.ID == cfg.DefaultModel && m.Provider == cfg.DefaultProvider }) {
+		cfg.DefaultModel = projection.Models[0].ID
+		cfg.DefaultProvider = projection.Models[0].Provider
 	}
 	return nil
 }

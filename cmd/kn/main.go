@@ -40,7 +40,7 @@ func normalizeBareResume(args []string) {
 }
 
 func main() {
-	modelFlag := flag.String("m", "", "model name from ~/.k-brain/config.json (default: defaultModel)")
+	modelFlag := flag.String("m", "", "model name from ~/.liveagent/config.json (default: defaultModel)")
 	providerFlag := flag.String("p", "", "provider to route the model through (default: model's first provider)")
 	versionFlag := flag.Bool("version", false, "print version")
 	resumeFlag := flag.String("resume", "", "resume a previous session by id (or unique prefix); bare opens the picker")
@@ -132,7 +132,7 @@ func main() {
 	}
 
 	if flag.NArg() > 0 && flag.Arg(0) == "auth" {
-		fmt.Fprintln(os.Stderr, "kn: auth was removed; configure baseUrl and apiKey in ~/.k-brain/config.json")
+		fmt.Fprintln(os.Stderr, "kn: auth was removed; configure baseUrl and apiKey in ~/.liveagent/config.json")
 		os.Exit(1)
 	}
 

@@ -21,6 +21,7 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 	}
 	defer resp.Body.Close()
 	msg := Message{Role: "assistant"}
+	search := newSearchStream(ctx, "claude_code")
 	var usage anthropicUsage
 	blocks := map[int]*anthropicToolBlock{}
 	ids := map[string]bool{}
@@ -42,6 +43,7 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 			Message      json.RawMessage `json:"message"`
 			Error        json.RawMessage `json:"error"`
 		}
+		search.accept(event.Data, event.Type)
 		if err := decodeStreamEvent(event.Data, &v); err != nil {
 			return Message{}, usage.normalized(), err
 		}
@@ -118,7 +120,7 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 				}
 				block.streamed = true
 				block.call.Function.Arguments += d.PartialJSON
-				if onToolCall != nil {
+				if onToolCall != nil && (!req.NativeWebSearch || !nativeSearchName(block.call.Function.Name)) {
 					onToolCall(block.call.ID, block.call.Function.Name, block.call.Function.Arguments)
 				}
 			}
@@ -155,6 +157,10 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 			}
 			for _, index := range order {
 				block := blocks[index]
+				if req.NativeWebSearch && nativeSearchName(block.call.Function.Name) {
+					msg.ToolCalls = append(msg.ToolCalls, block.call)
+					continue
+				}
 				if !block.closed {
 					return Message{}, usage.normalized(), providerStreamError(nil, "message stopped with an unfinished tool block")
 				}
@@ -163,6 +169,11 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 					continue
 				}
 				msg.ToolCalls = append(msg.ToolCalls, block.call)
+			}
+			search.finish(false)
+			msg.HostedSearch = append([]HostedSearch(nil), search.blocks...)
+			if req.NativeWebSearch {
+				recoverNativeSearchCalls(&msg, onText)
 			}
 			return finishMessage(msg, msg.ToolCalls, stopReason, onText), usage.normalized(), nil
 		}

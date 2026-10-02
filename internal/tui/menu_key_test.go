@@ -15,10 +15,11 @@ func pressKey(m *model, kt tea.KeyType) *model {
 
 func TestTabCompletesSkillName(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("LIVEAGENT_HOME", filepath.Join(home, ".liveagent"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	os.MkdirAll(filepath.Join(home, ".k-brain/skills/go-style"), 0o755)
-	os.WriteFile(filepath.Join(home, ".k-brain/skills/go-style/SKILL.md"),
+	os.MkdirAll(filepath.Join(home, ".liveagent/skills/go-style"), 0o755)
+	os.WriteFile(filepath.Join(home, ".liveagent/skills/go-style/SKILL.md"),
 		[]byte("---\nname: go-style\ndescription: d\n---\n"), 0o644)
 	m := modelCmdModel()
 	m = typeStr(t, m, "$go-sty")

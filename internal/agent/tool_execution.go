@@ -43,6 +43,10 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 		go func(i int, tc ai.ToolCall) {
 			defer wg.Done()
 			name, args := tc.Function.Name, tc.Function.Arguments
+			if ev.OnLifecycle != nil {
+				ev.OnLifecycle("tool_execution_start")
+				defer ev.OnLifecycle("tool_execution_end")
+			}
 			if a.Hooks != nil || a.PluginHook != nil {
 				if err := a.runHook(ctx, hooks.Event{Name: "PreToolUse", ToolID: tc.ID, ToolName: name, ToolArgs: args}); err != nil {
 					out := "Error: hook PreToolUse denied tool call: " + err.Error()
@@ -92,12 +96,13 @@ func (a *Agent) runTools(ctx context.Context, calls []ai.ToolCall, ev Events) []
 			a.trackTool(name, 1)
 			defer a.trackTool(name, -1)
 			start := time.Now()
-			callCtx := ctx
+			callCtx := tools.WithToolCallID(ctx, tc.ID)
 			if ev.OnToolOutput != nil && name == "bash" {
-				callCtx = tools.WithOnUpdate(ctx, func(soFar string) {
+				callCtx = tools.WithOnUpdate(callCtx, func(soFar string) {
 					ev.OnToolOutput(tc.ID, soFar)
 				})
 			}
+			callCtx = context.WithValue(callCtx, requestToolKey{}, tc.ID)
 			result := tools.ExecuteResult(callCtx, a.AllTools(), name, json.RawMessage(args), a.Vision)
 			out := result.Text
 			if a.Hooks != nil || a.PluginHook != nil {

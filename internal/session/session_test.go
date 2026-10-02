@@ -248,6 +248,29 @@ func TestUserHistorySkipsInjected(t *testing.T) {
 	}
 }
 
+func TestOpenRepairsExistingLockPermissions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, ".lock")
+	if err := os.WriteFile(lockPath, nil, 0000); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("lock permissions = %o, want 600", got)
+	}
+}
+
 func TestStoreEdgeCases(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocked, []byte("x"), 0600); err != nil {

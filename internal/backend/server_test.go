@@ -21,11 +21,13 @@ import (
 )
 
 type scriptedClient struct {
-	mu       sync.Mutex
-	calls    int
-	models   []string
-	response string
-	wait     bool
+	mu        sync.Mutex
+	calls     int
+	models    []string
+	requests  [][]ai.Message
+	response  string
+	streamErr error
+	wait      bool
 }
 
 func (c *scriptedClient) Models(context.Context) ([]ai.ModelInfo, error) { return nil, nil }
@@ -43,12 +45,17 @@ func (c *scriptedClient) Stream(ctx context.Context, request ai.Request, onText,
 	c.mu.Lock()
 	c.calls++
 	c.models = append(c.models, request.Model)
+	c.requests = append(c.requests, append([]ai.Message(nil), request.Messages...))
 	wait := c.wait
 	response := c.response
+	streamErr := c.streamErr
 	c.mu.Unlock()
 	if wait {
 		<-ctx.Done()
 		return ai.Message{}, ai.Usage{}, ctx.Err()
+	}
+	if streamErr != nil {
+		return ai.Message{}, ai.Usage{}, streamErr
 	}
 	if onThink != nil {
 		onThink("thinking")
@@ -315,6 +322,87 @@ func (c *scriptedClient) requestedModels() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.models...)
+}
+
+func TestServerPersistsFailedAssistantAcrossReloadAndContinues(t *testing.T) {
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventDir := t.TempDir()
+	fixture := &scriptedClient{streamErr: errors.New("upstream request failed")}
+	backendServer, httpServer := newTestServer(t, store, eventDir, fixture)
+	sess := createTestSession(t, httpServer.URL)
+
+	accepted := runRequest(t, httpServer.URL, sess.ID, "failed-1", "use native search")
+	events := waitForRun(t, httpServer.URL, sess.ID, 0)
+	var failedAssistant *protocol.Message
+	var sawFailed bool
+	for _, event := range events {
+		switch event.Type {
+		case protocol.EventAssistantMessage:
+			var message protocol.Message
+			if err := json.Unmarshal(event.Payload, &message); err != nil {
+				t.Fatal(err)
+			}
+			failedAssistant = &message
+		case protocol.EventRunFailed:
+			var terminal protocol.RunTerminal
+			if err := json.Unmarshal(event.Payload, &terminal); err != nil {
+				t.Fatal(err)
+			}
+			if terminal.Error != "upstream request failed" {
+				t.Fatalf("failure terminal = %+v", terminal)
+			}
+			sawFailed = true
+		}
+	}
+	if accepted.RunID == "" || failedAssistant == nil || !sawFailed {
+		t.Fatalf("failure events = %+v", events)
+	}
+	if failedAssistant.Role != protocol.RoleAssistant || failedAssistant.StopReason != string(ai.StopReasonError) || len(failedAssistant.Content) != 1 || failedAssistant.Content[0].Text != "upstream request failed" {
+		t.Fatalf("failed assistant = %+v", failedAssistant)
+	}
+	failedHistory := getSession(t, httpServer.URL, sess.ID)
+	if len(failedHistory.Messages) != 2 || failedHistory.Messages[1].Role != protocol.RoleAssistant || failedHistory.Messages[1].StopReason != string(ai.StopReasonError) {
+		t.Fatalf("failed history = %+v", failedHistory.Messages)
+	}
+
+	if err := backendServer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	httpServer.Close()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store2, err := session.Open(store.SessionsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	recoveredClient := &scriptedClient{response: "recovered success"}
+	_, httpServer2 := newTestServer(t, store2, eventDir, recoveredClient)
+	recovered := getSession(t, httpServer2.URL, sess.ID)
+	if len(recovered.Messages) != 2 || recovered.Messages[1].Content[0].Text != "upstream request failed" {
+		t.Fatalf("recovered history = %+v", recovered.Messages)
+	}
+
+	before := recovered.LastSeq
+	runRequest(t, httpServer2.URL, sess.ID, "success-1", "try again")
+	successEvents := waitForRun(t, httpServer2.URL, sess.ID, before)
+	if len(successEvents) == 0 || successEvents[len(successEvents)-1].Type != protocol.EventRunCompleted {
+		t.Fatalf("success events = %+v", successEvents)
+	}
+	successHistory := getSession(t, httpServer2.URL, sess.ID)
+	if len(successHistory.Messages) != 4 || successHistory.Messages[2].Content[0].Text != "try again" || successHistory.Messages[3].Content[0].Text != "recovered success" {
+		t.Fatalf("success history = %+v", successHistory.Messages)
+	}
+	recoveredClient.mu.Lock()
+	if len(recoveredClient.requests) != 1 || len(recoveredClient.requests[0]) < 3 || recoveredClient.requests[0][len(recoveredClient.requests[0])-2].Role != protocol.RoleAssistant {
+		recoveredClient.mu.Unlock()
+		t.Fatalf("recovered provider request history = %+v", recoveredClient.requests)
+	}
+	recoveredClient.mu.Unlock()
 }
 
 func TestServerUpdatesSessionModelAndPersistsIt(t *testing.T) {

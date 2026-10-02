@@ -10,15 +10,16 @@ import (
 var ErrBusy = errors.New("agent is busy; wait for the current turn to finish")
 
 type ModelConfig struct {
-	Client       ai.Client
-	ID           string
-	Name         string
-	Provider     string
-	MaxTokens    int
-	ContextLimit int
-	Vision       bool
-	Temperature  *float64
-	TopP         *float64
+	Client          ai.Client
+	ID              string
+	Name            string
+	Provider        string
+	MaxTokens       int
+	ContextLimit    int
+	Vision          bool
+	NativeWebSearch bool
+	Temperature     *float64
+	TopP            *float64
 }
 
 func (a *Agent) SetModel(model ModelConfig) error {
@@ -40,6 +41,7 @@ func (a *Agent) SetModel(model ModelConfig) error {
 	a.Client, a.Model, a.ModelName, a.Provider = model.Client, model.ID, model.Name, model.Provider
 	a.MaxTokens, a.ContextLimit = model.MaxTokens, model.ContextLimit
 	a.Vision = model.Vision
+	a.NativeWebSearch = model.NativeWebSearch
 	a.Temperature, a.TopP = model.Temperature, model.TopP
 	a.lastPrompt = 0
 	a.usageMu.Unlock()

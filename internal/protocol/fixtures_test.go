@@ -35,7 +35,6 @@ func TestCanonicalMessageFixtureUsesProviderNeutralReplay(t *testing.T) {
 			if block.Type == ContentThinking {
 				continue
 			}
-			block.MimeType = ""
 			expected.Content = append(expected.Content, block)
 		}
 		if !reflect.DeepEqual(replay, expected) {
@@ -80,9 +79,10 @@ func TestCanonicalMetadataSurvivesPersistenceRoundTrip(t *testing.T) {
 	sentAt := time.Date(2026, time.September, 28, 0, 0, 0, 0, time.UTC)
 	message := Message{
 		Role: RoleAssistant, Model: "model-v1", Provider: "provider-route",
-		Content:    []ContentBlock{{Type: ContentText, Text: "answer"}},
-		Usage:      &Usage{InputTokens: 13, OutputTokens: 5, CachedTokens: 3, CacheWriteTokens: 2},
-		StopReason: "stop", CreatedAt: &sentAt,
+		Content:      []ContentBlock{{Type: ContentText, Text: "answer"}},
+		Usage:        &Usage{InputTokens: 13, OutputTokens: 5, CachedTokens: 3, CacheWriteTokens: 2},
+		HostedSearch: []HostedSearch{{Type: "web_search", ID: "search-1", Provider: "gemini", Status: "completed", Queries: []string{"reference"}, Sources: []HostedSearchSource{{URL: "https://example.com/reference", Title: "Reference", SourceType: "web"}}}},
+		StopReason:   "stop", CreatedAt: &sentAt,
 	}
 	raw, err := json.Marshal(message)
 	if err != nil {

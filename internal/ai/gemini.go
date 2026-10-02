@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/datapath"
 	"github.com/gofrs/flock"
 )
 
@@ -25,6 +26,9 @@ import (
 type Gemini struct {
 	BaseURL    string
 	APIKey     string
+	IsFullURL  bool
+	ModelsURL  string
+	Headers    http.Header
 	HTTP       *http.Client
 	MaxRetries int
 	OnRetry    func(RetryEvent)
@@ -35,15 +39,22 @@ type Gemini struct {
 }
 
 func NewGemini(baseURL, apiKey string) *Gemini {
-	return &Gemini{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, HTTP: &http.Client{Timeout: 10 * time.Minute}, usedIDs: make(map[string]bool), signatures: make(map[string]string)}
+	return NewGeminiWithOptions(baseURL, apiKey, false, "", nil)
+}
+
+func NewGeminiWithOptions(baseURL, apiKey string, isFullURL bool, modelsURL string, headers map[string]string) *Gemini {
+	h := make(http.Header)
+	for key, value := range headers {
+		h.Set(key, value)
+	}
+	return &Gemini{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, IsFullURL: isFullURL, ModelsURL: modelsURL, Headers: h, HTTP: &http.Client{Timeout: 10 * time.Minute}, usedIDs: make(map[string]bool), signatures: make(map[string]string)}
 }
 
 func (c *Gemini) Clone() Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cp := Gemini{
-		BaseURL:    c.BaseURL,
-		APIKey:     c.APIKey,
+		BaseURL: c.BaseURL, APIKey: c.APIKey, IsFullURL: c.IsFullURL, ModelsURL: c.ModelsURL, Headers: c.Headers.Clone(),
 		HTTP:       c.HTTP,
 		MaxRetries: c.MaxRetries,
 		OnRetry:    c.OnRetry,
@@ -64,7 +75,49 @@ func (c *Gemini) SetMaxRetries(n int)            { c.MaxRetries = n }
 func (c *Gemini) SetOnRetry(fn func(RetryEvent)) { c.OnRetry = fn }
 
 func (c *Gemini) Models(ctx context.Context) ([]ModelInfo, error) {
-	return nil, nil
+	endpoint := c.ModelsURL
+	if endpoint == "" {
+		if c.IsFullURL {
+			endpoint = fullURLModelCatalog(c.BaseURL, "v1beta")
+		} else {
+			endpoint = strings.TrimRight(c.BaseURL, "/") + "/v1beta/models"
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	for name, values := range c.Headers {
+		req.Header[name] = append([]string(nil), values...)
+	}
+	if !hasHeader(c.Headers, "x-goog-api-key") {
+		req.Header.Set("x-goog-api-key", c.APIKey)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, newHTTPError(resp, string(b))
+	}
+	var payload struct {
+		Models []struct {
+			Name             string `json:"name"`
+			InputTokenLimit  int    `json:"inputTokenLimit"`
+			OutputTokenLimit int    `json:"outputTokenLimit"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	out := make([]ModelInfo, 0, len(payload.Models))
+	for _, model := range payload.Models {
+		id := strings.TrimPrefix(model.Name, "models/")
+		out = append(out, ModelInfo{ID: id, ContextLength: model.InputTokenLimit, MaxCompletionTokens: model.OutputTokenLimit})
+	}
+	return out, nil
 }
 
 func (c *Gemini) Complete(ctx context.Context, req Request) (string, Usage, error) {
@@ -95,6 +148,7 @@ func (c *Gemini) Stream(ctx context.Context, req Request, onText, onThink func(s
 	sse := newSSEReader(resp.Body)
 	var msg Message
 	msg.Role = "assistant"
+	search := newSearchStream(ctx, "gemini")
 	var usage Usage
 	var calls []ToolCall
 	for {
@@ -102,6 +156,7 @@ func (c *Gemini) Stream(ctx context.Context, req Request, onText, onThink func(s
 		if !ok {
 			return Message{}, usage, sse.endError("Gemini")
 		}
+		search.accept(event.Data, event.Type)
 		var result geminiResponse
 		if err := decodeStreamEvent(event.Data, &result); err != nil {
 			return Message{}, usage, err
@@ -124,11 +179,17 @@ func (c *Gemini) Stream(ctx context.Context, req Request, onText, onThink func(s
 				return Message{}, usage, fmt.Errorf("persist Gemini tool signature: %w", err)
 			}
 			calls = append(calls, call)
-			if onToolCall != nil {
+			if onToolCall != nil && (!req.NativeWebSearch || !nativeSearchName(call.Function.Name)) {
 				onToolCall(call.ID, call.Function.Name, call.Function.Arguments)
 			}
 		}
 		if len(result.Candidates) > 0 && result.Candidates[0].FinishReason != "" {
+			search.finish(false)
+			msg.HostedSearch = append([]HostedSearch(nil), search.blocks...)
+			if req.NativeWebSearch {
+				recoverNativeSearchCalls(&msg, onText)
+				calls = filterNativeSearchCalls(calls)
+			}
 			return finishMessage(msg, calls, normalizeGeminiFinishReason(result.Candidates[0].FinishReason), onText), usage, nil
 		}
 	}
@@ -243,15 +304,11 @@ func (c *Gemini) canonicalCallID(nativeID string) (string, error) {
 }
 
 // Signatures are provider-private: canonical transcripts contain only call IDs.
-// This path mirrors config.Dir without introducing an ai/config import cycle.
+
 func (c *Gemini) signaturePath(model string) (string, error) {
-	dir := os.Getenv("K_BRAIN_HOME")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, ".k-brain")
+	dir, err := datapath.UserDir()
+	if err != nil {
+		return "", err
 	}
 	key := sha256.Sum256([]byte(strings.TrimRight(c.BaseURL, "/") + "\x00" + model))
 	return filepath.Join(dir, "cache", "gemini-signatures", hex.EncodeToString(key[:])+".json"), nil
@@ -358,6 +415,9 @@ func (c *Gemini) signature(model, id string) string {
 }
 
 func (c *Gemini) do(ctx context.Context, req Request, stream bool) (*http.Response, error) {
+	if err := validateGeminiAttachments(req.Messages); err != nil {
+		return nil, err
+	}
 	c.reserveHistoryIDs(req.Messages)
 	if err := c.loadSignatures(req.Model); err != nil {
 		return nil, fmt.Errorf("load Gemini tool signatures: %w", err)
@@ -367,6 +427,9 @@ func (c *Gemini) do(ctx context.Context, req Request, stream bool) (*http.Respon
 		return nil, err
 	}
 	path := geminiPath(c.BaseURL, req.Model, stream)
+	if c.IsFullURL {
+		path = ""
+	}
 	var response *http.Response
 	err = newRetryPolicy(c.MaxRetries, c.OnRetry).run(ctx, func() error {
 		u := strings.TrimRight(c.BaseURL, "/") + path
@@ -375,13 +438,18 @@ func (c *Gemini) do(ctx context.Context, req Request, stream bool) (*http.Respon
 			return nonRetryable{parseErr}
 		}
 		q := parsed.Query()
-		q.Set("key", c.APIKey)
+		if !hasHeader(c.Headers, "x-goog-api-key") {
+			q.Set("key", c.APIKey)
+		}
 		parsed.RawQuery = q.Encode()
 		reqHTTP, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, parsed.String(), bytes.NewReader(body))
 		if reqErr != nil {
 			return nonRetryable{reqErr}
 		}
 		reqHTTP.Header.Set("Content-Type", "application/json")
+		for name, values := range c.Headers {
+			reqHTTP.Header[name] = append([]string(nil), values...)
+		}
 		if stream {
 			reqHTTP.Header.Set("Accept", "text/event-stream")
 		}
@@ -397,6 +465,11 @@ func (c *Gemini) do(ctx context.Context, req Request, stream bool) (*http.Respon
 		return nil
 	}, nil)
 	return response, err
+}
+
+func isOfficialGeminiEndpoint(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	return err == nil && u.Hostname() == "generativelanguage.googleapis.com"
 }
 
 func geminiPath(baseURL, model string, stream bool) string {
@@ -453,9 +526,16 @@ func (c *Gemini) geminiPayloadWithState(req Request) map[string]any {
 		for _, p := range m.Parts {
 			if p.Type == "text" {
 				parts = append(parts, map[string]any{"text": p.Text})
-			} else if p.ImageURL != nil {
-				parts = append(parts, map[string]any{"text": p.ImageURL.URL})
+				continue
 			}
+			if p.Type != "image_url" {
+				return nil
+			}
+			mimeType, data, isData, err := AttachmentData(p)
+			if err != nil || !isData || !strings.HasPrefix(mimeType, "image/") {
+				return nil
+			}
+			parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": mimeType, "data": data}})
 		}
 		for _, tc := range m.ToolCalls {
 			var args any
@@ -513,6 +593,14 @@ func (c *Gemini) geminiPayloadWithState(req Request) map[string]any {
 			decls = append(decls, map[string]any{"name": t.Function.Name, "description": t.Function.Description, "parameters": params})
 		}
 		payload["tools"] = []any{map[string]any{"functionDeclarations": decls}}
+	}
+	if req.NativeWebSearch {
+		if len(req.Tools) > 0 && !isOfficialGeminiEndpoint(c.BaseURL) {
+			return payload
+		}
+		tools, _ := payload["tools"].([]any)
+		tools = append(tools, map[string]any{"google_search": map[string]any{}})
+		payload["tools"] = tools
 	}
 	return payload
 }

@@ -9,20 +9,26 @@ import (
 
 func (c *OpenAI) postJSON(ctx context.Context, path string, body []byte, stream bool, headers http.Header) (*http.Response, error) {
 	var resp *http.Response
-	err := c.policy().run(ctx, func() (err error) {
-		resp, err = c.postJSONOnce(ctx, path, body, stream, headers)
-		return err
-	}, nil)
+	err := c.policy().run(ctx, func() error { var err error; resp, err = c.postJSONOnce(ctx, path, body, stream, headers); return err }, nil)
 	return resp, err
 }
 
 func (c *OpenAI) postJSONOnce(ctx context.Context, path string, body []byte, stream bool, headers http.Header) (*http.Response, error) {
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	endpoint := c.BaseURL + path
+	if c.IsFullURL {
+		endpoint = c.BaseURL
+	}
+	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, nonRetryable{err}
 	}
 	hr.Header.Set("Content-Type", "application/json")
-	hr.Header.Set("Authorization", "Bearer "+c.APIKey)
+	for name, values := range c.Headers {
+		hr.Header[name] = append([]string(nil), values...)
+	}
+	if !hasHeader(c.Headers, "Authorization") {
+		hr.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	if stream {
 		hr.Header.Set("Accept", "text/event-stream")
 	}

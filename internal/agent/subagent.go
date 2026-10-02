@@ -105,6 +105,9 @@ func (a *Agent) newSub(o SubModel) *Agent {
 	}
 	sub.ContextLimit = o.ContextLimit
 
+	sub.Tasks().SetSessionID(a.SessionIDValue())
+	sub.Tasks().OnRecord = a.Tasks().OnRecord
+	sub.Tasks().OnEvents = a.Tasks().OnEvents
 	sub.usageSink = a.AddSubUsage
 	return sub
 }
@@ -202,14 +205,14 @@ func taskTool(parent *Agent) tools.Tool {
 				sub := parent.newSubContext(ctx, o)
 				sub.setWorktree(wtPath)
 				ctx = sandbox.WithPolicy(ctx, sub.SandboxPolicy)
-				report, runErr := sub.Turn(ctx, prompt, Events{})
+				report, runErr := sub.observedChildTurn(ctx, prompt)
 				if runErr != nil {
 					return report, fmt.Errorf("subagent in worktree %s: %w", wtPath, runErr)
 				}
 				return capReport(report) + "\n\nWorktree: " + wtPath, nil
 			}
 			sub := parent.newSubContext(ctx, o)
-			report, err := sub.Turn(ctx, prompt, Events{})
+			report, err := sub.observedChildTurn(ctx, prompt)
 			if err != nil {
 				return report, err
 			}

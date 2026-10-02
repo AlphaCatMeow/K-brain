@@ -2764,7 +2764,7 @@ func (m *model) busyStats() string {
 		stats += fmt.Sprintf(" · %s tok", fmtTok(u.PromptTokens+u.CompletionTokens))
 	}
 	if m.agent.ContextLimit > 0 {
-		stats += fmt.Sprintf(" · %d%%", agent.EstimateTokens(m.agent.Messages)*100/m.agent.ContextLimit)
+		stats += fmt.Sprintf(" · %d%%", m.agent.ContextTokens()*100/m.agent.ContextLimit)
 	}
 	return stats
 }
@@ -3346,8 +3346,8 @@ func (m *model) submitTurn(text string, authored bool) (tea.Model, tea.Cmd) {
 				send(steeredMsg(s))
 			},
 			OnCompactStart: func(took, est int) {
-				if rewoundFrom != "" && turnAt > 0 && turnAt < len(m.agent.Messages) {
-					m.agent.Messages[turnAt].RewoundFrom = rewoundFrom
+				if rewoundFrom != "" {
+					m.agent.SetMessageRewoundFrom(turnAt, rewoundFrom)
 				}
 				compactBefore = m.agent.MessagesSnapshot()
 				send(compactStartMsg{took: took, est: est})
@@ -3390,8 +3390,8 @@ func (m *model) submitTurn(text string, authored bool) (tea.Model, tea.Cmd) {
 		default:
 			final, err = m.agent.Turn(ctx, prepared, events)
 		}
-		if rewoundFrom != "" && turnAt > 0 && turnAt < len(m.agent.Messages) {
-			m.agent.Messages[turnAt].RewoundFrom = rewoundFrom
+		if rewoundFrom != "" {
+			m.agent.SetMessageRewoundFrom(turnAt, rewoundFrom)
 		}
 		stream.finish(turnDoneMsg{final: final, stopReason: m.agent.LastStopReason(), err: err, at: turnAt, snap: preSnap, clean: workspaceClean()})
 	}()
@@ -3492,16 +3492,16 @@ func (m *model) command(text string) (tea.Model, tea.Cmd) {
 		}
 		m.prepareHistory()
 		m.busy = true
-		took := len(m.agent.Messages)
+		before := m.agent.MessagesSnapshot()
+		took := len(before)
 		m.append(dimStyle.Render(fmt.Sprintf("◎ compacting %d msgs (est. %s) with %s…",
-			took, fmtTok(agent.EstimateTokens(m.agent.Messages)), m.compactModelLabel())))
+			took, fmtTok(agent.EstimateTokens(before)), m.compactModelLabel())))
 		p := m.prog
 		ag := m.agent
 		ctx, cancel := context.WithCancel(context.Background())
 		ctx = sandbox.WithPolicy(ctx, m.sandboxPolicy)
 		m.cancel = cancel
 		go func() {
-			before := ag.MessagesSnapshot()
 			var summary string
 			var cutoff int
 			var info agent.CompactInfo
@@ -3509,8 +3509,9 @@ func (m *model) command(text string) (tea.Model, tea.Cmd) {
 				OnCompacted: func(s string, c int, ci agent.CompactInfo) { summary, cutoff, info = s, c, ci },
 			})
 			if p != nil {
-				p.Send(compactMsg{took: took - len(ag.Messages), kept: len(ag.Messages), summary: summary, cutoff: cutoff, info: info, err: err,
-					before: before, after: ag.MessagesSnapshot()})
+				after := ag.MessagesSnapshot()
+				p.Send(compactMsg{took: took - len(after), kept: len(after), summary: summary, cutoff: cutoff, info: info, err: err,
+					before: before, after: after})
 				p.Send(turnDoneMsg{})
 			}
 		}()
@@ -3718,7 +3719,7 @@ func (m *model) command(text string) (tea.Model, tea.Cmd) {
 	case "/help":
 		m.append(dimStyle.Render(helpTextFor(m.language())))
 	case "/auth":
-		m.append(errStyle.Render("auth was removed; configure baseUrl and apiKey in ~/.k-brain/config.json"))
+		m.append(errStyle.Render("auth was removed; configure baseUrl and apiKey in ~/.liveagent/config.json"))
 	case "/model", "/model-for-session":
 		persist := fields[0] == "/model"
 		if len(fields) < 2 {
@@ -4228,7 +4229,7 @@ func (m *model) statusView() string {
 		spend += m.tr(" · last ") + fmtUsage(last)
 	}
 	if m.agent.ContextLimit > 0 {
-		spend += fmt.Sprintf(" · %d%%/%d%% ctx", agent.EstimateTokens(m.agent.Messages)*100/m.agent.ContextLimit, m.compactPct())
+		spend += fmt.Sprintf(" · %d%%/%d%% ctx", m.agent.ContextTokens()*100/m.agent.ContextLimit, m.compactPct())
 	}
 	if !m.follow {
 		spend += fmt.Sprintf(" · ↑ %d%%", int(m.vp.ScrollPercent()*100))

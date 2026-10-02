@@ -52,6 +52,7 @@ func TestDoctorCommandWired(t *testing.T) {
 
 func TestDoctorSkillSources(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("LIVEAGENT_HOME", filepath.Join(home, ".liveagent"))
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	proj := t.TempDir()
@@ -69,7 +70,7 @@ func TestDoctorSkillSources(t *testing.T) {
 		}
 	}
 	writeSkill(filepath.Join(proj, ".agents", "skills"), "proj-skill", "from the project")
-	writeSkill(filepath.Join(home, ".k-brain", "skills"), "user-skill", "from the user dir")
+	writeSkill(filepath.Join(home, ".liveagent", "skills"), "user-skill", "from the user dir")
 
 	m := tasksModel("http://unused")
 	m.skillScan = func() []skills.Skill { return skills.Scan(skills.DefaultDirs()...) }
@@ -80,8 +81,8 @@ func TestDoctorSkillSources(t *testing.T) {
 	if !strings.Contains(out, "proj-skill ~") || !strings.Contains(out, "(."+string(filepath.Separator)+filepath.Join(".agents", "skills")+")") {
 		t.Errorf("project skill should point at ./.agents/skills:\n%s", out)
 	}
-	if !strings.Contains(out, "("+filepath.Join("~", ".k-brain", "skills")+")") {
-		t.Errorf("user skill should point at ~/.k-brain/skills:\n%s", out)
+	if !strings.Contains(out, "("+filepath.Join("~", ".liveagent", "skills")+")") {
+		t.Errorf("user skill should point at ~/.liveagent/skills:\n%s", out)
 	}
 }
 
@@ -92,7 +93,7 @@ func TestShortSkillsDir(t *testing.T) {
 	wd := t.TempDir()
 	t.Chdir(wd)
 	cases := map[string]string{
-		filepath.Join(home, ".k-brain", "skills"):                  filepath.Join("~", ".k-brain", "skills"),
+		filepath.Join(home, ".liveagent", "skills"):                filepath.Join("~", ".liveagent", "skills"),
 		filepath.Join(wd, ".agents", "skills"):                     "." + string(filepath.Separator) + filepath.Join(".agents", "skills"),
 		filepath.Join(wd, "..local", "skills"):                     "." + string(filepath.Separator) + filepath.Join("..local", "skills"),
 		filepath.Join(string(filepath.Separator), "opt", "skills"): filepath.Join(string(filepath.Separator), "opt", "skills"),

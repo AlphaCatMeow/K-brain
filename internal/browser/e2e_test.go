@@ -185,7 +185,7 @@ func TestE2EDedicated(t *testing.T) {
 		t.Fatalf("fill focus: %s %v", v, err)
 	}
 
-	if _, err := os.Stat(filepath.Join(home, ".k-brain", "browser", "dedicated-profile")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".liveagent", "browser", "dedicated-profile")); err != nil {
 		t.Fatalf("dedicated profile dir missing: %v", err)
 	}
 }

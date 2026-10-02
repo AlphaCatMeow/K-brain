@@ -57,7 +57,7 @@ func (e *runTimeoutError) Unwrap() error { return e.cause }
 func runCLI(args []string) (runErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	format := fs.String("format", "text", "output format: text (stream the reply) or json (newline-delimited event stream)")
-	modelFlag := fs.String("m", "", "model name from ~/.k-brain/config.json (default: defaultModel)")
+	modelFlag := fs.String("m", "", "model name from ~/.liveagent/config.json (default: defaultModel)")
 	providerFlag := fs.String("p", "", "provider to route the model through (default: model's first provider)")
 	resumeFlag := fs.String("resume", "", "continue this session id (see `kn sessions`) instead of starting fresh")
 	systemFlag := fs.String("system", "", "override the system prompt for this run")

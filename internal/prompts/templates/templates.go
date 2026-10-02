@@ -143,6 +143,10 @@ func (t Template) Expand(text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return t.ExpandArgs(args)
+}
+
+func (t Template) ExpandArgs(args []string) (string, error) {
 	value := func(key string) string {
 		if key == "@" || key == "ARGUMENTS" {
 			return strings.Join(args, " ")

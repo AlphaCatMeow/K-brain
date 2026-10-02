@@ -49,7 +49,11 @@ type Meta struct {
 	ModelUsage map[string]ai.Usage `json:"model_usage,omitempty"`
 	UpdatedAt  time.Time           `json:"updated_at"`
 
-	TaskID string `json:"task_id"`
+	TaskID                   string `json:"task_id"`
+	ImportSourceID           string `json:"import_source_id,omitempty"`
+	ImportFingerprint        string `json:"import_fingerprint,omitempty"`
+	ImportMetadata           string `json:"import_metadata,omitempty"`
+	ImportContentFingerprint string `json:"import_content_fingerprint,omitempty"`
 }
 
 type Task struct {
@@ -73,6 +77,7 @@ type Schedule struct {
 }
 
 type Compaction struct {
+	RunID     string   `json:"run_id,omitempty"`
 	Seq       int      `json:"seq"`
 	Cutoff    int      `json:"cutoff"`
 	Summary   string   `json:"summary"`
@@ -121,6 +126,24 @@ func OpenProjectHome(home string) (*Store, error) {
 	return s, nil
 }
 
+func prepareLockFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if createErr != nil {
+			return createErr
+		}
+		return file.Close()
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("lock path is not a regular file")
+	}
+	return os.Chmod(path, 0600)
+}
+
 func Open(dir string) (*Store, error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
@@ -128,6 +151,9 @@ func Open(dir string) (*Store, error) {
 	}
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
+	}
+	if err := prepareLockFile(filepath.Join(root, ".lock")); err != nil {
+		return nil, fmt.Errorf("prepare session lock: %w", err)
 	}
 	s := &Store{filesDir: root, lock: flock.New(filepath.Join(root, ".lock"))}
 	if err := s.withLock(func() error { return nil }); err != nil {

@@ -27,7 +27,7 @@ func TestPromptTemplateIntegration(t *testing.T) {
 		}
 	}
 	global := filepath.Join(home, "prompts")
-	project := filepath.Join(root, ".k-brain", "prompts")
+	project := filepath.Join(root, ".liveagent", "prompts")
 	write(global, "audit.md", "Global $1")
 	write(global, "model.md", "Do not shadow builtins")
 	write(project, "audit.md", "Project $1")

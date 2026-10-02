@@ -38,8 +38,8 @@ func TestLoadRejectsBadJSON(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	os.MkdirAll(filepath.Join(home, ".k-brain"), 0o700)
-	os.WriteFile(filepath.Join(home, ".k-brain", "config.json"), []byte("{nope"), 0o600)
+	os.MkdirAll(filepath.Join(home, ".liveagent"), 0o700)
+	os.WriteFile(filepath.Join(home, ".liveagent", "config.json"), []byte("{nope"), 0o600)
 	if _, err := Load(); err == nil {
 		t.Fatal("expected parse error")
 	}
@@ -106,7 +106,7 @@ func TestLoadJSONCCommentsAndTrailingCommas(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	os.MkdirAll(filepath.Join(home, ".k-brain"), 0o700)
+	os.MkdirAll(filepath.Join(home, ".liveagent"), 0o700)
 	src := `{
   // default route
   "defaultModel": "m1",
@@ -116,7 +116,7 @@ func TestLoadJSONCCommentsAndTrailingCommas(t *testing.T) {
   },
 }
 `
-	os.WriteFile(filepath.Join(home, ".k-brain", "config.json"), []byte(src), 0o600)
+	os.WriteFile(filepath.Join(home, ".liveagent", "config.json"), []byte(src), 0o600)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestLoadRecoversFromClobberedConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	dir := filepath.Join(home, ".k-brain")
+	dir := filepath.Join(home, ".liveagent")
 	os.MkdirAll(dir, 0o700)
 	p := filepath.Join(dir, "config.json")
 
@@ -170,7 +170,7 @@ func TestLoadRegeneratesDefaultsWhenEmptyAndNoBackup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	dir := filepath.Join(home, ".k-brain")
+	dir := filepath.Join(home, ".liveagent")
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
   "providers": null
@@ -188,7 +188,7 @@ func TestSaveRefusesToClobberHealthyConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	dir := filepath.Join(home, ".k-brain")
+	dir := filepath.Join(home, ".liveagent")
 	os.MkdirAll(dir, 0o700)
 	p := filepath.Join(dir, "config.json")
 	healthy := `{
@@ -275,7 +275,7 @@ func TestLoadCatalogsAlwaysNonNil(t *testing.T) {
 }
 
 func TestLogEventWritesAndRotates(t *testing.T) {
-	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 
 	LogEvent("config.save", "before=(providers=1) after=(providers=1)")
 	LogEvent("catalog.fetch", "inference ok: 42 models")
@@ -306,9 +306,9 @@ func TestLogEventNeverFails(t *testing.T) {
 }
 
 func TestSetupDoneMarker(t *testing.T) {
-	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	if SetupDone() {
-		t.Fatal("a fresh K_BRAIN_HOME should report setup-not-done")
+		t.Fatal("a fresh LIVEAGENT_HOME should report setup-not-done")
 	}
 	if _, err := Load(); err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func TestLoadMixedTokenFields(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	os.MkdirAll(filepath.Join(home, ".k-brain"), 0o700)
+	os.MkdirAll(filepath.Join(home, ".liveagent"), 0o700)
 	src := `{
   "defaultModel": "m1",
   "providers": {
@@ -380,7 +380,7 @@ func TestLoadMixedTokenFields(t *testing.T) {
     }
   }
 }`
-	os.WriteFile(filepath.Join(home, ".k-brain", "config.json"), []byte(src), 0o600)
+	os.WriteFile(filepath.Join(home, ".liveagent", "config.json"), []byte(src), 0o600)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
