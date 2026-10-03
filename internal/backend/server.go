@@ -296,6 +296,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleProviderModels(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/settings/providers/") && strings.HasSuffix(r.URL.Path, "/secrets") {
+		s.handleProviderSecrets(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/providers/") {
 		s.providerUsage(w, r)
 		return
