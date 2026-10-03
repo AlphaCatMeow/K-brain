@@ -35,6 +35,11 @@ func TestBrainCreatesEmptyUserPromptAndStripsComments(t *testing.T) {
 }
 
 func TestProjectPromptFilesLoadAncestorInstructions(t *testing.T) {
+	// The walk climbs to the filesystem root, so a developer machine with an AGENTS.md
+	// above the temp directory would leak a third file in. Point HOME at a scratch tree
+	// and keep HOME itself free of prompt files.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	root := t.TempDir()
 	child := filepath.Join(root, "packages", "app")
 	if err := os.MkdirAll(filepath.Join(child, ".liveagent"), 0o755); err != nil {
