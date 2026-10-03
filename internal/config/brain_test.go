@@ -35,23 +35,34 @@ func TestBrainCreatesEmptyUserPromptAndStripsComments(t *testing.T) {
 }
 
 func TestProjectPromptFilesLoadAncestorInstructions(t *testing.T) {
+	// The walk climbs to the filesystem root, so a developer machine with an AGENTS.md
+	// above the temp directory would leak a third file in. Point HOME at a scratch tree
+	// and keep HOME itself free of prompt files.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	root := t.TempDir()
 	child := filepath.Join(root, "packages", "app")
-	if err := os.MkdirAll(filepath.Join(child, ".liveagent"), 0o755); err != nil {
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".liveagent"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("# root\n- Root rule\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(child, ".liveagent", "brain.md"), []byte("- App rule\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".liveagent", "brain.md"), []byte("- Root brain rule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "AGENTS.md"), []byte("- App rule\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	files := ProjectPromptFiles(child)
-	if len(files) != 2 {
-		t.Fatalf("files = %+v, want two project prompt files", files)
+	if len(files) != 3 {
+		t.Fatalf("files = %+v, want root and child project prompt files", files)
 	}
-	if files[0].Text != "- Root rule" || files[1].Text != "- App rule" {
+	if files[0].Text != "- Root rule" || files[1].Text != "- Root brain rule" || files[2].Text != "- App rule" {
 		t.Fatalf("files = %+v, want root-to-child order", files)
 	}
 }

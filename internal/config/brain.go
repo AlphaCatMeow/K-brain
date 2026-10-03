@@ -51,6 +51,16 @@ func readPromptFile(path string) string {
 	return strings.Join(lines, "\n")
 }
 
+// hasProjectMarker reports whether dir is a project root, which ends the ancestor walk.
+func hasProjectMarker(dir string) bool {
+	for _, marker := range []string{".git", ".liveagent"} {
+		if info, err := os.Stat(filepath.Join(dir, marker)); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func projectPromptCandidates(wd string) []string {
 	wd, err := filepath.Abs(wd)
 	if err != nil {
@@ -63,6 +73,10 @@ func projectPromptCandidates(wd string) []string {
 	var dirs []string
 	for {
 		dirs = append(dirs, wd)
+		// Include the project root itself, then stop before walking into its parent.
+		if hasProjectMarker(wd) {
+			break
+		}
 		parent := filepath.Dir(wd)
 		if parent == wd {
 			break
