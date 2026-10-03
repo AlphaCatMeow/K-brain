@@ -72,12 +72,11 @@ func projectPromptCandidates(wd string) []string {
 	}
 	var dirs []string
 	for {
-		// A project marker ends the walk: files above the workspace root belong to
-		// unrelated projects and must not become instructions.
-		if len(dirs) > 0 && hasProjectMarker(wd) {
+		dirs = append(dirs, wd)
+		// Include the project root itself, then stop before walking into its parent.
+		if hasProjectMarker(wd) {
 			break
 		}
-		dirs = append(dirs, wd)
 		parent := filepath.Dir(wd)
 		if parent == wd {
 			break
