@@ -50,7 +50,7 @@ func TestSettingsPUTRealPreflight(t *testing.T) {
 	}
 	req.Header.Set("Origin", "http://localhost:1420")
 	req.Header.Set("Access-Control-Request-Method", "PUT")
-	req.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+	req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,cache-control")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestSettingsPUTRealPreflight(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent || resp.Header.Get("Access-Control-Allow-Origin") != "http://localhost:1420" || !strings.Contains(resp.Header.Get("Access-Control-Allow-Methods"), "PUT") {
 		t.Fatalf("preflight: %d %v", resp.StatusCode, resp.Header)
 	}
-	for _, header := range []string{"authorization", "content-type"} {
+	for _, header := range []string{"authorization", "content-type", "cache-control"} {
 		if !strings.Contains(strings.ToLower(resp.Header.Get("Access-Control-Allow-Headers")), header) {
 			t.Fatalf("missing allowed header %s", header)
 		}
