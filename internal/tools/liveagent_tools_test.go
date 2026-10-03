@@ -5,9 +5,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// symlinkOrSkip creates a symlink, or skips the test where the platform forbids it
+// (Windows requires SeCreateSymbolicLinkPrivilege).
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
+		t.Fatal(err)
+	}
+}
 
 func TestLiveAgentCatalogMatchesOriginalNamesAndSchemas(t *testing.T) {
 	catalog := LiveAgentCatalog()
@@ -52,9 +65,7 @@ func TestLiveAgentWorkspaceAndMutationPolicy(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	symlinkOrSkip(t, outside, filepath.Join(dir, "link"))
 	if _, err := write.Run(ctx, json.RawMessage(`{"path":"link","content":"no"}`)); err == nil {
 		t.Fatal("symlink write was accepted")
 	}
@@ -297,9 +308,7 @@ func TestLiveAgentReadOnlyAndSymlinkSearchBoundaries(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	_ = os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0600)
-	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
+	symlinkOrSkip(t, outside, filepath.Join(root, "link"))
 	ts := LiveAgentCatalog()
 	ctx := WithWorkspaceRoots(WithWorkingDir(context.Background(), root), []WorkspaceRoot{{Path: root, Access: "write"}})
 	for _, tc := range []struct{ name, args string }{{"Read", `{"path":"link/secret.txt"}`}, {"List", `{"path":"link"}`}, {"Glob", `{"path":"link","pattern":"**/*"}`}, {"Grep", `{"path":"link","pattern":"secret"}`}, {"Delete", `{"path":"link"}`}, {"Bash", `{"command":"pwd","cwd":"link"}`}, {"Delete", `{"path":"."}`}} {

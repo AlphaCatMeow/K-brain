@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"runtime"
 	"testing"
 )
 
@@ -150,7 +151,8 @@ func TestGeminiSignatureSurvivesNewClientRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows has no Unix mode bits; the cache file itself must still exist.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("signature cache mode = %o, want 600", info.Mode().Perm())
 	}
 }

@@ -37,7 +37,7 @@ func TestHookStoreRevisionAndPersistence(t *testing.T) {
 		t.Fatal("hook was not persisted")
 	}
 	mode, err := os.Stat(path)
-	if err != nil || mode.Mode().Perm() != 0o600 {
+	if err != nil || (runtime.GOOS != "windows" && mode.Mode().Perm() != 0o600) {
 		t.Fatalf("hook file mode=%v err=%v", mode.Mode(), err)
 	}
 }

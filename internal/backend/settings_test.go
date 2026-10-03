@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"runtime"
 	"testing"
 	"time"
 
@@ -405,7 +406,7 @@ func TestSettingsRefreshSameSessionAfterActiveRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0600 {
 		t.Fatalf("config mode %v", stat.Mode())
 	}
 	if code := doJSON(t, http.MethodPut, httpServer.URL+"/v1/settings", map[string]any{"deleteProviders": []string{"fixture"}}, nil); code != 200 {

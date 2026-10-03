@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,11 @@ func TestTerminalHTTPCanonicalProtocolAndAuthorization(t *testing.T) {
 				}
 				close(client.release)
 				return
+			}
+			if policy == "auto" && runtime.GOOS == "windows" {
+				// The backend host has no PTY implementation on Windows, so a start is
+				// rejected before any session exists.
+				t.Skip("PTY sessions require a Unix backend host")
 			}
 			code, started := invoke(request)
 			if policy != "auto" {

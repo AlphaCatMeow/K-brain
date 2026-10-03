@@ -78,7 +78,7 @@ func validateLegacyCheckpointRecord(record legacyCheckpointImportRecord) error {
 	if record.Kind != "rewind" && (record.TurnSeq == 0 || strings.TrimSpace(record.TurnID) == "") {
 		return &checkpointImportValidationError{"legacy checkpoint turn identity is missing"}
 	}
-	if strings.ContainsAny(record.Root+record.RelPath, "\x00\\") {
+	if strings.ContainsRune(record.Root+record.RelPath, 0) || (os.PathSeparator != '\\' && strings.ContainsRune(record.Root+record.RelPath, '\\')) {
 		return &checkpointImportValidationError{"legacy checkpoint path contains invalid characters"}
 	}
 	if (record.Kind == "file" || record.Kind == "dir") && (record.Root == "" || record.RelPath == "") {
@@ -92,16 +92,25 @@ func validateLegacyCheckpointRecord(record legacyCheckpointImportRecord) error {
 	}
 	if record.RelPath != "" {
 		rel := filepath.FromSlash(record.RelPath)
-		if filepath.IsAbs(rel) || filepath.Clean(rel) == "." || filepath.Clean(rel) == ".." || strings.HasPrefix(filepath.Clean(rel), ".."+string(filepath.Separator)) {
+		clean := filepath.Clean(rel)
+		if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return &checkpointImportValidationError{"legacy checkpoint relative path escapes its root"}
 		}
+		if clean == "" || strings.ContainsRune(clean, 0) {
+			return &checkpointImportValidationError{"legacy checkpoint relative path is empty"}
+		}
 	}
-	if record.Blob != nil && (*record.Blob == "" || strings.ContainsAny(*record.Blob, "\\\x00") || filepath.Base(*record.Blob) != *record.Blob || *record.Blob == "." || *record.Blob == "..") {
-		return &checkpointImportValidationError{"legacy checkpoint blob name is unsafe"}
+	if record.Blob != nil {
+		blob := *record.Blob
+		if blob == "" || blob == "." || blob == ".." || strings.ContainsRune(blob, 0) || strings.ContainsAny(blob, "/\\") {
+			return &checkpointImportValidationError{"legacy checkpoint blob name is unsafe"}
+		}
+		if filepath.Base(filepath.FromSlash(blob)) != blob || strings.TrimSpace(blob) != blob {
+			return &checkpointImportValidationError{"legacy checkpoint blob name is unsafe"}
+		}
 	}
 	return nil
 }
-
 func importedCheckpointID(conversationID, sourceFingerprint string, turnSeq uint64) string {
 	sum := sha256.Sum256([]byte(conversationID + "\x00" + sourceFingerprint + "\x00" + fmt.Sprint(turnSeq)))
 	return "cp-import-" + hex.EncodeToString(sum[:12])

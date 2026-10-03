@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,6 +92,9 @@ func TestDiscoverViaJSONVersion(t *testing.T) {
 	}
 
 	if err := os.Symlink(fmt.Sprintf("testhost-%d", os.Getpid()), filepath.Join(prof, "SingletonLock")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(prof, "DevToolsActivePort"),
