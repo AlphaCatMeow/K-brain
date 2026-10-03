@@ -191,13 +191,19 @@ func (s *ProviderUsageService) provider(id string) (config.Provider, bool) {
 	return p, ok
 }
 
+// usageMetadata resolves the provider usage block. Settings writes it to
+// Provider.UsageQuery, while older configurations carried it inside
+// Metadata["usageQuery"]; read the canonical field first and keep the legacy
+// location working.
 func usageMetadata(p config.Provider) usageConfig {
 	var cfg usageConfig
-	if p.Metadata != nil {
-		if raw, ok := p.Metadata["usageQuery"]; ok {
-			b, _ := json.Marshal(raw)
-			_ = json.Unmarshal(b, &cfg)
-		}
+	var raw any = p.UsageQuery
+	if len(p.UsageQuery) == 0 {
+		raw = p.Metadata["usageQuery"]
+	}
+	if raw != nil {
+		b, _ := json.Marshal(raw)
+		_ = json.Unmarshal(b, &cfg)
 	}
 	if cfg.Scripts == nil {
 		cfg.Scripts = map[string]string{}
