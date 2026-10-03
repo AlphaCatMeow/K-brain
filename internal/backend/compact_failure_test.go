@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -102,6 +103,15 @@ func TestCompactHTTPFailureRestoresTransaction(t *testing.T) {
 			}
 			entered := make(chan struct{})
 			release := make(chan struct{})
+			// Every exit path must unblock the compaction callback, or Server.Close waits
+			// forever on the blocked worker.
+			released := false
+			t.Cleanup(func() {
+				if !released {
+					released = true
+					close(release)
+				}
+			})
 			var modelContext context.Context
 			ag.CompactClient = &compactCallbackClient{scriptedClient: &scriptedClient{}, complete: func(ctx context.Context) error {
 				modelContext = ctx
@@ -131,15 +141,20 @@ func TestCompactHTTPFailureRestoresTransaction(t *testing.T) {
 			}
 			switch fault {
 			case "save":
+				if runtime.GOOS == "windows" {
+					t.Skip("symlink creation requires privileges on Windows")
+				}
 				// Reads traverse the symlink; the atomic writer rejects a symlink directory.
 				dir := filepath.Dir(path)
+				// Register the restore first: a later t.Fatal must never strand the renamed
+				// directory, or Close deadlocks on the blocked compaction worker (LIFO cleanups).
+				t.Cleanup(func() { _ = os.Remove(dir); _ = os.Rename(dir+".saved", dir) })
 				if err := os.Rename(dir, dir+".saved"); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(dir+".saved", dir); err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { _ = os.Remove(dir); _ = os.Rename(dir+".saved", dir) })
 			case "journal":
 				journal := filepath.Join(backend.eventDir, sess.ID+".jsonl")
 				if err := os.Rename(journal, journal+".saved"); err != nil {
@@ -159,7 +174,10 @@ func TestCompactHTTPFailureRestoresTransaction(t *testing.T) {
 					t.Fatalf("cancel status = %d", resp.StatusCode)
 				}
 			}
-			close(release)
+			if !released {
+				released = true
+				close(release)
+			}
 			waitCompactDone(t, rt)
 			select {
 			case <-modelContext.Done():

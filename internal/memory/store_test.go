@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,9 @@ func TestStoreRejectPaths(t *testing.T) {
 	}
 	target := t.TempDir()
 	if err := os.Symlink(target, filepath.Join(s.Root(), "global")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
 		t.Fatal(err)
 	}
 	if _, err := s.Write(WriteArgs{Slug: "one", Scope: "global", MemoryType: "user", Body: "fact"}); err == nil {

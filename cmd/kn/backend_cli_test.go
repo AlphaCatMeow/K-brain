@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +29,7 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	upstreamCalls := atomic.Int64{}
 	chatCalls := atomic.Int64{}
 	memoryCalls := atomic.Int64{}
+	compactionCalls := atomic.Int64{}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			http.NotFound(w, r)
@@ -55,15 +58,28 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 				break
 			}
 		}
+		streaming := strings.Contains(string(body), `"stream":true`)
 		kind := "chat"
-		if hasMemoryPlanTool {
+		switch {
+		case !streaming:
+			// Compaction summarisation is neither a chat turn nor memory extraction.
+			kind = "compaction"
+			compactionCalls.Add(1)
+		case hasMemoryPlanTool:
 			kind = "memory extraction"
 			memoryCalls.Add(1)
-		} else {
+		default:
 			chatCalls.Add(1)
 		}
 		upstreamCalls.Add(1)
 		t.Logf("fixture upstream request kind=%s tools=%d", kind, len(request.Tools))
+		if !streaming {
+			// Compaction summaries use a non-streaming request and expect a JSON body.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"fixture summary"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		flusher, ok := w.(http.Flusher)
@@ -101,6 +117,9 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	}
 
 	binary := filepath.Join(fixture, "kn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
 	build.Dir = repoRoot(t)
 	if output, err := build.CombinedOutput(); err != nil {
@@ -164,8 +183,8 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	if got := chatCalls.Load(); got != 2 {
 		t.Fatalf("chat upstream calls after restart = %d, want 2", got)
 	}
-	if got := upstreamCalls.Load(); got != chatCalls.Load()+memoryCalls.Load() {
-		t.Fatalf("upstream call accounting after restart = %d, chat=%d memory=%d", got, chatCalls.Load(), memoryCalls.Load())
+	if got, want := upstreamCalls.Load(), chatCalls.Load()+memoryCalls.Load()+compactionCalls.Load(); got != want {
+		t.Fatalf("upstream call accounting after restart = %d, want %d (chat=%d memory=%d compaction=%d)", got, want, chatCalls.Load(), memoryCalls.Load(), compactionCalls.Load())
 	}
 	t.Logf("prompt #2 terminal observed: session=%s accepted_seq=%d chat_calls=%d memory_calls=%d upstream_calls=%d", sessionID, accepted.AcceptedSeq, chatCalls.Load(), memoryCalls.Load(), upstreamCalls.Load())
 }
@@ -190,6 +209,9 @@ func TestBackendCLIParentStdioLifecycle(t *testing.T) {
 	}
 
 	binary := filepath.Join(fixture, "kn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
 	build.Dir = repoRoot(t)
 	if output, err := build.CombinedOutput(); err != nil {
@@ -245,6 +267,9 @@ func TestBackendCLIDefaultModeIgnoresStdinEOF(t *testing.T) {
 	}
 
 	binary := filepath.Join(fixture, "kn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
 	build.Dir = repoRoot(t)
 	if output, err := build.CombinedOutput(); err != nil {
@@ -430,6 +455,14 @@ func stopBackendProcess(t *testing.T, process *backendProcess) {
 	}
 	_ = process.stdin.Close()
 	if process.cmd.ProcessState != nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		// Windows has no interrupt signal, so terminate the whole tree: the backend
+		// spawns helpers, and a surviving one would keep using the same listen address.
+		kill := exec.Command("taskkill", "/PID", strconv.Itoa(process.cmd.Process.Pid), "/T", "/F")
+		_ = kill.Run()
+		_, _ = process.cmd.Process.Wait()
 		return
 	}
 	if err := process.cmd.Process.Signal(os.Interrupt); err != nil {

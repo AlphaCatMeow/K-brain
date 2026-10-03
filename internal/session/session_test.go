@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"runtime"
 	"testing"
 	"time"
 
@@ -266,7 +267,8 @@ func TestOpenRepairsExistingLockPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0600 {
+	// Windows has no Unix mode bits; repairs must still leave a usable lock file.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0600 {
 		t.Fatalf("lock permissions = %o, want 600", got)
 	}
 }

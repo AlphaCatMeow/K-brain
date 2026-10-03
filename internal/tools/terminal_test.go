@@ -4,12 +4,23 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
+// requireUnixPTY skips terminal tests on hosts without a PTY implementation.
+// TerminalManager.create rejects Windows explicitly, so these cases cannot run there.
+func requireUnixPTY(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY sessions require a Unix backend host")
+	}
+}
+
 func TestTerminalManagerReadRequiresOwningCanonicalRun(t *testing.T) {
+	requireUnixPTY(t)
 	manager := NewTerminalManager()
 	ctx := WithRunIdentity(WithWorkingDir(context.Background(), t.TempDir()), RunIdentity{ConversationID: "session-1", RunID: "run-1"})
 	id, err := manager.Start(ctx, "printf terminal-output", WorkingDir(ctx))
@@ -39,6 +50,7 @@ func TestTerminalManagerReadRequiresOwningCanonicalRun(t *testing.T) {
 }
 
 func TestTerminalProtocolInteractiveLifecycle(t *testing.T) {
+	requireUnixPTY(t)
 	manager := NewTerminalManager()
 	defer manager.CloseAll()
 	ctx, cancel := context.WithCancel(WithRunIdentity(WithWorkingDir(context.Background(), t.TempDir()), RunIdentity{ConversationID: "conversation", RunID: "run"}))
@@ -97,6 +109,7 @@ func TestTerminalProtocolInteractiveLifecycle(t *testing.T) {
 }
 
 func TestTerminalBoundedBufferAndOwnerValidationBeforeSpawn(t *testing.T) {
+	requireUnixPTY(t)
 	manager := NewTerminalManager()
 	defer manager.CloseAll()
 	root := t.TempDir()

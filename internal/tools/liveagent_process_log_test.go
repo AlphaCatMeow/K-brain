@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,14 @@ func TestLiveAgentManagedProcessCompoundCommand(t *testing.T) {
 	defer cancel()
 	catalog := LiveAgentCatalog()
 	tool := findToolForTest(catalog, "ManagedProcess")
-	out, err := tool.Run(ctx, mustJSON(map[string]any{"action": "start", "command": "printf first && printf second >&2"}))
+	// The host shell differs per platform: POSIX operators only apply to a POSIX shell,
+	// and Windows defaults to PowerShell where "&&" needs newer PowerShell syntax.
+	command := "printf first && printf second >&2"
+	expected := "firstsecond"
+	if runtime.GOOS == "windows" {
+		command = "[Console]::Out.Write(\"first\"); [Console]::Error.Write(\"second\")"
+	}
+	out, err := tool.Run(ctx, mustJSON(map[string]any{"action": "start", "command": command}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +67,7 @@ func TestLiveAgentManagedProcessCompoundCommand(t *testing.T) {
 			cursor += int64(len(text))
 		}
 		if fieldValue(result, "status") == "completed" {
-			if output.String() != "firstsecond" {
+			if !strings.Contains(output.String(), expected) || !strings.Contains(output.String(), "second") {
 				t.Fatalf("output=%q", output.String())
 			}
 			return
