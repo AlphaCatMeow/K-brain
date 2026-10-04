@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,5 +417,44 @@ func TestSettingsRefreshSameSessionAfterActiveRun(t *testing.T) {
 	}
 	if len(rt.agent.MessagesSnapshot()) != 5 {
 		t.Fatal("rejected run altered history")
+	}
+}
+
+func TestLoadRuntimeByIDFallsBackWhenHistoricalModelWasRemoved(t *testing.T) {
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	id, err := store.Create(t.TempDir(), "deleted-model", "old-provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		DefaultModel:    "current-model",
+		DefaultProvider: "current-provider",
+		Providers: map[string]config.Provider{
+			"current-provider": {API: "openai-completions", BaseURL: "https://api.example/v1", ActiveModels: []string{"current-model"}},
+		},
+		Models: map[string]config.Model{
+			"current-model": {ID: "current-model", Providers: []string{"current-provider"}},
+		},
+	}
+	settings := NewSettingsStore(cfg, nil)
+	var selected protocol.ModelRef
+	factory := func(_ context.Context, _ string, model protocol.ModelRef) (*agent.Agent, error) {
+		selected = model
+		return agent.New(&testSettingsClient{}, model.Model, 100, "system"), nil
+	}
+	server, err := New(Options{Store: store, Factory: factory, Settings: settings, EventDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if _, err := server.loadRuntimeByID(id); err != nil {
+		t.Fatalf("load historical session: %v", err)
+	}
+	if selected != (protocol.ModelRef{Provider: "current-provider", Model: "current-model"}) {
+		t.Fatalf("factory model = %+v", selected)
 	}
 }

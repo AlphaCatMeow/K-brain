@@ -580,7 +580,34 @@ func (s *Server) loadRuntimeByID(id string) (*runtimeSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.loadRuntime(id, protocol.ModelRef{Provider: meta.Provider, Model: meta.Model}, meta.CWD)
+	model := protocol.ModelRef{Provider: meta.Provider, Model: meta.Model}
+	// Historical sessions may refer to a model that was removed from the
+	// current configuration. Loading history still needs a runtime for task
+	// and event inspection, so use the current default active model as the
+	// runtime implementation while preserving the stored session metadata.
+	if !s.knownModel(model) {
+		if fallback, ok := s.fallbackModel(); ok {
+			model = fallback
+		}
+	}
+	return s.loadRuntime(id, model, meta.CWD)
+}
+
+func (s *Server) fallbackModel() (protocol.ModelRef, bool) {
+	if s.settings == nil {
+		return protocol.ModelRef{}, false
+	}
+	projection := projectSettings(s.settings.Snapshot())
+	if len(projection.Models) == 0 {
+		return protocol.ModelRef{}, false
+	}
+	for _, model := range projection.Models {
+		if model.Provider == projection.DefaultProvider && model.ID == projection.DefaultModel {
+			return protocol.ModelRef{Provider: model.Provider, Model: model.ID}, true
+		}
+	}
+	model := projection.Models[0]
+	return protocol.ModelRef{Provider: model.Provider, Model: model.ID}, true
 }
 
 func closeMemoryRuntime(runtime agent.MemoryRuntime) error {
