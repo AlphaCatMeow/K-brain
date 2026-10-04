@@ -614,13 +614,32 @@ func (s *Server) switchModelLocked(rt *runtimeSession, selected protocol.ModelRe
 // the same model so tools, memory and project instructions follow the new directory; an
 // unloaded session only needs the stored metadata, which the next load reads.
 func (s *Server) switchWorkingDirLocked(rt *runtimeSession, cwd string) error {
-	if rt.agent != nil && rt.agent.WorkingDir != cwd {
-		selected := protocol.ModelRef{Provider: rt.agent.Provider, Model: rt.agent.ModelName}
-		if err := s.rebuildAgentLocked(rt, selected, cwd); err != nil {
-			return err
+	oldCWD := ""
+	if rt.agent != nil {
+		oldCWD = rt.agent.WorkingDir
+	}
+	if oldCWD == "" {
+		if meta, _, err := s.store.Load(rt.id); err == nil {
+			oldCWD = meta.CWD
 		}
 	}
-	return s.store.SetCWD(rt.id, cwd)
+	if oldCWD == cwd {
+		return nil
+	}
+	if err := s.store.SetCWD(rt.id, cwd); err != nil {
+		return err
+	}
+	if rt.agent == nil || rt.agent.WorkingDir == cwd {
+		return nil
+	}
+	selected := protocol.ModelRef{Provider: rt.agent.Provider, Model: rt.agent.ModelName}
+	if err := s.rebuildAgentLocked(rt, selected, cwd); err != nil {
+		if rollbackErr := s.store.SetCWD(rt.id, oldCWD); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback workspace after agent rebuild: %w", rollbackErr))
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) rebuildAgentLocked(rt *runtimeSession, selected protocol.ModelRef, cwd string) error {
@@ -642,6 +661,11 @@ func (s *Server) rebuildAgentLocked(rt *runtimeSession, selected protocol.ModelR
 		s.cron.attachTool(ag, selected)
 	}
 	ag.ModelName, ag.Provider = selected.Model, selected.Provider
+	if s.mcp != nil {
+		mcpTools, filter := s.mcp.ToolsForTurn(context.Background(), cwd, nil, rt.mcpActivation)
+		ag.SetMCPTools(mcpTools)
+		ag.RequestToolFilter = filter
+	}
 	ag.SetSessionID(rt.id)
 	var memoryRuntime agent.MemoryRuntime
 	if s.memoryRuntimeFactory != nil {

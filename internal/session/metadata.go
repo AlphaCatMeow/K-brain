@@ -59,8 +59,57 @@ func (s *Store) SetPinned(id string, pinned bool) error {
 func (s *Store) SetArchived(id string, archived bool) error {
 	return s.update(id, func(d *sessionData) error { d.Meta.Archived = archived; return nil })
 }
+
+// SetCWD updates the stored workspace and moves project-scoped sessions to the
+// corresponding workspace bucket before writing the new metadata.
 func (s *Store) SetCWD(id, cwd string) error {
-	return s.update(id, func(d *sessionData) error { d.Meta.CWD = cwd; return nil })
+	if !s.projectScoped {
+		return s.update(id, func(d *sessionData) error { d.Meta.CWD = cwd; return nil })
+	}
+	return s.withLock(func() error {
+		oldPath := s.TranscriptPath(id)
+		if oldPath == "" {
+			return ErrNotFound
+		}
+		oldDir := filepath.Dir(oldPath)
+		if _, err := os.Stat(oldPath); errors.Is(err, os.ErrNotExist) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		d, err := s.read(id)
+		if err != nil {
+			return err
+		}
+		newDir := filepath.Join(s.filesDir, projectDir(cwd), id)
+		if oldDir == newDir {
+			d.Meta.CWD = cwd
+			d.Meta.UpdatedAt = time.Now().UTC()
+			return s.write(d)
+		}
+		if _, err := os.Stat(newDir); err == nil {
+			return fmt.Errorf("session destination already exists")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(newDir), 0700); err != nil {
+			return err
+		}
+		if err := os.Rename(oldDir, newDir); err != nil {
+			return err
+		}
+		d.Meta.CWD = cwd
+		d.Meta.UpdatedAt = time.Now().UTC()
+		if err := s.write(d); err != nil {
+			_ = os.Rename(newDir, oldDir)
+			return err
+		}
+		oldProjectDir := filepath.Dir(oldDir)
+		if entries, readErr := os.ReadDir(oldProjectDir); readErr == nil && len(entries) == 0 {
+			_ = os.Remove(oldProjectDir)
+		}
+		return nil
+	})
 }
 func (s *Store) SetShared(id, token string, enabled, redactToolContent bool) error {
 	return s.update(id, func(d *sessionData) error {
