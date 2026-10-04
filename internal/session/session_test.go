@@ -4,8 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,6 +331,52 @@ func TestGoalPersistence(t *testing.T) {
 	st.SetGoal(id, "")
 	if meta, _, _ = st.Load(id); meta.Goal != "" {
 		t.Fatalf("goal not cleared: %+v", meta)
+	}
+}
+
+func TestProjectScopedSetCWDMovesSessionDirectory(t *testing.T) {
+	st, err := OpenProjectHome(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	from, to := t.TempDir(), t.TempDir()
+	id, err := st.Create(from, "model", "provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []ai.Message{{Role: "user", Content: "keep history"}, {Role: "assistant", Content: "reply"}}
+	if err := st.Save(id, 0, messages, "model", "provider"); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := st.TranscriptPath(id)
+	if err := st.SetCWD(id, to); err != nil {
+		t.Fatal(err)
+	}
+	newPath := st.TranscriptPath(id)
+	if newPath == oldPath || filepath.Dir(newPath) == filepath.Dir(oldPath) {
+		t.Fatalf("session did not move: old=%q new=%q", oldPath, newPath)
+	}
+	meta, got, err := st.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.CWD != to || len(got) != len(messages) || got[1].Content != "reply" {
+		t.Fatalf("moved session = cwd %q messages %+v", meta.CWD, got)
+	}
+	page, err := st.ListPage(t.Context(), PageOptions{CWD: &to, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Sessions) != 1 || page.Sessions[0].ID != id {
+		t.Fatalf("new workspace page = %+v", page)
+	}
+	oldPage, err := st.ListPage(t.Context(), PageOptions{CWD: &from, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldPage.Sessions) != 0 {
+		t.Fatalf("old workspace page = %+v", oldPage)
 	}
 }
 
