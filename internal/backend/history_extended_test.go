@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -95,6 +96,64 @@ func TestHistoryExtendedBranchPreservesReplyUntilNextUser(t *testing.T) {
 	}
 	if branched.Messages[len(branched.Messages)-1].Role != protocol.RoleAssistant {
 		t.Fatalf("branch included next user turn: %+v", branched.Messages)
+	}
+}
+
+func TestEditResendBranchStartsRunWithoutMutatingSource(t *testing.T) {
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fixture := &scriptedClient{response: "edited answer"}
+	_, server := newTestServer(t, store, t.TempDir(), fixture)
+
+	sourceID := createStoredHistorySession(t, store, t.TempDir(), []ai.Message{
+		{Role: protocol.RoleUser, Content: "original question"},
+		{Role: protocol.RoleAssistant, Content: "original answer"},
+		{Role: protocol.RoleUser, Content: "later question"},
+		{Role: protocol.RoleAssistant, Content: "later answer"},
+	})
+	original := getSession(t, server.URL, sourceID)
+	originalMessages := append([]protocol.Message(nil), original.Messages...)
+
+	var child protocol.Session
+	if status := doJSON(t, http.MethodPost, server.URL+"/v1/sessions/"+sourceID+"/branch", protocol.BranchSessionRequest{
+		ExpectedRevision: original.Revision,
+		MessageRef:       protocol.HistoryMessageRef{MessageID: original.Messages[0].ID, Role: protocol.RoleUser},
+	}, &child); status != http.StatusCreated {
+		t.Fatalf("branch status=%d", status)
+	}
+
+	var edited protocol.Session
+	if status := doJSON(t, http.MethodPost, server.URL+"/v1/sessions/"+child.ID+"/edit", protocol.EditSessionRequest{
+		ExpectedRevision: child.Revision,
+		MessageRef:       protocol.HistoryMessageRef{MessageID: child.Messages[0].ID, Role: protocol.RoleUser},
+		Replacement:      protocol.Message{Role: protocol.RoleUser, Content: []protocol.ContentBlock{{Type: protocol.ContentText, Text: "edited question"}}},
+	}, &edited); status != http.StatusOK {
+		t.Fatalf("edit status=%d", status)
+	}
+	if len(edited.Messages) != 1 || edited.Messages[0].Content[0].Text != "edited question" {
+		t.Fatalf("edited child=%+v", edited.Messages)
+	}
+	pendingID := edited.Messages[0].ID
+	if status := doJSON(t, http.MethodPost, server.URL+"/v1/sessions/"+child.ID+"/runs", protocol.PromptRequest{
+		ConversationID:  child.ID,
+		ClientRequestID: "edit-resend-branch",
+		ResumeMessageID: pendingID,
+		Prompt:          "edited question",
+	}, nil); status != http.StatusAccepted {
+		t.Fatalf("resume status=%d", status)
+	}
+	_ = waitForRun(t, server.URL, child.ID, edited.LastSeq)
+
+	unchanged := getSession(t, server.URL, sourceID)
+	if !reflect.DeepEqual(unchanged.Messages, originalMessages) {
+		t.Fatalf("source history changed: before=%+v after=%+v", originalMessages, unchanged.Messages)
+	}
+	childAfter := getSession(t, server.URL, child.ID)
+	if len(childAfter.Messages) != 2 || childAfter.Messages[0].Content[0].Text != "edited question" || childAfter.Messages[1].Content[0].Text != "edited answer" {
+		t.Fatalf("child after run=%+v", childAfter.Messages)
 	}
 }
 
