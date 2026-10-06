@@ -65,6 +65,9 @@ func TestBackendProviderChainRestartsAndRecoversInterruptedTools(t *testing.T) {
 			}
 		}
 		for _, secret := range []string{"private-thought", "encrypted-private", "signed-private", "interrupted-call", "incomplete-answer"} {
+			if want.api == ai.APIMessages && (secret == "private-thought" || secret == "signed-private") {
+				continue // Signed replay stays with the originating adapter.
+			}
 			if strings.Contains(string(body), secret) {
 				t.Errorf("%s replayed provider-private or failed content %q: %s", want.api, secret, body)
 			}

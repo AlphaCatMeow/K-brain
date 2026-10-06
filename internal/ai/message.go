@@ -7,13 +7,16 @@ import (
 )
 
 type Message struct {
-	ID           string         `json:"id,omitempty"`
-	Role         string         `json:"role"`
-	Content      string         `json:"content"`
-	Parts        []ContentPart  `json:"-"`
-	ToolCalls    []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID   string         `json:"tool_call_id,omitempty"`
-	HostedSearch []HostedSearch `json:"-"`
+	ID      string        `json:"id,omitempty"`
+	Role    string        `json:"role"`
+	Content string        `json:"content"`
+	Parts   []ContentPart `json:"-"`
+	// Reasoning is display-only; signed provider replay state is separate.
+	Reasoning    string          `json:"reasoning,omitempty"`
+	Replay       *ProviderReplay `json:"-"`
+	ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	HostedSearch []HostedSearch  `json:"-"`
 
 	Name string `json:"name,omitempty"`
 
@@ -29,6 +32,14 @@ type Message struct {
 	RawStopReason string     `json:"raw_stop_reason,omitempty"`
 
 	RewoundFrom string `json:"rewound_from,omitempty"`
+}
+
+// ProviderReplay is backend-owned state, scoped to the originating endpoint and model.
+type ProviderReplay struct {
+	API      string            `json:"api"`
+	Endpoint string            `json:"endpoint"`
+	Model    string            `json:"model"`
+	Blocks   []json.RawMessage `json:"blocks"`
 }
 
 type ContentPart struct {
@@ -66,26 +77,30 @@ func (m Message) ContentParts() []ContentPart {
 }
 
 type messageWire struct {
-	ID            string         `json:"id,omitempty"`
-	Role          string         `json:"role"`
-	Content       any            `json:"content"`
-	ToolCalls     []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID    string         `json:"tool_call_id,omitempty"`
-	HostedSearch  []HostedSearch `json:"hosted_search,omitempty"`
-	Name          string         `json:"name,omitempty"`
-	Authored      bool           `json:"authored,omitempty"`
-	SentAt        *time.Time     `json:"sent_at,omitempty"`
-	Usage         *Usage         `json:"usage,omitempty"`
-	Model         string         `json:"model,omitempty"`
-	StopReason    StopReason     `json:"stop_reason,omitempty"`
-	RawStopReason string         `json:"raw_stop_reason,omitempty"`
-	RewoundFrom   string         `json:"rewound_from,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	Role          string          `json:"role"`
+	Content       any             `json:"content"`
+	Reasoning     string          `json:"reasoning,omitempty"`
+	Replay        *ProviderReplay `json:"provider_replay,omitempty"`
+	ToolCalls     []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID    string          `json:"tool_call_id,omitempty"`
+	HostedSearch  []HostedSearch  `json:"hosted_search,omitempty"`
+	Name          string          `json:"name,omitempty"`
+	Authored      bool            `json:"authored,omitempty"`
+	SentAt        *time.Time      `json:"sent_at,omitempty"`
+	Usage         *Usage          `json:"usage,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	StopReason    StopReason      `json:"stop_reason,omitempty"`
+	RawStopReason string          `json:"raw_stop_reason,omitempty"`
+	RewoundFrom   string          `json:"rewound_from,omitempty"`
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
 	w := messageWire{
 		ID: m.ID, Role: m.Role, Content: m.Content, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
-		Name: m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
+		Reasoning: m.Reasoning,
+		Replay:    m.Replay,
+		Name:      m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
 		HostedSearch: m.HostedSearch,
 		Model:        m.Model, RewoundFrom: m.RewoundFrom,
 		StopReason: m.StopReason, RawStopReason: m.RawStopReason,
@@ -104,7 +119,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*m = Message{ID: raw.ID}
+	*m = Message{ID: raw.ID, Reasoning: raw.Reasoning, Replay: raw.Replay}
 	m.Role, m.ToolCalls, m.ToolCallID, m.Name = raw.Role, raw.ToolCalls, raw.ToolCallID, raw.Name
 	m.Authored, m.SentAt, m.Usage, m.Model, m.RewoundFrom = raw.Authored, raw.SentAt, raw.Usage, raw.Model, raw.RewoundFrom
 	m.StopReason, m.RawStopReason = raw.StopReason, raw.RawStopReason

@@ -101,6 +101,7 @@ func chatMessages(messages []Message) ([]Message, error) {
 		}
 	}
 	for _, m := range messages {
+		m.Replay = nil
 		if m.Role != "tool" {
 			flush()
 		}

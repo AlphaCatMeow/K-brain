@@ -420,26 +420,24 @@ func (s *Server) mutateHistory(w http.ResponseWriter, r *http.Request, id string
 	if edit {
 		// Discard the recorder's old raw offsets before any subsequent save.
 		rt.recorder = nil
-		meta, _, loadErr := s.store.Load(id)
-		if loadErr == nil {
-			ag, factoryErr := s.factory(r.Context(), meta.CWD, protocol.ModelRef{Model: meta.Model, Provider: meta.Provider})
-			loadErr = factoryErr
-			if loadErr == nil {
-				ag.WorkingDir, ag.ModelName, ag.Provider = meta.CWD, meta.Model, meta.Provider
-				ag.SetSessionID(id)
-				var rec *recording.Recorder
-				rec, loadErr = recording.Open(s.store, id, ag)
-				if loadErr == nil {
-					rt.agent, rt.recorder = ag, rec
-					s.wireTasks(rt, ag)
-				}
+		// Keep the configured tools, memory and model; only reload edited history.
+		previous := rt.agent.MessagesSnapshot()
+		var system []ai.Message
+		for _, message := range previous {
+			if message.Role == protocol.RoleSystem || message.Role == protocol.RoleDeveloper {
+				system = append(system, message)
 			}
 		}
+		rt.agent.RestoreMessages(system)
+		rec, loadErr := recording.Open(s.store, id, rt.agent)
 		if loadErr != nil {
+			rt.agent.RestoreMessages(previous)
+			rt.runtimeErr = fmt.Errorf("reload edited history: %w", loadErr)
 			rt.mu.Unlock()
 			mutationError(w, loadErr)
 			return
 		}
+		rt.recorder = rec
 		view, viewErr := s.sessionViewLocked(rt)
 		rt.mu.Unlock()
 		if viewErr != nil {

@@ -24,6 +24,9 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 	search := newSearchStream(ctx, "claude_code")
 	var usage anthropicUsage
 	blocks := map[int]*anthropicToolBlock{}
+	thinking := map[int]map[string]any{}
+	var thinkingOrder []int
+	serverBlocks := map[int]bool{}
 	ids := map[string]bool{}
 	var order []int
 	stopReason := ""
@@ -77,6 +80,17 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 			if err := json.Unmarshal(v.ContentBlock, &b); err != nil {
 				return Message{}, usage.normalized(), err
 			}
+			if b.Type == "thinking" || b.Type == "redacted_thinking" {
+				var block map[string]any
+				if err := json.Unmarshal(v.ContentBlock, &block); err != nil {
+					return Message{}, usage.normalized(), err
+				}
+				thinking[v.Index] = block
+				thinkingOrder = append(thinkingOrder, v.Index)
+			}
+			if b.Type == "server_tool_use" {
+				serverBlocks[v.Index] = true
+			}
 			if b.Text != "" {
 				msg.Content += b.Text
 				if onText != nil {
@@ -98,8 +112,8 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 			}
 		case "content_block_delta":
 			var d struct {
-				Type, Text, Thinking string
-				PartialJSON          string `json:"partial_json"`
+				Type, Text, Thinking, Signature string
+				PartialJSON                     string `json:"partial_json"`
 			}
 			if err := json.Unmarshal(v.Delta, &d); err != nil {
 				return Message{}, usage.normalized(), err
@@ -113,7 +127,20 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 			if d.Thinking != "" && onThink != nil {
 				onThink(d.Thinking)
 			}
+			if block := thinking[v.Index]; block != nil {
+				if d.Type == "thinking_delta" {
+					text, _ := block["thinking"].(string)
+					block["thinking"] = text + d.Thinking
+				}
+				if d.Type == "signature_delta" {
+					signature, _ := block["signature"].(string)
+					block["signature"] = signature + d.Signature
+				}
+			}
 			if d.Type == "input_json_delta" {
+				if serverBlocks[v.Index] {
+					continue
+				}
 				block := blocks[v.Index]
 				if block == nil || block.closed {
 					return Message{}, usage.normalized(), providerStreamError(nil, "tool delta has no open content block")
@@ -125,6 +152,7 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 				}
 			}
 		case "content_block_stop":
+			delete(serverBlocks, v.Index)
 			if block := blocks[v.Index]; block != nil {
 				block.closed = true
 				if !block.streamed {
@@ -171,6 +199,21 @@ func (c *Anthropic) Stream(ctx context.Context, req Request, onText, onThink fun
 				msg.ToolCalls = append(msg.ToolCalls, block.call)
 			}
 			search.finish(false)
+			if len(thinkingOrder) > 0 {
+				msg.Replay = &ProviderReplay{API: APIMessages, Endpoint: c.Endpoint(), Model: req.Model}
+				for _, index := range thinkingOrder {
+					block := thinking[index]
+					signature, _ := block["signature"].(string)
+					if block["type"] == "thinking" && signature == "" {
+						continue
+					}
+					raw, err := json.Marshal(block)
+					if err != nil {
+						return Message{}, usage.normalized(), err
+					}
+					msg.Replay.Blocks = append(msg.Replay.Blocks, raw)
+				}
+			}
 			msg.HostedSearch = append([]HostedSearch(nil), search.blocks...)
 			if req.NativeWebSearch {
 				recoverNativeSearchCalls(&msg, onText)

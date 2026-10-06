@@ -38,6 +38,7 @@ func stripAuthored(msgs []Message) []Message {
 		out[i].RewoundFrom = ""
 		out[i].StopReason, out[i].RawStopReason = "", ""
 		out[i].HostedSearch = nil
+		out[i].Reasoning = ""
 
 		if len(out[i].ToolCalls) > 0 {
 			calls := make([]ToolCall, len(out[i].ToolCalls))

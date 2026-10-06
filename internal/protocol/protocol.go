@@ -536,6 +536,9 @@ func FromAIMessage(m ai.Message) Message {
 		model, provider = left, right
 	}
 	out := Message{ID: m.ID, Role: m.Role, ToolCallID: m.ToolCallID, Name: m.Name, Model: model, Provider: provider, Usage: FromAIUsage(m.Usage), HostedSearch: fromAIHostedSearch(m.HostedSearch), StopReason: string(m.StopReason), CreatedAt: m.SentAt}
+	if m.Reasoning != "" {
+		out.Content = append(out.Content, ContentBlock{Type: ContentThinking, Text: m.Reasoning})
+	}
 	if m.Content != "" {
 		out.Content = append(out.Content, ContentBlock{Type: ContentText, Text: m.Content})
 	}
@@ -681,6 +684,7 @@ func (m Message) ToAIMessage() (ai.Message, error) {
 				parts = append(parts, ai.ContentPart{Type: "text", Text: b.Text})
 			}
 		case ContentThinking:
+			out.Reasoning += b.Text
 		case ContentImage:
 			seenImage = true
 			parts = append(parts, ai.ContentPart{Type: "image_url", MimeType: b.MimeType, ImageURL: &struct {

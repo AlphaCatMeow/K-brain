@@ -30,13 +30,6 @@ func TestCanonicalMessageFixtureUsesProviderNeutralReplay(t *testing.T) {
 			t.Fatalf("replay %d: %v", i, err)
 		}
 		expected := message
-		expected.Content = nil
-		for _, block := range message.Content {
-			if block.Type == ContentThinking {
-				continue
-			}
-			expected.Content = append(expected.Content, block)
-		}
 		if !reflect.DeepEqual(replay, expected) {
 			t.Fatalf("replay %d = %+v, want %+v", i, replay, expected)
 		}

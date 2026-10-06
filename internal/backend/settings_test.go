@@ -430,6 +430,9 @@ func TestLoadRuntimeByIDFallsBackWhenHistoricalModelWasRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Save(id, 0, []ai.Message{{Role: "user", Content: "old question"}}, "deleted-model", "old-provider"); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{
 		DefaultModel:    "current-model",
 		DefaultProvider: "current-provider",
@@ -456,5 +459,21 @@ func TestLoadRuntimeByIDFallsBackWhenHistoricalModelWasRemoved(t *testing.T) {
 	}
 	if selected != (protocol.ModelRef{Provider: "current-provider", Model: "current-model"}) {
 		t.Fatalf("factory model = %+v", selected)
+	}
+	host := httptest.NewServer(server)
+	defer host.Close()
+	rt := server.sessions[id]
+	originalAgent := rt.agent
+	originalTools := len(rt.agent.Tools)
+	view := getSession(t, host.URL, id)
+	input := protocol.EditSessionRequest{ExpectedRevision: view.Revision, MessageRef: protocol.HistoryMessageRef{MessageID: view.Messages[0].ID, Role: "user"}, Replacement: protocol.Message{Role: "user", Content: []protocol.ContentBlock{{Type: "text", Text: "edited question"}}}}
+	if status := doJSON(t, http.MethodPost, host.URL+"/v1/sessions/"+id+"/edit", input, &view); status != 200 {
+		t.Fatalf("edit removed-model history: %d", status)
+	}
+	if rt.agent != originalAgent || len(rt.agent.Tools) != originalTools || rt.agent.ModelName != "current-model" {
+		t.Fatal("edit replaced runtime capabilities or restored removed model")
+	}
+	if len(view.Messages) != 1 || view.Messages[0].Content[0].Text != "edited question" || view.Model.Model != "deleted-model" {
+		t.Fatalf("edited history = %+v", view)
 	}
 }

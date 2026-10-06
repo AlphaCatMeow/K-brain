@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -43,6 +45,12 @@ func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
 
 func (c *Anthropic) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
 	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	for i := range req.Messages {
+		replay := req.Messages[i].Replay
+		if replay != nil && (replay.API != APIMessages || replay.Endpoint != c.Endpoint() || replay.Model != req.Model) {
+			req.Messages[i].Replay = nil
+		}
+	}
 	if err := validateAttachments(req.Messages, false, "Anthropic"); err != nil {
 		return nil, err
 	}
@@ -123,14 +131,25 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	if req.MaxTokens <= 0 {
 		p["max_tokens"] = 4096
 	}
-	if req.ReasoningEffort != "" {
-		p["thinking"] = map[string]any{"type": "enabled", "budget_tokens": reasoningBudget(req.ReasoningEffort, req.MaxTokens)}
+	if effort := req.ReasoningEffort; effort != "" && effort != "off" && effort != "none" {
+		if anthropicAdaptive(req.Model) {
+			if effort == "minimal" {
+				effort = "low"
+			}
+			if effort == "xhigh" && !anthropicXHigh(req.Model) {
+				effort = "max"
+			}
+			p["thinking"] = map[string]any{"type": "adaptive"}
+			p["output_config"] = map[string]any{"effort": effort}
+		} else if budget := reasoningBudget(effort, p["max_tokens"].(int)); budget >= 1024 {
+			p["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+		}
 	}
 	if cache {
 		if ms, ok := p["messages"].([]any); ok && len(ms) > 0 {
 			if last, ok := ms[len(ms)-1].(map[string]any); ok {
 				if blocks, ok := last["content"].([]any); ok && len(blocks) > 0 {
-					if b, ok := blocks[len(blocks)-1].(map[string]any); ok {
+					if b, ok := blocks[len(blocks)-1].(map[string]any); ok && b["type"] != "thinking" && b["type"] != "redacted_thinking" {
 						b["cache_control"] = map[string]any{"type": "ephemeral"}
 					}
 				}
@@ -152,12 +171,9 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	return p, nil
 }
 func reasoningBudget(e string, max int) int {
-	n := max * 2
-	if n < 1024 {
-		n = 1024
-	}
+	n := 4096
 	switch e {
-	case "low":
+	case "minimal", "low":
 		n = 1024
 	case "medium":
 		n = 4096
@@ -166,7 +182,36 @@ func reasoningBudget(e string, max int) int {
 	case "xhigh", "max":
 		n = 16384
 	}
-	return n
+	return min(n, max-1)
+}
+
+var anthropicFamilyVersion = regexp.MustCompile(`(?:opus|sonnet|haiku|fable|mythos)[-.](\d{1,2})(?:[-.](\d{1,2}))?(?:\D|$)`)
+var anthropicReverseVersion = regexp.MustCompile(`(?:^|[^\d])(\d{1,2})(?:[-.](\d{1,2}))?[-.](?:opus|sonnet|haiku|fable|mythos)`)
+
+func anthropicVersion(model string) (int, int) {
+	model = strings.ToLower(model)
+	match := anthropicFamilyVersion.FindStringSubmatch(model)
+	if match == nil {
+		match = anthropicReverseVersion.FindStringSubmatch(model)
+	}
+	if match == nil {
+		return 0, 0
+	}
+	major, _ := strconv.Atoi(match[1])
+	minor, _ := strconv.Atoi(match[2])
+	return major, minor
+}
+
+func anthropicAdaptive(model string) bool {
+	model = strings.ToLower(model)
+	major, minor := anthropicVersion(model)
+	return strings.Contains(model, "mythos-preview") || major >= 5 ||
+		(major == 4 && minor >= 6 && (strings.Contains(model, "opus") || strings.Contains(model, "sonnet")))
+}
+
+func anthropicXHigh(model string) bool {
+	major, minor := anthropicVersion(model)
+	return major >= 5 || (major == 4 && minor >= 7 && strings.Contains(strings.ToLower(model), "opus"))
 }
 func anthropicMessages(msgs []Message) ([]any, error) {
 	out := []any{}
@@ -195,6 +240,13 @@ func anthropicMessages(msgs []Message) ([]any, error) {
 			continue
 		}
 		flush()
+		if role == "assistant" && m.Replay != nil && m.Replay.API == APIMessages {
+			replay := make([]any, 0, len(m.Replay.Blocks)+len(blocks))
+			for _, block := range m.Replay.Blocks {
+				replay = append(replay, block)
+			}
+			blocks = append(replay, blocks...)
+		}
 		for _, tc := range m.ToolCalls {
 			in := map[string]any{}
 			if tc.Function.Arguments != "" {
