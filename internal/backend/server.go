@@ -418,6 +418,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.startRun(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "runs" && r.Method == http.MethodGet {
+		s.lookupRun(w, r, id)
+		return
+	}
 	if len(parts) == 4 && parts[1] == "checkpoints" && r.Method == http.MethodPost && (parts[3] == "preview" || parts[3] == "rewind") {
 		seq, parseErr := strconv.Atoi(parts[2])
 		if parseErr != nil || seq < 0 {
