@@ -49,6 +49,17 @@ func TestPlanningHTTPToolsRestartAndAuth(t *testing.T) {
 		return resp.StatusCode
 	}
 	var created planning.Result
+	var zone map[string]any
+	if call("timezone.get", map[string]any{}, &zone) != 200 {
+		t.Fatal(zone)
+	}
+	revision := zone["revision"]
+	if call("timezone", map[string]any{"preference": "Europe/Paris", "expectedRevision": revision}, &zone) != 200 || zone["preference"] != "Europe/Paris" {
+		t.Fatal(zone)
+	}
+	if call("timezone", map[string]any{"preference": "Asia/Tokyo", "expectedRevision": revision}, nil) != 422 {
+		t.Fatal("stale time zone accepted")
+	}
 	if status := call("mutate", map[string]any{"requestId": "http-create", "action": "todo.create", "data": map[string]any{"title": "shared task"}}, &created); status != 200 {
 		t.Fatal(status, created)
 	}

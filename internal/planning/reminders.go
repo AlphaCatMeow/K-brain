@@ -65,17 +65,47 @@ func (s *Store) Finish(in Item) (any, error) {
 	return nil, s.commit(next)
 }
 func (s *Store) SetTimeZone(zone string) (any, error) {
+	return s.UpdateTimeZone(zone, nil)
+}
+
+func (s *Store) TimeZoneSettings() Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.timeZoneSettings()
+}
+
+func (s *Store) timeZoneSettings() Item {
+	preference := s.disk.Snapshot.TimeZone
+	if s.disk.TimeZonePreference != nil {
+		preference = *s.disk.TimeZonePreference
+	}
+	return Item{"preference": preference, "timeZone": s.disk.Snapshot.TimeZone, "revision": s.disk.TimeZoneRevision, "systemTimeZone": systemZone()}
+}
+
+func (s *Store) UpdateTimeZone(preference string, expected *uint64) (any, error) {
+	zone := preference
+	if zone == "" {
+		zone = systemZone()
+	}
 	if _, e := time.LoadLocation(zone); e != nil {
 		return nil, errCode("timezone_invalid")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.disk.Snapshot.TimeZone == zone {
-		return nil, nil
+	if expected != nil && *expected != s.disk.TimeZoneRevision {
+		return nil, errCode("conflict")
+	}
+	if s.disk.Snapshot.TimeZone == zone && s.disk.TimeZonePreference != nil && *s.disk.TimeZonePreference == preference {
+		return s.timeZoneSettings(), nil
 	}
 	next := clone(s.disk)
 	next.Snapshot.TimeZone = zone
+	next.TimeZonePreference = &preference
+	next.TimeZoneRevision++
 	next.Snapshot.Seq++
 	reconcile(&next.Snapshot)
-	return nil, s.commit(next)
+	if e := s.commit(next); e != nil {
+		return nil, e
+	}
+	return s.timeZoneSettings(), nil
 }

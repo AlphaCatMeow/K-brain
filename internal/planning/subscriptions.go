@@ -23,11 +23,12 @@ func (s *Store) statuses() []Item {
 	return out
 }
 func normalizedURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(strings.ToLower(raw), "webcal://") {
 		raw = "https://" + raw[9:]
 	}
 	u, e := url.Parse(strings.TrimSpace(raw))
-	if e != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || len(raw) > 4096 {
+	if e != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || len(raw) > 4096 || u.User != nil {
 		return "", errCode("subscription_url_invalid")
 	}
 	return u.String(), nil
@@ -139,7 +140,7 @@ func (s *Store) refreshDue(ctx context.Context) {
 		}
 		current["nextAt"] = time.Now().UnixMilli() + number(current, "refreshMinutes")*60000
 		if e != nil {
-			current["lastError"] = "E:subscription_fetch_failed"
+			current["lastError"] = subscriptionError(e)
 		} else {
 			candidate := clone(next.Snapshot)
 			if err := syncFeed(&candidate, id, entries); err != nil {
@@ -164,19 +165,42 @@ func download(ctx context.Context, raw string) ([]Item, error) {
 	if e != nil {
 		return nil, e
 	}
+	req.Header.Set("Accept", "text/calendar, application/octet-stream;q=0.8")
 	resp, e := http.DefaultClient.Do(req)
 	if e != nil {
 		return nil, e
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, errCode("subscription_auth_required")
+	}
+	if resp.StatusCode == 404 || resp.StatusCode == 410 {
+		return nil, errCode("subscription_unavailable")
+	}
+	if resp.StatusCode == 429 {
+		return nil, errCode("subscription_rate_limited")
+	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, errCode("subscription_fetch_failed")
 	}
 	b, e := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024+1))
 	if e != nil || len(b) > 10*1024*1024 {
 		return nil, errCode("subscription_too_large")
 	}
-	return parseICS(string(b))
+	entries, e := parseICS(string(b))
+	if e != nil {
+		return nil, errCode("subscription_not_ics")
+	}
+	return entries, nil
+}
+
+func subscriptionError(e error) string {
+	switch e.Error() {
+	case "E:subscription_auth_required", "E:subscription_unavailable", "E:subscription_rate_limited", "E:subscription_not_ics", "E:subscription_too_large":
+		return e.Error()
+	default:
+		return "E:subscription_fetch_failed"
+	}
 }
 func syncFeed(v *Snapshot, id string, entries []Item) error {
 	keep := map[string]bool{}

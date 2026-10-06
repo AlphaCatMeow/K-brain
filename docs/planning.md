@@ -45,3 +45,10 @@ The parser bounds event-rule iteration to 100,000 and timezone-rule iteration to
 - Built `./cmd/kn` for the local Apple Silicon Mac, replaced the dedicated test desktop's sidecar, and verified reconnect with a changed backend port.
 - Real WKWebView subscription create/refresh/delete used a local HTTP ICS fixture. Verified custom-zone instants, two-hour durations, read-only enforcement, invalid-feed preservation, retry recovery, stable IDs, occurrence removal, and desktop/mobile rendering. This does not certify Google/iCloud/Exchange service interoperability or visible macOS notification delivery.
 - Detailed frontend acceptance and remaining work: LiveAgent `docs/testing/2026-10-06-planning-followup-macos.md`.
+
+### Shared timezone preference and provider diagnostics (2026-10-06)
+
+- `timezone.get` returns `{preference,timeZone,systemTimeZone,revision}`. `preference:""` follows the backend system zone, not the browser's zone. Existing stores initially expose their saved timezone as an explicit preference. Automatic mode is re-resolved on backend restart.
+- `timezone` accepts `{preference,expectedRevision}`; stale revisions return `E:conflict`. Successful writes persist the preference and revision atomically, reconcile reminders and advance the planning sequence. Legacy `{timeZone}` requests remain accepted without a revision check.
+- LiveAgent desktop, browser and Gateway settings selectors read this same endpoint and poll for remote changes. Unrelated native system-settings saves no longer overwrite shared planning timezones.
+- Subscription errors distinguish authentication, missing/revoked feeds, rate limits and invalid ICS. See [provider acceptance](planning-provider-acceptance.md) for the actual external-service test boundary.

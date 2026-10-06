@@ -315,3 +315,73 @@ func TestSubscriptionInvalidRefreshPreservesSnapshot(t *testing.T) {
 		t.Fatal(after.Subscriptions)
 	}
 }
+
+func TestSharedTimeZonePreferenceRevisionAndPersistence(t *testing.T) {
+	s := openTest(t)
+	initial := s.TimeZoneSettings()
+	rev := uint64(number(initial, "revision"))
+	if _, e := s.UpdateTimeZone("America/New_York", &rev); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := s.UpdateTimeZone("Europe/London", &rev); e == nil {
+		t.Fatal("accepted stale preference")
+	}
+	current := s.TimeZoneSettings()
+	if text(current, "preference") != "America/New_York" {
+		t.Fatal(current)
+	}
+	if _, e := s.UpdateTimeZone("", nil); e != nil {
+		t.Fatal(e)
+	}
+	current = s.TimeZoneSettings()
+	if text(current, "preference") != "" || text(current, "timeZone") != systemZone() {
+		t.Fatal(current)
+	}
+	reopened, e := Open(s.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if number(reopened.TimeZoneSettings(), "revision") != number(current, "revision") {
+		t.Fatal("lost preference revision")
+	}
+	if _, e := s.UpdateTimeZone("Invalid/Zone", nil); e == nil {
+		t.Fatal("accepted bad timezone")
+	}
+}
+
+func TestSubscriptionProviderErrorsAndURLNormalization(t *testing.T) {
+	url, e := normalizedURL("  webcal://example.org/a.ics  ")
+	if e != nil || url != "https://example.org/a.ics" {
+		t.Fatal(url, e)
+	}
+	for _, tc := range []struct {
+		status int
+		code   string
+	}{{401, "E:subscription_auth_required"}, {403, "E:subscription_auth_required"}, {404, "E:subscription_unavailable"}, {410, "E:subscription_unavailable"}, {429, "E:subscription_rate_limited"}, {500, "E:subscription_fetch_failed"}, {200, "E:subscription_not_ics"}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte("<html>sign in</html>"))
+		}))
+		_, e := download(context.Background(), server.URL+"/secret-url")
+		server.Close()
+		if e == nil || subscriptionError(e) != tc.code {
+			t.Fatalf("%d: %v", tc.status, e)
+		}
+	}
+}
+
+func TestAutomaticTimeZoneFollowsBackendAfterRestart(t *testing.T) {
+	s := openTest(t)
+	t.Setenv("TZ", "Europe/Paris")
+	if _, e := s.UpdateTimeZone("", nil); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("TZ", "Asia/Tokyo")
+	next, e := Open(s.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if text(next.TimeZoneSettings(), "timeZone") != "Asia/Tokyo" {
+		t.Fatal(next.TimeZoneSettings())
+	}
+}

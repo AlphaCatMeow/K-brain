@@ -47,14 +47,21 @@ func (s *Server) planningAction(action string, raw json.RawMessage) (any, error)
 			return nil, err
 		}
 		return s.planning.Finish(in)
+	case "timezone.get":
+		return s.planning.TimeZoneSettings(), nil
 	case "timezone":
 		var in struct {
-			TimeZone string `json:"timeZone"`
+			TimeZone         string  `json:"timeZone"`
+			Preference       *string `json:"preference"`
+			ExpectedRevision *uint64 `json:"expectedRevision"`
 		}
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return nil, err
 		}
-		return s.planning.SetTimeZone(in.TimeZone)
+		if in.Preference != nil {
+			in.TimeZone = *in.Preference
+		}
+		return s.planning.UpdateTimeZone(in.TimeZone, in.ExpectedRevision)
 	case "query", "export":
 		var q struct {
 			From int64 `json:"from"`

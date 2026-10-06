@@ -52,11 +52,13 @@ type receipt struct {
 	At      int64    `json:"at"`
 }
 type disk struct {
-	Version    int                `json:"version"`
-	Snapshot   Snapshot           `json:"snapshot"`
-	Requests   map[string]receipt `json:"requests"`
-	Migrations map[string]bool    `json:"migrations"`
-	Feeds      map[string]Item    `json:"feeds"`
+	TimeZonePreference *string            `json:"timeZonePreference,omitempty"`
+	TimeZoneRevision   uint64             `json:"timeZoneRevision,omitempty"`
+	Version            int                `json:"version"`
+	Snapshot           Snapshot           `json:"snapshot"`
+	Requests           map[string]receipt `json:"requests"`
+	Migrations         map[string]bool    `json:"migrations"`
+	Feeds              map[string]Item    `json:"feeds"`
 }
 type Store struct {
 	mu   sync.Mutex
@@ -148,6 +150,11 @@ func Open(path string) (*Store, error) {
 		}
 		if s.disk.Feeds == nil {
 			s.disk.Feeds = map[string]Item{}
+		}
+		if s.disk.TimeZonePreference != nil && *s.disk.TimeZonePreference == "" {
+			if _, e = s.UpdateTimeZone("", nil); e != nil {
+				return nil, e
+			}
 		}
 		return s, nil
 	}
