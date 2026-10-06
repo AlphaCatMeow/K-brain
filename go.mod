@@ -14,13 +14,16 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/creack/pty v1.1.24
 	github.com/dop251/goja v0.0.0-20260917113740-793a2a65c13b
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/go-rod/rod v0.116.2
 	github.com/gobwas/ws v1.4.0
 	github.com/gofrs/flock v0.12.1
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/muesli/termenv v0.16.0
+	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/image v0.45.0
+	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/tools v0.49.0
 )
@@ -65,7 +68,6 @@ require (
 	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/term v0.45.0 // indirect

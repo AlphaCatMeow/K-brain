@@ -24,6 +24,7 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/mcp"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
+	"github.com/Stack-Cairn/K-brain/internal/planning"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 	"github.com/Stack-Cairn/K-brain/internal/resources"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
@@ -70,6 +71,9 @@ type Server struct {
 	organizerRuntime     *memoryruntime.Runtime
 	organizerCancel      func()
 	cron                 *cronManager
+	planning             *planning.Store
+	planningCancel       context.CancelFunc
+	planningDone         chan struct{}
 	hookStore            *HookStore
 	hookRunner           *BackendHookRunner
 	mcp                  *mcp.LiveManager
@@ -149,6 +153,10 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	planningStore, err := planning.Open(filepath.Join(opts.Store.SessionsDir(), "planning.json"))
+	if err != nil {
+		return nil, fmt.Errorf("open planning store: %w", err)
+	}
 	cron, err := newCronManager(opts.Store, opts.DefaultCWD, opts.Settings)
 	if err != nil {
 		return nil, err
@@ -159,6 +167,7 @@ func New(opts Options) (*Server, error) {
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
 	}
 	cron.promptExecutor = server.executeCronPromptCanonical
+	server.planning = planningStore
 	go cron.loop()
 	if opts.MemoryRuntimeFactory != nil && opts.MemoryOrganizerInterval != 0 {
 		interval := opts.MemoryOrganizerInterval
@@ -173,6 +182,10 @@ func New(opts Options) (*Server, error) {
 		server.organizerRuntime = runtime
 		server.organizerCancel = runtime.StartOrganizerScheduler(context.Background(), opts.DefaultCWD, interval)
 	}
+	planningContext, planningCancel := context.WithCancel(context.Background())
+	server.planningCancel = planningCancel
+	server.planningDone = make(chan struct{})
+	go func() { defer close(server.planningDone); planningStore.Run(planningContext) }()
 	return server, nil
 }
 
@@ -194,6 +207,10 @@ func (s *Server) Close() error {
 	}
 	if s.cron != nil {
 		s.cron.close()
+	}
+	if s.planningCancel != nil {
+		s.planningCancel()
+		<-s.planningDone
 	}
 	s.mu.Lock()
 	runtimes := make([]*runtimeSession, 0, len(s.sessions))
@@ -263,6 +280,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/terminal") {
 		s.handleTerminal(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/planning" {
+		s.handlePlanning(w, r)
 		return
 	}
 	if r.URL.Path == "/v1/memory/manage" {
@@ -692,6 +713,7 @@ func (s *Server) rebuildAgentLocked(rt *runtimeSession, selected protocol.ModelR
 	if s.cron != nil {
 		s.cron.attachTool(ag, selected)
 	}
+	s.attachPlanningTools(ag)
 	ag.ModelName, ag.Provider = selected.Model, selected.Provider
 	if s.mcp != nil {
 		mcpTools, filter := s.mcp.ToolsForTurn(context.Background(), cwd, nil, rt.mcpActivation)
@@ -768,6 +790,7 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 	if s.cron != nil {
 		s.cron.attachTool(ag, model)
 	}
+	s.attachPlanningTools(ag)
 	ag.ModelName, ag.Provider = model.Model, model.Provider
 	if s.mcp != nil {
 		mcpTools, filter := s.mcp.ToolsForTurn(context.Background(), cwd, nil, activation)
