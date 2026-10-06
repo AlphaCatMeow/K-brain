@@ -8,9 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	ical "github.com/emersion/go-ical"
-	"github.com/teambition/rrule-go"
 )
 
 func (s *Store) statuses() []Item {
@@ -144,9 +141,11 @@ func (s *Store) refreshDue(ctx context.Context) {
 		if e != nil {
 			current["lastError"] = "E:subscription_fetch_failed"
 		} else {
-			if err := syncFeed(&next.Snapshot, id, entries); err != nil {
+			candidate := clone(next.Snapshot)
+			if err := syncFeed(&candidate, id, entries); err != nil {
 				current["lastError"] = "E:subscription_not_ics"
 			} else {
+				next.Snapshot = candidate
 				current["lastError"] = nil
 				current["lastSyncedAt"] = time.Now().UnixMilli()
 			}
@@ -178,121 +177,6 @@ func download(ctx context.Context, raw string) ([]Item, error) {
 		return nil, errCode("subscription_too_large")
 	}
 	return parseICS(string(b))
-}
-func parseICS(raw string) ([]Item, error) {
-	cal, e := ical.NewDecoder(strings.NewReader(raw)).Decode()
-	if e != nil {
-		return nil, e
-	}
-	out := []Item{}
-	from, to := time.Now().AddDate(0, 0, -30), time.Now().AddDate(1, 0, 0)
-	overrides := map[string]bool{}
-	for _, component := range cal.Children {
-		if component.Name == "VEVENT" {
-			if p := component.Props.Get("RECURRENCE-ID"); p != nil {
-				at, e := p.DateTime(time.UTC)
-				if e != nil {
-					return nil, e
-				}
-				uid, _ := component.Props.Text("UID")
-				overrides[uid+":"+at.UTC().Format(time.RFC3339)] = true
-			}
-		}
-	}
-	for _, component := range cal.Children {
-		if component.Name != "VEVENT" {
-			continue
-		}
-		props := component.Props
-		uid, _ := props.Text("UID")
-		if uid == "" {
-			return nil, errCode("import_missing_uid")
-		}
-		status, _ := props.Text("STATUS")
-		if status == "CANCELLED" {
-			continue
-		}
-		title, _ := props.Text("SUMMARY")
-		if title == "" {
-			title = "(untitled)"
-		}
-		notes, _ := props.Text("DESCRIPTION")
-		start, e := props.DateTime("DTSTART", time.UTC)
-		if e != nil {
-			return nil, e
-		}
-		end, e := props.DateTime("DTEND", start.Location())
-		allDay := props.Get("DTSTART").ValueType() == ical.ValueDate
-		if e != nil {
-			end = start.Add(time.Hour)
-			if allDay {
-				end = start.AddDate(0, 0, 1)
-			}
-		}
-		if !end.After(start) {
-			return nil, errCode("time_invalid")
-		}
-		dates := []time.Time{start}
-		rule, e := props.RecurrenceRule()
-		if e != nil {
-			return nil, e
-		}
-		if rule != nil {
-			rule.Dtstart = start
-			r, e := rrule.NewRRule(*rule)
-			if e != nil {
-				return nil, e
-			}
-			dates = nil
-			iter := r.Iterator()
-			for n := 0; n < 100000; n++ {
-				at, ok := iter()
-				if !ok || at.After(to) {
-					break
-				}
-				if !at.Before(from) {
-					dates = append(dates, at)
-				}
-				if n == 99999 {
-					return nil, errCode("subscription_too_large")
-				}
-			}
-		}
-		excluded := map[int64]bool{}
-		for _, p := range props["EXDATE"] {
-			for _, value := range strings.Split(p.Value, ",") {
-				copy := p
-				copy.Value = value
-				at, e := copy.DateTime(start.Location())
-				if e != nil {
-					return nil, e
-				}
-				excluded[at.UnixMilli()] = true
-			}
-		}
-		for _, at := range dates {
-			key := uid + ":" + at.UTC().Format(time.RFC3339)
-			if excluded[at.UnixMilli()] || (props.Get("RECURRENCE-ID") == nil && overrides[key]) {
-				continue
-			}
-			if p := props.Get("RECURRENCE-ID"); p != nil {
-				original, e := p.DateTime(start.Location())
-				if e != nil {
-					return nil, e
-				}
-				key = uid + ":" + original.UTC().Format(time.RFC3339)
-			}
-			tm := Item{"kind": "timed", "startAt": at.UnixMilli(), "endAt": at.Add(end.Sub(start)).UnixMilli(), "timeZone": start.Location().String()}
-			if allDay {
-				tm = Item{"kind": "allDay", "startDate": at.Format("2006-01-02"), "endDateExclusive": at.Add(end.Sub(start)).Format("2006-01-02"), "timeZone": start.Location().String()}
-			}
-			out = append(out, Item{"uid": key, "title": title, "notes": notes, "time": tm})
-			if len(out) > 10000 {
-				return nil, errCode("subscription_too_large")
-			}
-		}
-	}
-	return out, nil
 }
 func syncFeed(v *Snapshot, id string, entries []Item) error {
 	keep := map[string]bool{}

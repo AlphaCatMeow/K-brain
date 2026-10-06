@@ -284,3 +284,34 @@ END:VCALENDAR
 		t.Fatal("orphan event")
 	}
 }
+
+func TestSubscriptionInvalidRefreshPreservesSnapshot(t *testing.T) {
+	title := "original"
+	date := time.Now().UTC().Format("20060102")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(calendarICS("BEGIN:VEVENT\nUID:stable\nDTSTART:" + date + "T090000Z\nDURATION:PT1H\nSUMMARY:" + title + "\nEND:VEVENT")))
+	}))
+	defer server.Close()
+	s := openTest(t)
+	result, e := s.Subscription("subscription.create", Item{"name": "rollback", "url": server.URL})
+	if e != nil {
+		t.Fatal(e)
+	}
+	id := result.(Item)["id"]
+	s.refreshDue(context.Background())
+	before := readTest(t, s)
+	title = strings.Repeat("x", 501)
+	if _, e = s.Subscription("subscription.refresh", Item{"id": id}); e != nil {
+		t.Fatal(e)
+	}
+	s.refreshDue(context.Background())
+	after := readTest(t, s)
+	a, _ := json.Marshal(before.Events)
+	b, _ := json.Marshal(after.Events)
+	if string(a) != string(b) {
+		t.Fatal("failed refresh changed events")
+	}
+	if text(after.Subscriptions[0], "lastError") != "E:subscription_not_ics" {
+		t.Fatal(after.Subscriptions)
+	}
+}
