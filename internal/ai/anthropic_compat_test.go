@@ -24,8 +24,8 @@ func TestAnthropicThinkingCompatibility(t *testing.T) {
 		{"claude-opus-4-1", "max", "enabled", "", 8192, 8191},
 		{"claude-sonnet-4", "high", "enabled", "", 0, 4095},
 		{"claude-sonnet-4", "high", "", "", 1024, 0},
-		{"claude-opus-5-5", "off", "", "", 4096, 0},
-		{"claude-opus-5-5", "none", "", "", 4096, 0},
+		{"claude-opus-5-5", "off", "disabled", "", 4096, 0},
+		{"claude-opus-5-5", "none", "disabled", "", 4096, 0},
 	} {
 		t.Run(tc.model+"/"+tc.effort, func(t *testing.T) {
 			p, err := anthropicPayload(Request{Model: tc.model, ReasoningEffort: tc.effort, MaxTokens: tc.max}, true)

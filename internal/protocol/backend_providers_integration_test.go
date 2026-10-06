@@ -65,6 +65,12 @@ func TestBackendProviderChainRestartsAndRecoversInterruptedTools(t *testing.T) {
 			}
 		}
 		for _, secret := range []string{"private-thought", "encrypted-private", "signed-private", "interrupted-call", "incomplete-answer"} {
+			if want.api == ai.APIChatCompletions && secret == "private-thought" {
+				continue
+			}
+			if want.api == ai.APIResponses && secret == "encrypted-private" {
+				continue
+			}
 			if want.api == ai.APIMessages && (secret == "private-thought" || secret == "signed-private") {
 				continue // Signed replay stays with the originating adapter.
 			}

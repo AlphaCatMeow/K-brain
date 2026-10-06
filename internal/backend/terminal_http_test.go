@@ -66,6 +66,9 @@ func (c *terminalHTTPModelClient) Stream(ctx context.Context, _ ai.Request, _ fu
 }
 
 func TestTerminalHTTPCanonicalProtocolAndAuthorization(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Setenv("K_BRAIN_SHELL", "powershell.exe")
+	}
 	for _, policy := range []string{"auto", "deny", "tool-deny", "plan", "chat", "read-only", "ask-cancel"} {
 		t.Run(policy, func(t *testing.T) {
 			store, err := session.Open(t.TempDir())
@@ -111,6 +114,9 @@ func TestTerminalHTTPCanonicalProtocolAndAuthorization(t *testing.T) {
 				t.Fatal("run did not start")
 			}
 			request := tools.TerminalRequest{Action: "start", ConversationID: sess.ID, RunID: accepted.RunID, Data: "printf bridge-output; sleep 30"}
+			if runtime.GOOS == "windows" {
+				request.Data = "Write-Output bridge-output; Start-Sleep -Seconds 30"
+			}
 			invoke := func(req tools.TerminalRequest) (int, tools.TerminalResponse) {
 				t.Helper()
 				raw, _ := json.Marshal(req)
@@ -160,11 +166,6 @@ func TestTerminalHTTPCanonicalProtocolAndAuthorization(t *testing.T) {
 				}
 				close(client.release)
 				return
-			}
-			if policy == "auto" && runtime.GOOS == "windows" {
-				// The backend host has no PTY implementation on Windows, so a start is
-				// rejected before any session exists.
-				t.Skip("PTY sessions require a Unix backend host")
 			}
 			code, started := invoke(request)
 			if policy != "auto" {
@@ -219,6 +220,9 @@ func TestTerminalHTTPCanonicalProtocolAndAuthorization(t *testing.T) {
 			second := request
 			second.Action = "start"
 			second.Data = "printf second"
+			if runtime.GOOS == "windows" {
+				second.Data = "Write-Output second"
+			}
 			if code, _ := invoke(second); code != 200 {
 				t.Fatalf("second start=%d", code)
 			}

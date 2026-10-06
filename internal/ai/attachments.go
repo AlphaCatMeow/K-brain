@@ -64,9 +64,6 @@ func validateGeminiAttachments(messages []Message) error {
 			if !part.Attachment() {
 				continue
 			}
-			if message.Role == "tool" {
-				return fmt.Errorf("Gemini does not support image attachments in tool results")
-			}
 			if part.Type == "image_url" {
 				_, _, isData, err := AttachmentData(part)
 				if err != nil {

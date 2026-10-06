@@ -178,9 +178,7 @@ func applyRunOptionsWith(a *agent.Agent, options protocol.RunOptions, extra []to
 	a.RunTools = available
 	a.RunToolsSet = true
 	a.NativeWebSearch = options.Search == "enabled"
-	if options.Reasoning == "off" {
-		a.Effort = ""
-	} else if options.Reasoning != "" {
+	if options.Reasoning != "" {
 		a.Effort = options.Reasoning
 	}
 	return func() {

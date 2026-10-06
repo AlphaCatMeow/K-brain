@@ -288,6 +288,9 @@ type delta struct {
 	Content string `json:"content"`
 
 	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+	ReasoningText    string `json:"reasoning_text"`
+	Refusal          string `json:"refusal"`
 	ToolCalls        []struct {
 		Index    int    `json:"index"`
 		ID       string `json:"id"`
@@ -497,13 +500,8 @@ func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(s
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return Message{}, Usage{}, err
 	}
-	messages, err := chatMessages(req.Messages)
-	if err != nil {
-		return Message{}, Usage{}, err
-	}
-	req.Messages = messages
 	c.applyCache(&req)
-	body, err := json.Marshal(req)
+	body, err := c.chatBody(req)
 	if err != nil {
 		return Message{}, Usage{}, err
 	}
@@ -535,6 +533,9 @@ func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(s
 	if err != nil {
 		return Message{}, usage, err
 	}
+	if msg.Replay != nil {
+		msg.Replay.Model = req.Model
+	}
 	return msg, usage, nil
 }
 
@@ -546,6 +547,7 @@ func (c *OpenAI) streamOnce(ctx context.Context, body []byte, onText, onThink fu
 	defer resp.Body.Close()
 
 	msg := Message{Role: "assistant"}
+	var reasoning strings.Builder
 	var usage Usage
 	var calls []ToolCall
 	callPositions := make(map[int]int)
@@ -584,9 +586,13 @@ func (c *OpenAI) streamOnce(ctx context.Context, body []byte, onText, onThink fu
 			finish = fr
 		}
 		d := ch.Choices[0].Delta
-		if d.ReasoningContent != "" {
+		if d.Refusal != "" {
+			return Message{}, usage, providerStreamError(nil, "Chat Completions refusal: "+d.Refusal)
+		}
+		if thought := firstNonEmpty(d.ReasoningContent, d.Reasoning, d.ReasoningText); thought != "" {
+			reasoning.WriteString(thought)
 			if onThink != nil {
-				onThink(d.ReasoningContent)
+				onThink(thought)
 			}
 		}
 		if d.Content != "" {
@@ -606,7 +612,7 @@ func (c *OpenAI) streamOnce(ctx context.Context, body []byte, onText, onThink fu
 			if tc.ID != "" {
 				cur.ID = tc.ID
 			}
-			if tc.Function.Name != "" {
+			if tc.Function.Name != "" && tc.Function.Name != cur.Function.Name {
 				cur.Function.Name += tc.Function.Name
 			}
 			cur.Function.Arguments += tc.Function.Arguments
@@ -621,6 +627,13 @@ func (c *OpenAI) streamOnce(ctx context.Context, body []byte, onText, onThink fu
 	}
 	if !completed && finish == "" {
 		return Message{}, usage, sse.endError("Chat Completions")
+	}
+	if finish == "content_filter" {
+		return Message{}, usage, providerStreamError(nil, "Chat Completions content_filter")
+	}
+	if reasoning.Len() > 0 {
+		raw, _ := json.Marshal(map[string]string{"text": reasoning.String()})
+		msg.Replay = &ProviderReplay{API: APIChatCompletions, Endpoint: c.Endpoint(), Blocks: []json.RawMessage{raw}}
 	}
 
 	if finish == "length" {
@@ -650,13 +663,8 @@ func (c *OpenAI) Complete(ctx context.Context, req Request) (string, Usage, erro
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return "", Usage{}, err
 	}
-	messages, err := chatMessages(req.Messages)
-	if err != nil {
-		return "", Usage{}, err
-	}
-	req.Messages = messages
 	c.applyCache(&req)
-	body, err := json.Marshal(req)
+	body, err := c.chatBody(req)
 	if err != nil {
 		return "", Usage{}, err
 	}
@@ -680,6 +688,7 @@ func (c *OpenAI) completeOnce(ctx context.Context, body []byte) (string, Usage, 
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
+				Refusal string `json:"refusal"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -701,6 +710,9 @@ func (c *OpenAI) completeOnce(ctx context.Context, body []byte) (string, Usage, 
 	}
 	if out.Choices[0].FinishReason == "length" {
 		return out.Choices[0].Message.Content, usage, &OutputLimitError{Reason: "length"}
+	}
+	if out.Choices[0].FinishReason == "content_filter" || out.Choices[0].Message.Refusal != "" {
+		return "", usage, providerStreamError(nil, "Chat Completions response was refused or filtered")
 	}
 	return out.Choices[0].Message.Content, usage, nil
 }

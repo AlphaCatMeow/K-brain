@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,11 +139,14 @@ func TestStreamToolMessagesCarryName(t *testing.T) {
 	if _, _, err := New(srv.URL, "test-key").Stream(context.Background(), Request{Model: "m", Messages: msgs}, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	s := string(body)
-	if !strings.Contains(s, `"tool_call_id":"call_1","name":"bash"`) {
-		t.Fatalf("real result missing backfilled name: %s", s)
+	var request Request
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(s, `"role":"tool","content":"(interrupted before execution)","tool_call_id":"call_2"`) {
-		t.Fatalf("synthetic result missing: %s", s)
+	if request.Messages[2].ToolCallID != "call_1" || request.Messages[2].Name != "bash" {
+		t.Fatalf("real result missing name: %s", body)
+	}
+	if request.Messages[4].Role != "tool" || request.Messages[4].ToolCallID != "call_2" || request.Messages[4].Content != "(interrupted before execution)" {
+		t.Fatalf("synthetic result missing: %s", body)
 	}
 }

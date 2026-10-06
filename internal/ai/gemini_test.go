@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -188,7 +188,7 @@ func TestGeminiPayloadConvertsCanonicalHistory(t *testing.T) {
 		t.Fatal("missing system instruction")
 	}
 	contents := payload["contents"].([]map[string]any)
-	if len(contents) != 3 || contents[0]["role"] != "model" || contents[1]["role"] != "user" {
+	if len(contents) != 2 || contents[0]["role"] != "model" || contents[1]["role"] != "user" {
 		t.Fatalf("contents = %#v", contents)
 	}
 	encoded, _ := json.Marshal(payload)

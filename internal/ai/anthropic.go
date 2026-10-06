@@ -131,6 +131,9 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	if req.MaxTokens <= 0 {
 		p["max_tokens"] = 4096
 	}
+	if reasoningDisabled(req.ReasoningEffort) {
+		p["thinking"] = map[string]any{"type": "disabled"}
+	}
 	if effort := req.ReasoningEffort; effort != "" && effort != "off" && effort != "none" {
 		if anthropicAdaptive(req.Model) {
 			if effort == "minimal" {

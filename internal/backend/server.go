@@ -530,12 +530,40 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request, id string) {
-	rt, err := s.loadRuntimeByID(id)
+	rt, err := s.historyRuntime(id)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.sessionView(rt))
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	view, err := s.sessionViewLocked(rt)
+	if err != nil {
+		mutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+// Read-only history does not require credentials or a configured model.
+func (s *Server) historyRuntime(id string) (*runtimeSession, error) {
+	if !validID(id) {
+		return nil, session.ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt := s.sessions[id]
+	if rt != nil {
+		return rt, nil
+	}
+	if _, _, err := s.store.Load(id); err != nil {
+		return nil, err
+	}
+	rt = &runtimeSession{id: id, runs: map[string]runRecord{}}
+	if err := rt.loadJournal(s.eventDir); err != nil {
+		return nil, err
+	}
+	return rt, nil
 }
 
 func (s *Server) sessionView(rt *runtimeSession) protocol.Session {
@@ -553,6 +581,10 @@ func (s *Server) sessionViewLocked(rt *runtimeSession) (protocol.Session, error)
 	if err != nil {
 		return protocol.Session{}, err
 	}
+	return s.sessionSnapshotView(rt, snap)
+}
+
+func (s *Server) sessionSnapshotView(rt *runtimeSession, snap session.HistorySnapshot) (protocol.Session, error) {
 	out := protocol.Session{SessionSummary: summary(snap.Meta, len(snap.Messages)), LastSeq: rt.nextSeq, Revision: snap.Revision, Messages: []protocol.Message{}}
 	out.CreatedAt = snap.CreatedAt
 	for _, msg := range snap.Messages {

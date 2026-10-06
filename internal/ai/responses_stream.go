@@ -8,14 +8,28 @@ import (
 )
 
 type responsesItem struct {
-	Type      string `json:"type"`
-	ID        string `json:"id"`
-	CallID    string `json:"call_id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Raw       json.RawMessage `json:"-"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Arguments string          `json:"arguments"`
 	Content   []struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Type    string `json:"type"`
+		Refusal string `json:"refusal"`
 	} `json:"content"`
+}
+
+func (item *responsesItem) UnmarshalJSON(data []byte) error {
+	type plain responsesItem
+	var value plain
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*item = responsesItem(value)
+	item.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 type responsesResult struct {
@@ -29,6 +43,11 @@ type responsesResult struct {
 }
 
 func (r responsesResult) resultError() error {
+	for _, item := range r.Output {
+		if err := item.resultError(); err != nil {
+			return err
+		}
+	}
 	if len(r.Error) > 0 && string(r.Error) != "null" {
 		return providerStreamError(r.Error, "Responses request failed")
 	}
@@ -45,6 +64,15 @@ func (r responsesResult) resultError() error {
 		detail += ": " + r.IncompleteDetails.Reason
 	}
 	return providerStreamError(nil, detail)
+}
+
+func (item responsesItem) resultError() error {
+	for _, part := range item.Content {
+		if part.Type == "refusal" || part.Refusal != "" {
+			return providerStreamError(nil, "Responses refusal: "+part.Refusal)
+		}
+	}
+	return nil
 }
 
 func (r responsesResult) stopReason() string {
@@ -90,6 +118,21 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 	}
 	defer resp.Body.Close()
 	msg := Message{Role: "assistant"}
+	reasoning := map[string]int{}
+	remember := func(item responsesItem) {
+		if item.Type != "reasoning" || len(item.Raw) == 0 {
+			return
+		}
+		if msg.Replay == nil {
+			msg.Replay = &ProviderReplay{API: APIResponses, Endpoint: c.Endpoint(), Model: req.Model}
+		}
+		if index, ok := reasoning[item.ID]; ok && item.ID != "" {
+			msg.Replay.Blocks[index] = item.Raw
+			return
+		}
+		reasoning[item.ID] = len(msg.Replay.Blocks)
+		msg.Replay.Blocks = append(msg.Replay.Blocks, item.Raw)
+	}
 	search := newSearchStream(ctx, firstNonEmpty(req.NativeSearchProvider, "openai"))
 	var usage Usage
 	calls := responsesCalls{items: map[string]*ToolCall{}, calls: map[string]*ToolCall{}}
@@ -147,11 +190,19 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 			if onText != nil {
 				onText(ev.Delta)
 			}
+		case "response.refusal.delta", "response.refusal.done":
+			return Message{}, usage, providerStreamError(nil, "Responses refusal")
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			if onThink != nil {
 				onThink(ev.Delta)
 			}
 		case "response.output_item.added", "response.output_item.done":
+			if err := ev.Item.resultError(); err != nil {
+				return Message{}, usage, err
+			}
+			if ev.Type == "response.output_item.done" {
+				remember(ev.Item)
+			}
 			if ev.Item.Type == "function_call" {
 				tc, err := calls.set(ev.Item)
 				if err != nil {
@@ -190,6 +241,7 @@ func (c *Responses) Stream(ctx context.Context, req Request, onText, onThink fun
 			hadTools := len(calls.order) > 0
 			var finalText string
 			for _, item := range ev.Response.Output {
+				remember(item)
 				if item.Type == "function_call" {
 					if truncated {
 						hadTools = true

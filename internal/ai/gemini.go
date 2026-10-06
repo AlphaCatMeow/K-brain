@@ -80,7 +80,7 @@ func (c *Gemini) Models(ctx context.Context) ([]ModelInfo, error) {
 		if c.IsFullURL {
 			endpoint = fullURLModelCatalog(c.BaseURL, "v1beta")
 		} else {
-			endpoint = strings.TrimRight(c.BaseURL, "/") + "/v1beta/models"
+			endpoint = strings.TrimRight(c.BaseURL, "/") + strings.Split(geminiPath(c.BaseURL, "", false), "/models/")[0] + "/models"
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -196,9 +196,12 @@ func (c *Gemini) Stream(ctx context.Context, req Request, onText, onThink func(s
 }
 
 type geminiResponse struct {
-	Candidates    []geminiCandidate `json:"candidates"`
-	UsageMetadata geminiUsage       `json:"usageMetadata"`
-	Error         json.RawMessage   `json:"error"`
+	Candidates     []geminiCandidate `json:"candidates"`
+	UsageMetadata  geminiUsage       `json:"usageMetadata"`
+	Error          json.RawMessage   `json:"error"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
 }
 type geminiCandidate struct {
 	Content      geminiContent `json:"content"`
@@ -244,8 +247,17 @@ type geminiEmittedCall struct {
 }
 
 func (r geminiResponse) emit(msg *Message, onText, onThink func(string)) ([]geminiEmittedCall, error) {
+	if len(r.Error) > 0 && string(r.Error) != "null" {
+		return nil, providerStreamError(r.Error, "Gemini request failed")
+	}
+	if reason := r.PromptFeedback.BlockReason; reason != "" && reason != "BLOCK_REASON_UNSPECIFIED" {
+		return nil, providerStreamError(nil, "Gemini prompt blocked: "+reason)
+	}
 	if len(r.Candidates) == 0 {
 		return nil, nil
+	}
+	if reason := r.Candidates[0].FinishReason; reason != "" && reason != "STOP" && reason != "MAX_TOKENS" {
+		return nil, providerStreamError(nil, "Gemini generation stopped: "+reason)
 	}
 	var calls []geminiEmittedCall
 	for _, p := range r.Candidates[0].Content.Parts {
@@ -474,7 +486,7 @@ func isOfficialGeminiEndpoint(baseURL string) bool {
 
 func geminiPath(baseURL, model string, stream bool) string {
 	prefix := "/v1beta"
-	if strings.HasSuffix(strings.TrimRight(baseURL, "/"), "/v1beta") {
+	if modelCatalogVersionSuffix.MatchString(strings.TrimRight(baseURL, "/")) {
 		prefix = ""
 	}
 	path := prefix + "/models/" + url.PathEscape(model) + ":generateContent"
@@ -559,20 +571,34 @@ func (c *Gemini) geminiPayloadWithState(req Request) map[string]any {
 			role = "model"
 		}
 		if m.Role == "tool" {
-			functionResponse := map[string]any{"name": m.Name, "response": map[string]any{"content": m.Content}}
+			functionResponse := map[string]any{"name": m.Name, "response": map[string]any{"content": m.TextContent()}}
 			if m.ToolCallID != "" {
 				functionResponse["id"] = m.ToolCallID
 			}
-			parts = []any{map[string]any{"functionResponse": functionResponse}}
+			var images []any
+			for _, part := range parts {
+				if block, ok := part.(map[string]any); ok && block["inlineData"] != nil {
+					images = append(images, part)
+				}
+			}
+			parts = append([]any{map[string]any{"functionResponse": functionResponse}}, images...)
 			role = "user"
 		}
-		contents = append(contents, map[string]any{"role": role, "parts": parts})
+		if len(parts) == 0 {
+			continue
+		}
+		if len(contents) > 0 && contents[len(contents)-1]["role"] == role {
+			last := contents[len(contents)-1]
+			last["parts"] = append(last["parts"].([]any), parts...)
+		} else {
+			contents = append(contents, map[string]any{"role": role, "parts": parts})
+		}
 	}
 	payload := map[string]any{"contents": contents}
 	if len(system) > 0 {
 		payload["systemInstruction"] = map[string]any{"parts": system}
 	}
-	if req.MaxTokens > 0 || req.Temperature != nil || req.TopP != nil {
+	if req.MaxTokens > 0 || req.Temperature != nil || req.TopP != nil || req.ReasoningEffort != "" {
 		cfg := map[string]any{}
 		if req.MaxTokens > 0 {
 			cfg["maxOutputTokens"] = req.MaxTokens
@@ -583,6 +609,43 @@ func (c *Gemini) geminiPayloadWithState(req Request) map[string]any {
 		if req.TopP != nil {
 			cfg["topP"] = *req.TopP
 		}
+		if req.ReasoningEffort != "" {
+			thinking := map[string]any{"includeThoughts": !reasoningDisabled(req.ReasoningEffort)}
+			model := strings.ToLower(req.Model)
+			if strings.Contains(model, "gemini-3") {
+				level := req.ReasoningEffort
+				if reasoningDisabled(level) || level == "minimal" {
+					level = "low"
+					if strings.Contains(model, "flash") {
+						level = "minimal"
+					}
+				}
+				if level == "xhigh" || level == "max" || (level == "medium" && !strings.Contains(model, "flash")) {
+					level = "high"
+				}
+				thinking["thinkingLevel"] = level
+			} else {
+				budget := -1
+				switch req.ReasoningEffort {
+				case "off", "none":
+					budget = 0
+				case "minimal", "low":
+					budget = 1024
+				case "medium":
+					budget = 4096
+				case "high":
+					budget = 8192
+				}
+				if strings.Contains(model, "2.5-pro") && budget == 0 {
+					budget = 128
+				}
+				if req.MaxTokens > 0 && budget > req.MaxTokens {
+					budget = req.MaxTokens
+				}
+				thinking["thinkingBudget"] = budget
+			}
+			cfg["thinkingConfig"] = thinking
+		}
 		payload["generationConfig"] = cfg
 	}
 	if len(req.Tools) > 0 {
@@ -590,7 +653,7 @@ func (c *Gemini) geminiPayloadWithState(req Request) map[string]any {
 		for _, t := range req.Tools {
 			var params any
 			_ = json.Unmarshal(t.Function.Parameters, &params)
-			decls = append(decls, map[string]any{"name": t.Function.Name, "description": t.Function.Description, "parameters": params})
+			decls = append(decls, map[string]any{"name": t.Function.Name, "description": t.Function.Description, "parametersJsonSchema": params})
 		}
 		payload["tools"] = []any{map[string]any{"functionDeclarations": decls}}
 	}

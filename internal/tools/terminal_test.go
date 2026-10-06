@@ -10,12 +10,11 @@ import (
 	"time"
 )
 
-// requireUnixPTY skips terminal tests on hosts without a PTY implementation.
-// TerminalManager.create rejects Windows explicitly, so these cases cannot run there.
+// These cases use Unix shell commands; ConPTY has separate Windows tests.
 func requireUnixPTY(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("PTY sessions require a Unix backend host")
+		t.Skip("test uses Unix shell commands")
 	}
 }
 

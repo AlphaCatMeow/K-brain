@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"os/exec"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -15,7 +14,6 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/process"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 	"github.com/Stack-Cairn/K-brain/internal/tools/bashrun"
-	"github.com/creack/pty"
 )
 
 const (
@@ -79,13 +77,20 @@ type TerminalResponse struct {
 
 type terminalSession struct {
 	identity RunIdentity
-	cmd      *exec.Cmd
-	pty      *os.File
+	pty      terminalProcess
 	done     chan struct{}
 	mu       sync.Mutex
 	record   TerminalRecord
 	buffer   []byte
 	bytes    uint64
+}
+
+type terminalProcess interface {
+	io.ReadWriteCloser
+	Resize(cols, rows uint16) error
+	Wait() error
+	Kill() error
+	PID() int
 }
 
 type TerminalManager struct {
@@ -117,9 +122,6 @@ func (m *TerminalManager) create(ctx context.Context, req TerminalRequest, comma
 	if err := ctx.Err(); err != nil {
 		return TerminalRecord{}, err
 	}
-	if runtime.GOOS == "windows" {
-		return TerminalRecord{}, errors.New("PTY sessions require a Unix backend host")
-	}
 	cwd := req.CWD
 	if cwd == "" {
 		cwd = WorkingDir(ctx)
@@ -142,10 +144,7 @@ func (m *TerminalManager) create(ctx context.Context, req TerminalRequest, comma
 	if req.Shell != "" && req.Shell != shell {
 		return TerminalRecord{}, errors.New("shell must match the backend shell_options entry")
 	}
-	args := []string{"-i"}
-	if command != "" {
-		args = []string{"-c", command}
-	}
+	args := terminalArgs(shell, command)
 	cmd := exec.CommandContext(ctx, shell, args...)
 	cmd.Dir = cwd
 	if policy := sandbox.FromContext(ctx); policy != nil && policy.Enabled() {
@@ -182,16 +181,16 @@ func (m *TerminalManager) create(ctx context.Context, req TerminalRequest, comma
 		}
 		delete(m.sessions, oldestID)
 	}
-	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: req.Cols, Rows: req.Rows})
+	terminal, err := startTerminal(ctx, cmd, req.Cols, req.Rows)
 	if err != nil {
 		return TerminalRecord{}, fmt.Errorf("start terminal: %w", err)
 	}
 	now := time.Now().UnixMilli()
-	record := TerminalRecord{ID: fmt.Sprintf("term-%d", time.Now().UnixNano()), ProjectPathKey: req.ProjectPathKey, CWD: cwd, Shell: shell, Title: req.Title, PID: cmd.Process.Pid, Cols: req.Cols, Rows: req.Rows, CreatedAt: now, UpdatedAt: now, Running: true, Kind: "local"}
+	record := TerminalRecord{ID: fmt.Sprintf("term-%d", time.Now().UnixNano()), ProjectPathKey: req.ProjectPathKey, CWD: cwd, Shell: shell, Title: req.Title, PID: terminal.PID(), Cols: req.Cols, Rows: req.Rows, CreatedAt: now, UpdatedAt: now, Running: true, Kind: "local"}
 	if record.ProjectPathKey == "" {
 		record.ProjectPathKey = cwd
 	}
-	s := &terminalSession{identity: identity, cmd: cmd, pty: terminal, done: make(chan struct{}), record: record}
+	s := &terminalSession{identity: identity, pty: terminal, done: make(chan struct{}), record: record}
 	m.sessions[record.ID] = s
 	go m.read(s)
 	return record, nil
@@ -219,9 +218,9 @@ func (m *TerminalManager) read(s *terminalSession) {
 			}
 		}
 	}()
-	err := s.cmd.Wait()
+	err := s.pty.Wait()
 	// Reap the shell before draining output; descendants may retain the PTY.
-	_ = process.Kill(s.cmd)
+	_ = s.pty.Kill()
 	select {
 	case <-readDone:
 	case <-time.After(time.Second):
@@ -235,7 +234,7 @@ func (m *TerminalManager) read(s *terminalSession) {
 	s.record.UpdatedAt = s.record.FinishedAt
 	if err != nil {
 		s.record.ExitCode = -1
-		if exit, ok := err.(*exec.ExitError); ok {
+		if exit, ok := err.(interface{ ExitCode() int }); ok {
 			s.record.ExitCode = exit.ExitCode()
 		}
 	}
@@ -367,7 +366,7 @@ func (m *TerminalManager) Handle(ctx context.Context, req TerminalRequest) (Term
 			if req.Cols == 0 || req.Rows == 0 {
 				return response, errors.New("cols and rows are required")
 			}
-			err = pty.Setsize(s.pty, &pty.Winsize{Cols: req.Cols, Rows: req.Rows})
+			err = s.pty.Resize(req.Cols, req.Rows)
 			if err == nil {
 				s.mu.Lock()
 				s.record.Cols, s.record.Rows = req.Cols, req.Rows
@@ -401,7 +400,7 @@ func (m *TerminalManager) stop(id string) error {
 	running := s.record.Running
 	s.mu.Unlock()
 	if running {
-		_ = process.Kill(s.cmd)
+		_ = s.pty.Kill()
 	}
 	select {
 	case <-s.done:

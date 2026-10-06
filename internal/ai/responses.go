@@ -43,6 +43,11 @@ func (c *Responses) Complete(ctx context.Context, req Request) (string, Usage, e
 
 func (c *Responses) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
 	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	for i := range req.Messages {
+		if !replayMatches(req.Messages[i], APIResponses, c.Endpoint(), req.Model) {
+			req.Messages[i].Replay = nil
+		}
+	}
 	if err := validateAttachments(req.Messages, true, "Responses"); err != nil {
 		return nil, err
 	}
@@ -50,6 +55,11 @@ func (c *Responses) request(ctx context.Context, req Request, stream bool) (*htt
 	payload, err := responsesPayload(req, stream)
 	if err != nil {
 		return nil, err
+	}
+	if strings.Contains(strings.ToLower(req.Model), "grok") || req.NativeSearchProvider == "xai" {
+		delete(payload, "prompt_cache_key")
+		delete(payload, "prompt_cache_retention")
+		delete(payload, "reasoning")
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -63,12 +73,12 @@ func responsesPayload(req Request, stream bool) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := map[string]any{"model": req.Model, "input": input, "stream": stream}
+	p := map[string]any{"model": req.Model, "input": input, "stream": stream, "store": false, "include": []string{"reasoning.encrypted_content"}}
 	if req.MaxTokens > 0 {
 		p["max_output_tokens"] = req.MaxTokens
 	}
 	if req.ReasoningEffort != "" {
-		p["reasoning"] = map[string]any{"effort": req.ReasoningEffort}
+		p["reasoning"] = map[string]any{"effort": openAIEffort(req.Model, req.ReasoningEffort)}
 	}
 	if len(req.Tools) > 0 {
 		tools := make([]any, 0, len(req.Tools))
@@ -89,7 +99,7 @@ func responsesPayload(req Request, stream bool) (map[string]any, error) {
 		if req.NativeSearchProvider == "xai" {
 			include = "x_search_call.action.sources"
 		}
-		p["include"] = []string{include}
+		p["include"] = append(p["include"].([]string), include)
 	}
 	if req.PromptCacheKey != "" {
 		p["prompt_cache_key"] = req.PromptCacheKey
@@ -115,6 +125,11 @@ func responsesInput(msgs []Message) ([]any, error) {
 			}
 			out = append(out, map[string]any{"type": "function_call_output", "call_id": m.ToolCallID, "output": output})
 		case "assistant":
+			if m.Replay != nil && m.Replay.API == APIResponses {
+				for _, raw := range m.Replay.Blocks {
+					out = append(out, raw)
+				}
+			}
 			if len(blocks) > 0 {
 				out = append(out, map[string]any{"type": "message", "role": "assistant", "content": blocks})
 			}

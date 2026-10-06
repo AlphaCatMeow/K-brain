@@ -293,14 +293,23 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request, id string) {
 		writeJSONError(w, 400, err.Error())
 		return
 	}
-	rt, err := s.loadRuntimeByID(id)
+	rt, err := s.historyRuntime(id)
 	if err != nil {
 		mutationError(w, err)
 		return
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	view, err := s.sessionViewLocked(rt)
+	if rt.deleted {
+		mutationError(w, session.ErrNotFound)
+		return
+	}
+	snap, err := s.store.HistorySnapshot(id)
+	if err != nil {
+		mutationError(w, err)
+		return
+	}
+	view, err := s.sessionSnapshotView(rt, snap)
 	if err != nil {
 		mutationError(w, err)
 		return
@@ -314,35 +323,29 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request, id string) {
 		before = int(^uint(0) >> 1)
 	}
 	start, end := total, total
-	if snap, snapErr := s.store.HistorySnapshot(id); snapErr == nil {
-		for i, offset := range snap.Offsets {
-			if offset < before {
-				end = i + 1
-			}
+	for i, offset := range snap.Offsets {
+		if offset < before {
+			end = i + 1
 		}
-		if end == total && before < int(^uint(0)>>1) && (len(snap.Offsets) == 0 || snap.Offsets[0] >= before) {
-			end = 0
-		}
-		start = max(0, end-limit)
-		view.Messages = view.Messages[start:end]
-		oldest := 0
-		if start < len(snap.Offsets) {
-			oldest = snap.Offsets[start]
-		}
-		out := historyResponse{MessageOffsets: append([]int{}, snap.Offsets[start:end]...), Session: view, Revision: view.Revision, OldestOffset: oldest, HasMoreBefore: start > 0, TotalMessageCount: total}
-		if include != nil && *include {
-			active := []protocol.Message{}
-			for _, msg := range snap.ActiveMessages {
-				active = append(active, protocol.FromAIMessage(msg))
-			}
-			out.ActiveMessages = &active
-		}
-		writeJSON(w, 200, out)
-		return
 	}
-	writeJSONError(w, 500, "history unavailable")
-	return
-
+	if end == total && before < int(^uint(0)>>1) && (len(snap.Offsets) == 0 || snap.Offsets[0] >= before) {
+		end = 0
+	}
+	start = max(0, end-limit)
+	view.Messages = view.Messages[start:end]
+	oldest := 0
+	if start < len(snap.Offsets) {
+		oldest = snap.Offsets[start]
+	}
+	out := historyResponse{MessageOffsets: append([]int{}, snap.Offsets[start:end]...), Session: view, Revision: view.Revision, OldestOffset: oldest, HasMoreBefore: start > 0, TotalMessageCount: total}
+	if include != nil && *include {
+		active := []protocol.Message{}
+		for _, msg := range snap.ActiveMessages {
+			active = append(active, protocol.FromAIMessage(msg))
+		}
+		out.ActiveMessages = &active
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) mutateHistory(w http.ResponseWriter, r *http.Request, id string, edit bool) {
