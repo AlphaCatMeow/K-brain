@@ -10,6 +10,7 @@ func (s *Store) Claim() ([]Item, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := clone(s.disk)
+	before := clone(next.Snapshot)
 	reconcile(&next.Snapshot)
 	now := time.Now().UnixMilli()
 	out := []Item{}
@@ -33,7 +34,7 @@ func (s *Store) Claim() ([]Item, error) {
 		touch(r)
 		out = append(out, clone(r))
 	}
-	if !reflect.DeepEqual(next.Snapshot, s.disk.Snapshot) {
+	if !reflect.DeepEqual(next.Snapshot, before) {
 		next.Snapshot.Seq++
 		if e := s.commit(next); e != nil {
 			return nil, e

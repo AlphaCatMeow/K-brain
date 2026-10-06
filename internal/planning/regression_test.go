@@ -5,6 +5,21 @@ import (
 	"time"
 )
 
+func TestEmptyReminderPollKeepsPristineMigrationDestination(t *testing.T) {
+	s := openTest(t)
+	if _, err := s.Claim(); err != nil {
+		t.Fatal(err)
+	}
+	if readTest(t, s).Seq != 0 {
+		t.Fatal("empty notification poll consumed pristine migration state")
+	}
+	legacy := openTest(t)
+	applyTest(t, legacy, "todo.create", Item{"title": "legacy"}, nil)
+	if _, err := s.Import(readTest(t, legacy), "desktop", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRecurringReminderMigrationAndDisabledTargets(t *testing.T) {
 	s := openTest(t)
 	cal := readTest(t, s).Calendars[0]
