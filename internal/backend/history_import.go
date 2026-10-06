@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -105,6 +106,10 @@ func (s *Server) importLegacyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	contentFingerprint := importFingerprint(in)
 	already, err := s.store.ImportHistory(in.ConversationID, in.SourceID, in.SourceFingerprint, contentFingerprint, metadata, in.CWD, in.Model.Model, in.Model.Provider, in.Title, in.CreatedAt, in.UpdatedAt, in.Pinned, in.Shared, in.ShareRedactTool, in.ShareToken, messages, boundary)
+	if errors.Is(err, session.ErrHistoryDeleted) {
+		writeJSONError(w, http.StatusGone, err.Error())
+		return
+	}
 	if err != nil && strings.Contains(err.Error(), "conflicts with existing") && !checkpointPartial {
 		meta, _, loadErr := s.store.Load(in.ConversationID)
 		if loadErr == nil && unresolvedHistoryRepair(in, meta) {

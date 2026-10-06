@@ -5,12 +5,36 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/planning"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
+
+// Planning data is opened on demand; invalid calendar settings cannot prevent chat startup.
+func (s *Server) openPlanning() (*planning.Store, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("backend is closed")
+	}
+	if s.planning != nil {
+		return s.planning, nil
+	}
+	store, err := planning.Open(filepath.Join(s.store.SessionsDir(), "planning.json"))
+	if err != nil {
+		return nil, err
+	}
+	s.planning = store
+	ctx, cancel := context.WithCancel(context.Background())
+	s.planningCancel = cancel
+	done := make(chan struct{})
+	s.planningDone = done
+	go func() { defer close(done); store.Run(ctx) }()
+	return store, nil
+}
 
 func (s *Server) handlePlanning(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -36,19 +60,32 @@ func (s *Server) planningAction(action string, raw json.RawMessage) (any, error)
 	if len(raw) == 0 || string(raw) == "null" {
 		raw = json.RawMessage(`{}`)
 	}
-	switch action {
-	case "cron.occurrences":
+	if action == "cron.occurrences" {
 		return s.planningCron(raw)
+	}
+	if action == "reminders.claim" {
+		s.mu.Lock()
+		unopened := s.planning == nil
+		s.mu.Unlock()
+		if unopened {
+			return []planning.Item{}, nil
+		}
+	}
+	store, err := s.openPlanning()
+	if err != nil {
+		return nil, err
+	}
+	switch action {
 	case "reminders.claim":
-		return s.planning.Claim()
+		return store.Claim()
 	case "reminders.finish":
 		var in planning.Item
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return nil, err
 		}
-		return s.planning.Finish(in)
+		return store.Finish(in)
 	case "timezone.get":
-		return s.planning.TimeZoneSettings(), nil
+		return store.TimeZoneSettings(), nil
 	case "timezone":
 		var in struct {
 			TimeZone         string  `json:"timeZone"`
@@ -61,7 +98,7 @@ func (s *Server) planningAction(action string, raw json.RawMessage) (any, error)
 		if in.Preference != nil {
 			in.TimeZone = *in.Preference
 		}
-		return s.planning.UpdateTimeZone(in.TimeZone, in.ExpectedRevision)
+		return store.UpdateTimeZone(in.TimeZone, in.ExpectedRevision)
 	case "query", "export":
 		var q struct {
 			From int64 `json:"from"`
@@ -74,19 +111,19 @@ func (s *Server) planningAction(action string, raw json.RawMessage) (any, error)
 			q.From = 0
 			q.To = 0
 		}
-		return s.planning.Query(q.From, q.To)
+		return store.Query(q.From, q.To)
 	case "mutate":
 		var m planning.Mutation
 		if err := json.Unmarshal(raw, &m); err != nil {
 			return nil, err
 		}
-		return s.planning.Mutate(m)
+		return store.Mutate(m)
 	case "import":
 		var snap planning.Snapshot
 		if err := json.Unmarshal(raw, &snap); err != nil {
 			return nil, err
 		}
-		return s.planning.Import(snap, "", nil)
+		return store.Import(snap, "", nil)
 	case "migrate":
 		var in struct {
 			Source        string            `json:"source"`
@@ -99,13 +136,13 @@ func (s *Server) planningAction(action string, raw json.RawMessage) (any, error)
 		if in.Source == "" {
 			return nil, errors.New("E:migration_source_required")
 		}
-		return s.planning.Import(in.Snapshot, in.Source, in.Subscriptions)
+		return store.Import(in.Snapshot, in.Source, in.Subscriptions)
 	case "subscription.create", "subscription.update", "subscription.refresh", "subscription.delete":
 		var in planning.Item
 		if err := json.Unmarshal(raw, &in); err != nil {
 			return nil, err
 		}
-		return s.planning.Subscription(action, in)
+		return store.Subscription(action, in)
 	default:
 		return nil, errors.New("E:unknown_request")
 	}

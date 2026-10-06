@@ -163,6 +163,14 @@ func (s *Store) Delete(id string) error {
 		} else if err != nil {
 			return err
 		}
+		// Keep deletion intent outside the transcript so automatic imports cannot revive it.
+		deletedDir := filepath.Join(s.filesDir, ".deleted-history")
+		if err := os.MkdirAll(deletedDir, 0700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(deletedDir, id), nil, 0600); err != nil {
+			return err
+		}
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}

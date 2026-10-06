@@ -20,12 +20,31 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
 func TestBackendCLIExecutableIntegration(t *testing.T) {
 	fixture := t.TempDir()
 	configPath := filepath.Join(fixture, "config.json")
 	sessionDir := filepath.Join(fixture, "sessions")
+	legacyIDs := []string{}
+	for _, open := range []func(string) (*session.Store, error){session.Open, session.OpenProjectDir} {
+		store, err := open(sessionDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := store.Create(fixture, "removed-model", "removed-provider")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Save(id, 0, []ai.Message{{Role: "user", Content: "old history"}}, "removed-model", "removed-provider"); err != nil {
+			t.Fatal(err)
+		}
+		legacyIDs = append(legacyIDs, id)
+		store.Close()
+	}
 	upstreamCalls := atomic.Int64{}
 	chatCalls := atomic.Int64{}
 	memoryCalls := atomic.Int64{}
@@ -131,6 +150,17 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	first := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	base := "http://" + listen
 	waitForBackend(t, first, base)
+	for _, id := range legacyIDs {
+		old := getExecutableSession(t, base, id)
+		if old.MessageCount != 1 {
+			t.Fatalf("old history missing: %+v", old)
+		}
+		resp := doExecutableRequest(t, http.MethodGet, base+"/v1/sessions/"+id+"/history?max_messages=10", nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("old history window: %d", resp.StatusCode)
+		}
+	}
 	t.Logf("backend start #1 ready: base=%s output=%q", base, first.output.String())
 
 	sessionID := createExecutableSession(t, base, fixture)
@@ -161,6 +191,11 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	t.Logf("backend start #2: binary=%s listen=%s config=%s session_dir=%s", binary, listen, configPath, sessionDir)
 	second := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	waitForBackend(t, second, base)
+	for _, id := range legacyIDs {
+		if old := getExecutableSession(t, base, id); old.MessageCount != 1 {
+			t.Fatalf("old history missing after restart: %+v", old)
+		}
+	}
 	t.Logf("backend start #2 ready: base=%s output=%q", base, second.output.String())
 	defer stopBackendProcess(t, second)
 

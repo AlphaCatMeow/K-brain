@@ -56,7 +56,7 @@ func backendCLI(args []string) error {
 	}
 	var store *session.Store
 	if *sessionDir != "" {
-		store, err = session.Open(*sessionDir)
+		store, err = session.OpenProjectDir(*sessionDir)
 	} else {
 		var dir string
 		dir, err = config.Dir()

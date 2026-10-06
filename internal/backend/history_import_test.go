@@ -64,4 +64,12 @@ func TestLegacyHistoryImportRealHTTPIsIdempotentAndPreservesCanonicalHistory(t *
 	if _, err := os.Stat(filepath.Join(store.SessionsDir(), input.ConversationID, "session.jsonl")); err != nil {
 		t.Fatal(err)
 	}
+	status := doJSON(t, http.MethodDelete, server.URL+"/v1/sessions/"+input.ConversationID, nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("delete status: %d", status)
+	}
+	response = postJSON(t, http.DefaultClient, server.URL+"/v1/migrations/liveagent-history", input, nil)
+	if response.StatusCode != http.StatusGone {
+		t.Fatalf("deleted import status: %d", response.StatusCode)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,6 +17,71 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/session"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
+
+func TestInvalidCustomTimezoneDoesNotBlockBackendStartup(t *testing.T) {
+	root := t.TempDir()
+	store, err := session.Open(filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	path := filepath.Join(store.SessionsDir(), "planning.json")
+	planner, err := planning.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = planner
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var disk map[string]any
+	if err := json.Unmarshal(original, &disk); err != nil {
+		t.Fatal(err)
+	}
+	disk["snapshot"].(map[string]any)["timeZone"] = "Custom/InvalidZone"
+	invalid, _ := json.Marshal(disk)
+	if err := os.WriteFile(path, invalid, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Options{Store: store, Factory: func(context.Context, string, protocol.ModelRef) (*agent.Agent, error) {
+		return agent.New(&scriptedClient{}, "fixture", 100, ""), nil
+	}, MemoryRoot: filepath.Join(root, "memory")})
+	if err != nil {
+		t.Fatalf("custom zone blocked startup: %v", err)
+	}
+	defer s.Close()
+	server := httptest.NewServer(s)
+	defer server.Close()
+	if code := doJSON(t, http.MethodGet, server.URL+"/v1/health", nil, nil); code != 200 {
+		t.Fatalf("health: %d", code)
+	}
+	if code := doJSON(t, http.MethodGet, server.URL+"/v1/sessions", nil, nil); code != 200 {
+		t.Fatalf("history list: %d", code)
+	}
+	if _, err := s.planningAction("reminders.claim", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.planning != nil {
+		t.Fatal("startup notification polling opened planning")
+	}
+	if _, err := s.planningAction("query", nil); err == nil || err.Error() != "E:timezone_invalid" {
+		t.Fatalf("planning error: %v", err)
+	}
+	current, _ := os.ReadFile(path)
+	if !bytes.Equal(current, invalid) {
+		t.Fatal("custom data overwritten")
+	}
+	if code := doJSON(t, http.MethodGet, server.URL+"/v1/health", nil, nil); code != 200 {
+		t.Fatalf("health after planning failure: %d", code)
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.planningAction("query", nil); err != nil {
+		t.Fatalf("retry after correction: %v", err)
+	}
+}
 
 func TestPlanningHTTPToolsRestartAndAuth(t *testing.T) {
 	root := t.TempDir()
@@ -119,7 +185,11 @@ func TestPlanningHTTPToolsRestartAndAuth(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer s.Close()
-	snap, e := s.planning.Query(0, 0)
+	planner, e := s.openPlanning()
+	if e != nil {
+		t.Fatal(e)
+	}
+	snap, e := planner.Query(0, 0)
 	if e != nil || len(snap.Todos) != 2 {
 		t.Fatal("restart lost task", snap, e)
 	}

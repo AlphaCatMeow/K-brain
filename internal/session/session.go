@@ -118,7 +118,12 @@ func newData(meta Meta) *sessionData {
 func OpenHome(home string) (*Store, error) { return Open(filepath.Join(home, "sessions")) }
 
 func OpenProjectHome(home string) (*Store, error) {
-	s, err := Open(filepath.Join(home, "sessions"))
+	return OpenProjectDir(filepath.Join(home, "sessions"))
+}
+
+// OpenProjectDir reads both flat legacy sessions and project-grouped sessions.
+func OpenProjectDir(dir string) (*Store, error) {
+	s, err := Open(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +335,7 @@ func (s *Store) create(d *sessionData) (string, error) {
 }
 
 func validProjectDir(name string) bool {
-	return len(name) > 8 && name != ".lock"
+	return len(name) > 8 && name != ".lock" && name != ".deleted-history"
 }
 
 func projectDir(cwd string) string {

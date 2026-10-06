@@ -11,6 +11,8 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 )
 
+var ErrHistoryDeleted = errors.New("history was explicitly deleted")
+
 // ImportHistory writes a canonical history under a caller-supplied stable ID.
 // Existing imports are accepted only when their source fingerprint matches.
 func filepathForImport(s *Store, id, cwd string) string {
@@ -50,6 +52,11 @@ func (s *Store) ImportHistory(id, sourceID, fingerprint, contentFingerprint, met
 		}
 		if !errors.Is(readErr, ErrNotFound) {
 			return readErr
+		}
+		if _, err := os.Lstat(filepath.Join(s.filesDir, ".deleted-history", id)); err == nil {
+			return ErrHistoryDeleted
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()

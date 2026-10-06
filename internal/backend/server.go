@@ -153,10 +153,6 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	planningStore, err := planning.Open(filepath.Join(opts.Store.SessionsDir(), "planning.json"))
-	if err != nil {
-		return nil, fmt.Errorf("open planning store: %w", err)
-	}
 	cron, err := newCronManager(opts.Store, opts.DefaultCWD, opts.Settings)
 	if err != nil {
 		return nil, err
@@ -167,7 +163,6 @@ func New(opts Options) (*Server, error) {
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
 	}
 	cron.promptExecutor = server.executeCronPromptCanonical
-	server.planning = planningStore
 	go cron.loop()
 	if opts.MemoryRuntimeFactory != nil && opts.MemoryOrganizerInterval != 0 {
 		interval := opts.MemoryOrganizerInterval
@@ -182,10 +177,6 @@ func New(opts Options) (*Server, error) {
 		server.organizerRuntime = runtime
 		server.organizerCancel = runtime.StartOrganizerScheduler(context.Background(), opts.DefaultCWD, interval)
 	}
-	planningContext, planningCancel := context.WithCancel(context.Background())
-	server.planningCancel = planningCancel
-	server.planningDone = make(chan struct{})
-	go func() { defer close(server.planningDone); planningStore.Run(planningContext) }()
 	return server, nil
 }
 
@@ -196,6 +187,7 @@ func (s *Server) Close() error {
 		return nil
 	}
 	s.closed = true
+	planningCancel, planningDone := s.planningCancel, s.planningDone
 	s.mu.Unlock()
 	if s.organizerCancel != nil {
 		s.organizerCancel()
@@ -208,9 +200,9 @@ func (s *Server) Close() error {
 	if s.cron != nil {
 		s.cron.close()
 	}
-	if s.planningCancel != nil {
-		s.planningCancel()
-		<-s.planningDone
+	if planningCancel != nil {
+		planningCancel()
+		<-planningDone
 	}
 	s.mu.Lock()
 	runtimes := make([]*runtimeSession, 0, len(s.sessions))
