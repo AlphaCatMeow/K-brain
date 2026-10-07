@@ -26,6 +26,7 @@ import (
 )
 
 func TestBackendCLIExecutableIntegration(t *testing.T) {
+	t.Setenv("TZ", "Asia/Shanghai")
 	fixture := t.TempDir()
 	configPath := filepath.Join(fixture, "config.json")
 	sessionDir := filepath.Join(fixture, "sessions")
@@ -150,6 +151,7 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	first := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	base := "http://" + listen
 	waitForBackend(t, first, base)
+	assertExecutableAutomaticTimeZone(t, base, "Asia/Shanghai")
 	for _, id := range legacyIDs {
 		old := getExecutableSession(t, base, id)
 		if old.MessageCount != 1 {
@@ -189,8 +191,10 @@ func TestBackendCLIExecutableIntegration(t *testing.T) {
 	t.Logf("backend start #1 stopped: output=%q", first.output.String())
 
 	t.Logf("backend start #2: binary=%s listen=%s config=%s session_dir=%s", binary, listen, configPath, sessionDir)
+	t.Setenv("TZ", "America/New_York")
 	second := startBackendProcess(t, binary, listen, configPath, sessionDir)
 	waitForBackend(t, second, base)
+	assertExecutableAutomaticTimeZone(t, base, "America/New_York")
 	for _, id := range legacyIDs {
 		if old := getExecutableSession(t, base, id); old.MessageCount != 1 {
 			t.Fatalf("old history missing after restart: %+v", old)
@@ -566,6 +570,19 @@ func createExecutableSession(t *testing.T, base, cwd string) string {
 		t.Fatal("create session returned an empty id")
 	}
 	return session.ID
+}
+
+func assertExecutableAutomaticTimeZone(t *testing.T, base, zone string) {
+	t.Helper()
+	resp := doExecutableRequest(t, http.MethodPost, base+"/v1/planning", strings.NewReader(`{"action":"timezone.get","input":{}}`))
+	defer resp.Body.Close()
+	var settings map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || settings["preference"] != "" || settings["timeZone"] != zone {
+		t.Fatalf("automatic timezone: HTTP %d %+v, want %s", resp.StatusCode, settings, zone)
+	}
 }
 
 func getExecutableSession(t *testing.T, base, id string) executableSession {

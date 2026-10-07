@@ -161,11 +161,10 @@ func Open(path string) (*Store, error) {
 	if !errors.Is(e, os.ErrNotExist) {
 		return nil, e
 	}
-	z := time.Local.String()
-	if _, e = time.LoadLocation(z); e != nil || z == "Local" {
-		z = systemZone()
-	}
+	z := systemZone()
 	s.disk = disk{Version: 1, Snapshot: Snapshot{TimeZone: z, Calendars: []Item{calendar("工作", "#2563eb", true), calendar("个人", "#0f766e", false)}, Todos: []Item{}, Groups: []Item{}, Tags: []Item{}, Events: []Item{}, Reminders: []Item{}, Sources: []Item{}, Subscriptions: []Item{}, TodoSchedules: []Item{}}, Requests: map[string]receipt{}, Migrations: map[string]bool{}, Feeds: map[string]Item{}}
+	preference := ""
+	s.disk.TimeZonePreference = &preference
 	if e = s.save(s.disk); e != nil {
 		return nil, e
 	}
