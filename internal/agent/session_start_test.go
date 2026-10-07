@@ -88,27 +88,30 @@ func TestSessionMemoryRefreshAndSubagentIsolation(t *testing.T) {
 	for range 3 {
 		ag.RefreshMemory()
 	}
-	if strings.Count(ag.Messages[0].Content, "alpha-private") != 1 {
+	if strings.Count(ag.memoryBlock, "alpha-private") != 1 {
 		t.Fatal("duplicate or missing memory")
 	}
 	ag.SetSessionID(ids[1])
 	ag.RefreshMemory()
-	if strings.Contains(ag.Messages[0].Content, "alpha-private") || !strings.Contains(ag.Messages[0].Content, "beta-private") {
+	if strings.Contains(ag.memoryBlock, "alpha-private") || !strings.Contains(ag.memoryBlock, "beta-private") {
 		t.Fatal("session memory leaked")
 	}
 	if err := memory.Session(ids[1]).Forget(1); err != nil {
 		t.Fatal(err)
 	}
 	ag.RefreshMemory()
-	if strings.Contains(ag.Messages[0].Content, "beta-private") {
+	if strings.Contains(ag.memoryBlock, "beta-private") {
 		t.Fatal("forgotten memory retained")
+	}
+	if ag.Messages[0].Content != "sys" {
+		t.Fatal("memory refresh changed the stable system prompt")
 	}
 	sub := ag.newSub(SubModel{})
 	if err := sub.StartSession(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	sub.RefreshMemory()
-	if strings.Contains(sub.Messages[0].Content, "global-fact") || strings.Contains(sub.Messages[0].Content, "private") {
+	if sub.memoryBlock != "" || len(sub.contextSnapshots()) != 0 {
 		t.Fatal("subagent inherited memory")
 	}
 	if sub.SessionIDValue() != ids[1] {

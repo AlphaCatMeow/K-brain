@@ -42,7 +42,8 @@ func TestStreamStripsAuthoredFlag(t *testing.T) {
 
 	sent := time.Now()
 	msgs := []Message{
-		{Role: "user", Content: "typed by me", Authored: true, SentAt: &sent, PromptContext: "internal snapshot"},
+		{Role: "user", Content: "typed by me", Authored: true, SentAt: &sent, PromptContext: "internal snapshot",
+			PromptSnapshots: []PromptSnapshot{{Source: "runtime-memory", Text: "owned snapshot"}}},
 		{Role: "assistant", Content: "a response", Model: "model1", ToolCalls: []ToolCall{{ID: "call-1", DurationMs: 100}}},
 	}
 	if _, _, err := New(srv.URL, "test-key").Stream(context.Background(), Request{Model: "m", Messages: msgs}, nil, nil, nil); err != nil {
@@ -54,7 +55,7 @@ func TestStreamStripsAuthoredFlag(t *testing.T) {
 	if strings.Contains(string(body), "sent_at") {
 		t.Fatalf("SentAt timestamp leaked to provider: %s", body)
 	}
-	if strings.Contains(string(body), "prompt_context") || strings.Contains(string(body), "internal snapshot") {
+	if strings.Contains(string(body), "prompt_context") || strings.Contains(string(body), "internal snapshot") || strings.Contains(string(body), "prompt_snapshots") || strings.Contains(string(body), "owned snapshot") {
 		t.Fatalf("request-only metadata leaked to provider: %s", body)
 	}
 	if strings.Contains(string(body), "duration_ms") || strings.Contains(string(body), "rewound_from") {

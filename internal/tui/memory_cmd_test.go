@@ -1,6 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +12,29 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Stack-Cairn/K-brain/internal/agent"
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
+
+func memoryTurnRequest(t *testing.T, m *model, input string) string {
+	t.Helper()
+	var request ai.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	m.agent.Client = ai.New(server.URL, "fixture")
+	if _, err := m.agent.TurnAuthored(t.Context(), input, agent.Events{}); err != nil {
+		t.Fatal(err)
+	}
+	return request.Messages[len(request.Messages)-1].Content
+}
 
 func TestMemoryEndToEnd(t *testing.T) {
 	home := t.TempDir()
@@ -45,9 +69,9 @@ func TestMemoryEndToEnd(t *testing.T) {
 	}
 
 	m.prepareTurn("hello")
-	sys := m.agent.Messages[0].Content
-	if !strings.Contains(sys, "user prefers pnpm over npm") || !strings.Contains(sys, "<memory>") {
-		t.Fatalf("memory not injected into the system prompt:\n%s", sys)
+	context := memoryTurnRequest(t, m, "hello")
+	if !strings.Contains(context, "user prefers pnpm over npm") || !strings.Contains(context, "<memory>") {
+		t.Fatalf("memory not injected into request context:\n%s", context)
 	}
 
 	m.memoryCommand(nil)
@@ -68,6 +92,9 @@ func TestMemoryEndToEnd(t *testing.T) {
 		t.Fatalf("entry should be struck, not deleted:\n%s", data)
 	}
 	m.prepareTurn("hello again")
+	if context := memoryTurnRequest(t, m, "hello again"); !strings.Contains(context, "Earlier saved-memory snapshots no longer apply") {
+		t.Fatal("forgotten memory was not explicitly cleared in the request")
+	}
 	if strings.Contains(m.agent.Messages[0].Content, "pnpm") {
 		t.Fatal("struck entries must stop being injected")
 	}
@@ -96,7 +123,7 @@ func TestSessionMemoryScope(t *testing.T) {
 	}
 	m.sessionID = id
 	m.prepareTurn("hi")
-	if !strings.Contains(m.agent.Messages[0].Content, "ship.sh") {
+	if !strings.Contains(memoryTurnRequest(t, m, "hi"), "ship.sh") {
 		t.Fatal("session memory should inject while the session is active")
 	}
 }

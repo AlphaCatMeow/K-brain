@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 
 	"github.com/Stack-Cairn/K-brain/internal/hooks"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
@@ -51,9 +50,5 @@ func (a *Agent) RefreshMemory() {
 	block := memory.PromptBlock(memory.Installation(), memory.Session(a.SessionIDValue()))
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
-	if len(a.Messages) == 0 || a.Messages[0].Role != "system" {
-		return
-	}
-	a.Messages[0].Content = strings.TrimSuffix(a.Messages[0].Content, a.memoryBlock) + block
 	a.memoryBlock = block
 }

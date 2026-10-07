@@ -2,7 +2,11 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,15 +69,33 @@ func TestSessionStartUsesFinalIdentityAndRestoredMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := b.getSession(first.SessionId).ag
-	if !strings.Contains(restored.Messages[0].Content, "first-private") {
-		t.Fatal("restored memory missing")
-	}
 	if err := restored.StartSession(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 2 {
 		t.Fatalf("resume repeated startup: %d", len(events))
 	}
+	var request ai.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	verify := func(ag *agent.Agent, contains bool) {
+		t.Helper()
+		ag.Client = ai.New(server.URL, "fixture")
+		if _, err := ag.TurnAuthored(t.Context(), "continue", agent.Events{}); err != nil {
+			t.Fatal(err)
+		}
+		last := request.Messages[len(request.Messages)-1].Content
+		if strings.Contains(last, "first-private") != contains || strings.Contains(last, "legacy-secret") {
+			t.Fatal("restored memory missing or crossed session boundary")
+		}
+	}
+	verify(restored, true)
 	second, err := b.NewSession(t.Context(), acp.NewSessionRequest{Cwd: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +103,7 @@ func TestSessionStartUsesFinalIdentityAndRestoredMemory(t *testing.T) {
 	if strings.Contains(b.getSession(second.SessionId).ag.Messages[0].Content, "first-private") {
 		t.Fatal("cross-project memory leak")
 	}
+	verify(b.getSession(second.SessionId).ag, false)
 }
 
 func TestSessionStartFailureCleansOnlyNewSessions(t *testing.T) {

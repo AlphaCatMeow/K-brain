@@ -10,13 +10,14 @@ import (
 )
 
 func TestPromptContextRemainsBackendOwned(t *testing.T) {
-	m := ai.Message{Role: "user", Content: "visible question", PromptContext: "private request snapshot"}
+	m := ai.Message{Role: "user", Content: "visible question", PromptContext: "private request snapshot",
+		PromptSnapshots: []ai.PromptSnapshot{{Source: "runtime-memory", Text: "owned snapshot"}}}
 	canonical := FromAIMessage(m)
 	encoded, err := json.Marshal(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "private request snapshot") || strings.Contains(string(encoded), "prompt_context") {
+	if strings.Contains(string(encoded), "private request snapshot") || strings.Contains(string(encoded), "prompt_context") || strings.Contains(string(encoded), "owned snapshot") || strings.Contains(string(encoded), "prompt_snapshots") {
 		t.Fatal("request context leaked into public history")
 	}
 	converted, err := canonical.ToAIMessage()

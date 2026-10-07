@@ -25,7 +25,8 @@ type Message struct {
 	SentAt *time.Time `json:"sent_at,omitempty"`
 
 	// PromptContext is a persisted request-only snapshot, not user-authored text.
-	PromptContext string `json:"prompt_context,omitempty"`
+	PromptContext   string           `json:"prompt_context,omitempty"`
+	PromptSnapshots []PromptSnapshot `json:"prompt_snapshots,omitempty"`
 
 	Usage *Usage `json:"usage,omitempty"`
 
@@ -35,6 +36,12 @@ type Message struct {
 	RawStopReason string     `json:"raw_stop_reason,omitempty"`
 
 	RewoundFrom string `json:"rewound_from,omitempty"`
+}
+
+// PromptSnapshot records the source and rendered value of backend-owned context.
+type PromptSnapshot struct {
+	Source string `json:"source"`
+	Text   string `json:"text"`
 }
 
 // ProviderReplay is backend-owned state, scoped to the originating endpoint and model.
@@ -80,23 +87,24 @@ func (m Message) ContentParts() []ContentPart {
 }
 
 type messageWire struct {
-	ID            string          `json:"id,omitempty"`
-	Role          string          `json:"role"`
-	Content       any             `json:"content"`
-	Reasoning     string          `json:"reasoning,omitempty"`
-	Replay        *ProviderReplay `json:"provider_replay,omitempty"`
-	ToolCalls     []ToolCall      `json:"tool_calls,omitempty"`
-	ToolCallID    string          `json:"tool_call_id,omitempty"`
-	HostedSearch  []HostedSearch  `json:"hosted_search,omitempty"`
-	Name          string          `json:"name,omitempty"`
-	Authored      bool            `json:"authored,omitempty"`
-	SentAt        *time.Time      `json:"sent_at,omitempty"`
-	PromptContext string          `json:"prompt_context,omitempty"`
-	Usage         *Usage          `json:"usage,omitempty"`
-	Model         string          `json:"model,omitempty"`
-	StopReason    StopReason      `json:"stop_reason,omitempty"`
-	RawStopReason string          `json:"raw_stop_reason,omitempty"`
-	RewoundFrom   string          `json:"rewound_from,omitempty"`
+	ID              string           `json:"id,omitempty"`
+	Role            string           `json:"role"`
+	Content         any              `json:"content"`
+	Reasoning       string           `json:"reasoning,omitempty"`
+	Replay          *ProviderReplay  `json:"provider_replay,omitempty"`
+	ToolCalls       []ToolCall       `json:"tool_calls,omitempty"`
+	ToolCallID      string           `json:"tool_call_id,omitempty"`
+	HostedSearch    []HostedSearch   `json:"hosted_search,omitempty"`
+	Name            string           `json:"name,omitempty"`
+	Authored        bool             `json:"authored,omitempty"`
+	SentAt          *time.Time       `json:"sent_at,omitempty"`
+	PromptContext   string           `json:"prompt_context,omitempty"`
+	PromptSnapshots []PromptSnapshot `json:"prompt_snapshots,omitempty"`
+	Usage           *Usage           `json:"usage,omitempty"`
+	Model           string           `json:"model,omitempty"`
+	StopReason      StopReason       `json:"stop_reason,omitempty"`
+	RawStopReason   string           `json:"raw_stop_reason,omitempty"`
+	RewoundFrom     string           `json:"rewound_from,omitempty"`
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
@@ -105,9 +113,10 @@ func (m Message) MarshalJSON() ([]byte, error) {
 		Reasoning: m.Reasoning,
 		Replay:    m.Replay,
 		Name:      m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
-		PromptContext: m.PromptContext,
-		HostedSearch:  m.HostedSearch,
-		Model:         m.Model, RewoundFrom: m.RewoundFrom,
+		PromptContext:   m.PromptContext,
+		PromptSnapshots: m.PromptSnapshots,
+		HostedSearch:    m.HostedSearch,
+		Model:           m.Model, RewoundFrom: m.RewoundFrom,
 		StopReason: m.StopReason, RawStopReason: m.RawStopReason,
 	}
 	if len(m.Parts) > 0 {
@@ -128,6 +137,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	m.Role, m.ToolCalls, m.ToolCallID, m.Name = raw.Role, raw.ToolCalls, raw.ToolCallID, raw.Name
 	m.Authored, m.SentAt, m.Usage, m.Model, m.RewoundFrom = raw.Authored, raw.SentAt, raw.Usage, raw.Model, raw.RewoundFrom
 	m.PromptContext = raw.PromptContext
+	m.PromptSnapshots = raw.PromptSnapshots
 	m.StopReason, m.RawStopReason = raw.StopReason, raw.RawStopReason
 	if len(raw.Content) == 0 {
 		return nil

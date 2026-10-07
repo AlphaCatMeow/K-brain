@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -558,7 +559,8 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if requestedID, ok := ctx.Value(userMessageIDKey{}).(string); ok && requestedID != "" {
 		messageID = requestedID
 	}
-	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored, PromptContext: a.promptContext()}
+	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored,
+		PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
 	if resumeID != "" {
 		userMessage.ID = resumeID
 	}
@@ -594,10 +596,13 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		if err := a.maybeCompactForRequest(ctx, ev); err != nil {
 			return "", err
 		}
-		msgs := a.Messages
 		if notice := a.takeContextNotice(); notice != "" {
-			msgs = append(append([]ai.Message(nil), msgs...), ai.Message{Role: "system", Content: notice})
+			message := ai.Message{Role: "user", Content: notice, PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
+			a.msgsMu.Lock()
+			a.Messages = append(a.Messages, message)
+			a.msgsMu.Unlock()
 		}
+		msgs := a.Messages
 		requestTools := a.AllTools()
 		if a.RequestToolFilter != nil {
 			requestTools = a.RequestToolFilter(requestTools)
@@ -850,8 +855,8 @@ func EstimateTokens(msgs []ai.Message) int {
 	total := 0
 	for _, m := range msgs {
 		total += 4 + (len(m.TextContent())+3)/4
-		if m.PromptContext != "" {
-			total += (len(m.PromptContext) + len("\n\n<kbrain-context>\n\n</kbrain-context>") + 3) / 4
+		if context := promptContextText(m); context != "" {
+			total += (len(context) + len("\n\n<kbrain-context>\n\n</kbrain-context>") + 3) / 4
 		}
 		for _, p := range m.Parts {
 			if p.Type != "text" {
@@ -933,19 +938,45 @@ func (a *Agent) compact(ctx context.Context) (summary string, cutoff int, info C
 			label = mdl + " @ " + u.Host
 		}
 	}
-	sum, usage, cerr := cli.Complete(ctx, ai.Request{
+	summaryRequest := ai.Request{
 		Model:     mdl,
 		MaxTokens: 4096,
 		Messages: []ai.Message{
 			sysPrompt,
 			{Role: "user", Content: summaryPrompt},
 		},
-	})
+	}
+	if !dedicated && mdl == a.Model {
+		prefix := withPromptContext(a.modeMessages(a.Messages[:tailStart]))
+		if a.turnTimeContext {
+			prefix = withTurnTimes(prefix)
+		}
+		messages := append(prefix, ai.Message{Role: "user", Content: cachedSummaryInstruction})
+		requestTools := a.AllTools()
+		if a.RequestToolFilter != nil {
+			requestTools = a.RequestToolFilter(requestTools)
+		}
+		definitions := tools.Defs(requestTools)
+		encodedTools, _ := json.Marshal(definitions)
+		if a.ContextLimit <= 0 || EstimateTokens(messages)+(len(encodedTools)+3)/4+4096 < a.ContextLimit {
+			summaryRequest.Messages = messages
+			summaryRequest.Tools = definitions
+			summaryRequest.ReasoningEffort = a.Effort
+			summaryRequest.Temperature = a.Temperature
+			summaryRequest.TopP = a.TopP
+			summaryRequest.NativeWebSearch = a.NativeWebSearch
+			summaryRequest.NativeSearchProvider = a.Provider
+		}
+	}
+	sum, usage, cerr := cli.Complete(ctx, summaryRequest)
 	a.addModelUsage(mdl+" @ "+provider, usage)
 	if cerr != nil {
 		return "", 0, CompactInfo{}, fmt.Errorf("compaction summary failed: %w", cerr)
 	}
 	summary = strings.TrimSpace(sum)
+	if summary == "" {
+		return "", 0, CompactInfo{}, errors.New("compaction summary is empty")
+	}
 	kept := append([]ai.Message(nil), tail...)
 	a.msgsMu.Lock()
 	a.Messages = append(append([]ai.Message{}, sysPrompt,
@@ -960,6 +991,8 @@ func (a *Agent) compact(ctx context.Context) (summary string, cutoff int, info C
 }
 
 const summaryPrefix = "Summary of the conversation so far:\n\n"
+
+const cachedSummaryInstruction = "Summarize the conversation above, merging any earlier summary with newer information. Capture the user's intent, decisions made, work completed, files touched, and open tasks with the exact next step. Use these sections: Objective / Key decisions / Completed / Active / Blocked / Relevant files. Be concise; do not include verbatim tool output. Reply only with the summary; do not call tools. End with a single line: Open task: <what the assistant was doing last, or none>."
 
 func buildSummaryPrompt(msgs []ai.Message, prior string) string {
 	var b strings.Builder

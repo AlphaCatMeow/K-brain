@@ -34,6 +34,7 @@ func stripAuthored(msgs []Message) []Message {
 		out[i].Authored = false
 		out[i].SentAt = nil
 		out[i].PromptContext = ""
+		out[i].PromptSnapshots = nil
 		out[i].Usage = nil
 		out[i].Model = ""
 		out[i].RewoundFrom = ""
