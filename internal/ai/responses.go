@@ -51,15 +51,23 @@ func (c *Responses) request(ctx context.Context, req Request, stream bool) (*htt
 	if err := validateAttachments(req.Messages, true, "Responses"); err != nil {
 		return nil, err
 	}
+	ctx = c.cacheContext(ctx, req)
 	c.applyCache(&req)
 	payload, err := responsesPayload(req, stream)
 	if err != nil {
 		return nil, err
 	}
 	if strings.Contains(strings.ToLower(req.Model), "grok") || req.NativeSearchProvider == "xai" {
-		delete(payload, "prompt_cache_key")
-		delete(payload, "prompt_cache_retention")
 		delete(payload, "reasoning")
+	}
+	if c.ResponsesCacheOptions {
+		delete(payload, "prompt_cache_retention")
+		if c.CacheRetention == "none" {
+			payload["prompt_cache_options"] = map[string]any{"mode": "explicit"}
+		}
+		if c.CacheRetention == "long" && c.SupportsLongCacheRetention {
+			payload["prompt_cache_options"] = map[string]any{"ttl": "30m"}
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

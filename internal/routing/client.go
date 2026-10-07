@@ -17,6 +17,9 @@ func ClientForProviderContext(ctx context.Context, prov config.Provider, name st
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := prov.CacheCapabilities.Validate(); err != nil {
+		return nil, err
+	}
 	if !ai.SupportedAPI(prov.API) {
 		return nil, fmt.Errorf("unsupported API %q for provider %q", prov.API, name)
 	}
@@ -65,6 +68,9 @@ func ClientForProviderOptionalContext(ctx context.Context, prov config.Provider,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := prov.CacheCapabilities.Validate(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(prov.BaseURL) == "" || strings.TrimSpace(prov.APIKey) == "" {
 		client := ai.New(prov.BaseURL, "")
 		client.MaxRetries = maxRetries
@@ -86,5 +92,17 @@ func configureCache(client ai.Client, prov config.Provider) {
 		retention = "none"
 	}
 	affinity := prov.CacheSessionAffinity != nil && *prov.CacheSessionAffinity
-	o.SetCacheOptions(ai.CacheOptions{Retention: retention, SessionAffinity: affinity, ControlFormat: prov.CacheControlFormat, SupportsLong: strings.Contains(strings.ToLower(prov.BaseURL), "api.openai.com")})
+	host := ai.CacheEndpointHost(prov.BaseURL)
+	long := host == "api.openai.com" || host == "api.anthropic.com"
+	if prov.CacheCapabilities.SupportsLongRetention != nil {
+		long = *prov.CacheCapabilities.SupportsLongRetention
+	}
+	key := true
+	if host == "api.deepseek.com" || host == "api.x.ai" || prov.Type == "deepseek" || prov.Type == "xai" || prov.Type == "claude_code" || prov.Type == "gemini" || prov.API == ai.APIMessages || prov.API == ai.APIGemini {
+		key = false
+	}
+	if prov.CacheCapabilities.SupportsPromptCacheKey != nil {
+		key = *prov.CacheCapabilities.SupportsPromptCacheKey
+	}
+	o.SetCacheOptions(ai.CacheOptions{Retention: retention, SessionAffinity: affinity, ControlFormat: prov.CacheControlFormat, SupportsLong: long, SupportsKey: &key, AffinityFormat: prov.CacheCapabilities.SessionAffinityFormat, ResponsesCacheOptions: prov.CacheCapabilities.ResponsesCacheOptions})
 }

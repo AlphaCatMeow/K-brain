@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
@@ -44,6 +45,9 @@ func (s *SettingsStore) Snapshot() *config.Config {
 }
 
 type settingsProvider struct {
+	CacheCapabilities      ai.CacheCapabilities  `json:"cacheCapabilities"`
+	CacheSessionAffinity   *bool                 `json:"cacheSessionAffinity,omitempty"`
+	CacheControlFormat     string                `json:"cacheControlFormat,omitempty"`
 	ID                     string                `json:"id"`
 	Name                   string                `json:"name"`
 	Type                   string                `json:"type,omitempty"`
@@ -103,6 +107,9 @@ type settingsModelUpdate struct {
 	Vision          *bool     `json:"vision,omitempty"`
 }
 type settingsProviderUpdate struct {
+	CacheCapabilities      *ai.CacheCapabilities `json:"cacheCapabilities,omitempty"`
+	CacheSessionAffinity   *bool                 `json:"cacheSessionAffinity,omitempty"`
+	CacheControlFormat     *string               `json:"cacheControlFormat,omitempty"`
 	ID                     string                `json:"id"`
 	Name                   string                `json:"name"`
 	Type                   string                `json:"type,omitempty"`
@@ -154,6 +161,7 @@ func projectSettings(cfg *config.Config) settingsProjection {
 	out.Computer = cfg.Computer
 	for id, p := range cfg.Providers {
 		pv := settingsProvider{ID: id, Name: p.Name, Type: p.Type, API: p.API, BaseURL: publicBaseURL(p.BaseURL), IsFullURL: p.IsFullURL, ModelsURL: publicModelsURL(p.ModelsURL), APIKeyConfigured: p.APIKey != "", CustomHeaders: publicHeaders(p.CustomHeaders), ModelOrder: slices.Clone(p.ModelOrder), ActiveModels: slices.Clone(p.ActiveModels), RequestFormat: p.RequestFormat, Reasoning: p.Reasoning, PromptCachingEnabled: p.PromptCachingEnabled, PromptCacheHintMode: p.PromptCacheHintMode, PromptCacheRetention: p.PromptCacheRetention, NativeWebSearchEnabled: p.NativeWebSearchEnabled, UseSystemProxy: p.UseSystemProxy, RetryPolicy: p.RetryPolicy, UsageQuery: publicMetadata(p.UsageQuery), Metadata: publicMetadata(p.Metadata), Models: []settingsModel{}}
+		pv.CacheCapabilities, pv.CacheSessionAffinity, pv.CacheControlFormat = p.CacheCapabilities, p.CacheSessionAffinity, p.CacheControlFormat
 		for modelID, m := range cfg.Models {
 			if !slices.Contains(m.Providers, id) {
 				continue

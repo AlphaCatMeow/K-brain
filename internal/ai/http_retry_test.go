@@ -18,7 +18,7 @@ func retryClient(t *testing.T, protocol, endpoint string, attempts int) Client {
 	t.Helper()
 	api := map[string]string{"chat": APIChatCompletions, "responses": APIResponses, "anthropic": APIMessages}[protocol]
 	c, err := NewClient(ClientOptions{API: api, BaseURL: endpoint, APIKey: "key", MaxRetries: attempts,
-		Cache: CacheOptions{SessionAffinity: true}})
+		Cache: CacheOptions{SessionAffinity: true, AffinityFormat: "openrouter"}})
 	if err != nil {
 		t.Fatal(err)
 	}

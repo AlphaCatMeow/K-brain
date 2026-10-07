@@ -54,9 +54,13 @@ func (c *Anthropic) request(ctx context.Context, req Request, stream bool) (*htt
 	if err := validateAttachments(req.Messages, false, "Anthropic"); err != nil {
 		return nil, err
 	}
-	c.applyCache(&req)
-	if c.CacheRetention != "none" && req.PromptCacheRetention == "" {
+	ctx = c.cacheContext(ctx, req)
+	req.PromptCacheRetention = "none"
+	if c.CacheRetention != "none" {
 		req.PromptCacheRetention = "short"
+	}
+	if c.CacheRetention == "long" && c.SupportsLongCacheRetention {
+		req.PromptCacheRetention = "long"
 	}
 	payload, err := anthropicPayload(req, stream)
 	if err != nil {
@@ -124,7 +128,7 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	}
 	if len(system) > 0 {
 		if cache {
-			system[len(system)-1].(map[string]any)["cache_control"] = map[string]any{"type": "ephemeral"}
+			markCacheBlock(system, cacheControl(req.PromptCacheRetention), false)
 		}
 		p["system"] = system
 	}
@@ -149,13 +153,15 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 		}
 	}
 	if cache {
-		if ms, ok := p["messages"].([]any); ok && len(ms) > 0 {
-			if last, ok := ms[len(ms)-1].(map[string]any); ok {
-				if blocks, ok := last["content"].([]any); ok && len(blocks) > 0 {
-					if b, ok := blocks[len(blocks)-1].(map[string]any); ok && b["type"] != "thinking" && b["type"] != "redacted_thinking" {
-						b["cache_control"] = map[string]any{"type": "ephemeral"}
-					}
-				}
+		ms, _ := p["messages"].([]any)
+		for i := len(ms) - 1; i >= 0; i-- {
+			message, ok := ms[i].(map[string]any)
+			if !ok {
+				continue
+			}
+			blocks, _ := message["content"].([]any)
+			if markCacheBlock(blocks, cacheControl(req.PromptCacheRetention), false) {
+				break
 			}
 		}
 	}
@@ -174,7 +180,7 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	if cache {
 		if ts, ok := p["tools"].([]any); ok && len(ts) > 0 {
 			// Preserve tool-schema reuse even when system instructions change.
-			ts[len(ts)-1].(map[string]any)["cache_control"] = map[string]any{"type": "ephemeral"}
+			ts[len(ts)-1].(map[string]any)["cache_control"] = cacheControl(req.PromptCacheRetention)
 		}
 	}
 	return p, nil

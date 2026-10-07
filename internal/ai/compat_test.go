@@ -116,6 +116,10 @@ func TestResponsesEncryptedReplayAndIncludeMerge(t *testing.T) {
 	for _, model := range []string{"gpt-5.3", "grok-4"} {
 		client := NewResponses(srv.URL, "key")
 		client.SetCacheKey("session-key")
+		if model == "grok-4" {
+			supported := false
+			client.SetCacheOptions(CacheOptions{SupportsKey: &supported})
+		}
 		_, _, err = client.Stream(t.Context(), Request{Model: model, ReasoningEffort: "high", NativeWebSearch: true, Messages: []Message{saved, {Role: "tool", ToolCallID: "c", Content: "result"}}}, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)

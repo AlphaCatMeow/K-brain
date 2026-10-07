@@ -14,6 +14,7 @@ func (c *OpenAI) postJSON(ctx context.Context, path string, body []byte, stream 
 }
 
 func (c *OpenAI) postJSONOnce(ctx context.Context, path string, body []byte, stream bool, headers http.Header) (*http.Response, error) {
+	observeCacheRequest(ctx, path, body)
 	endpoint := c.BaseURL + path
 	if c.IsFullURL {
 		endpoint = c.BaseURL

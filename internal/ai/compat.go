@@ -126,5 +126,6 @@ func (c *OpenAI) chatBody(req Request) ([]byte, error) {
 			i++
 		}
 	}
+	c.applyChatCacheControl(p)
 	return json.Marshal(p)
 }

@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -188,6 +190,9 @@ type OpenAI struct {
 	CacheSessionAffinity       bool
 	CacheControlFormat         string
 	SupportsLongCacheRetention bool
+	SupportsPromptCacheKey     *bool
+	CacheSessionAffinityFormat string
+	ResponsesCacheOptions      bool
 }
 
 func (c *OpenAI) Clone() Client        { cp := *c; cp.Headers = c.Headers.Clone(); return &cp }
@@ -195,10 +200,13 @@ func (c *OpenAI) SetCacheKey(k string) { c.CacheKey = k }
 func (c *OpenAI) Endpoint() string     { return c.BaseURL }
 
 type CacheOptions struct {
-	Retention       string
-	SessionAffinity bool
-	ControlFormat   string
-	SupportsLong    bool
+	Retention             string
+	SessionAffinity       bool
+	ControlFormat         string
+	SupportsLong          bool
+	SupportsKey           *bool
+	AffinityFormat        string
+	ResponsesCacheOptions bool
 }
 
 func (c *OpenAI) SetCacheOptions(o CacheOptions) {
@@ -212,6 +220,13 @@ func (c *OpenAI) SetCacheOptions(o CacheOptions) {
 	c.CacheSessionAffinity = o.SessionAffinity
 	c.CacheControlFormat = o.ControlFormat
 	c.SupportsLongCacheRetention = o.SupportsLong
+	c.SupportsPromptCacheKey = nil
+	if o.SupportsKey != nil {
+		value := *o.SupportsKey
+		c.SupportsPromptCacheKey = &value
+	}
+	c.CacheSessionAffinityFormat = o.AffinityFormat
+	c.ResponsesCacheOptions = o.ResponsesCacheOptions
 }
 
 func (c *OpenAI) policy() retryPolicy { return newRetryPolicy(c.MaxRetries, c.OnRetry) }
@@ -454,11 +469,11 @@ func clampCacheKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	r := []rune(key)
-	if len(r) > 64 {
-		r = r[:64]
+	if len(key) <= 64 {
+		return key
 	}
-	return string(r)
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
 }
 
 func (c *OpenAI) applyCache(req *Request) {
@@ -475,19 +490,50 @@ func (c *OpenAI) applyCache(req *Request) {
 		req.PromptCacheKey = c.CacheKey
 	}
 	req.PromptCacheKey = clampCacheKey(req.PromptCacheKey)
+	if c.SupportsPromptCacheKey != nil && !*c.SupportsPromptCacheKey {
+		req.PromptCacheKey = ""
+	}
+	req.PromptCacheRetention = ""
 	if retention == "long" && c.SupportsLongCacheRetention {
 		req.PromptCacheRetention = "24h"
 	}
 }
 
 func (c *OpenAI) applyCacheHeaders(req *http.Request) {
-	if !c.CacheSessionAffinity || c.CacheRetention == "none" || c.CacheKey == "" {
+	if c.CacheRetention == "none" {
 		return
 	}
-	key := clampCacheKey(c.CacheKey)
-	req.Header.Set("x-session-id", key)
-	req.Header.Set("x-client-request-id", key)
-	req.Header.Set("x-session-affinity", key)
+	key, ok := req.Context().Value(cacheRequestKey{}).(string)
+	if !ok {
+		key = clampCacheKey(c.CacheKey)
+	}
+	if key == "" {
+		return
+	}
+	format := c.CacheSessionAffinityFormat
+	if format == "" && c.CacheSessionAffinity {
+		switch CacheEndpointHost(c.BaseURL) {
+		case "api.openai.com":
+			format = "openai"
+		case "openrouter.ai":
+			format = "openrouter"
+		}
+	}
+	set := func(name string) {
+		if !hasHeader(req.Header, name) {
+			req.Header.Set(name, key)
+		}
+	}
+	switch format {
+	case "openai":
+		set("session_id")
+		fallthrough
+	case "openai-nosession":
+		set("x-client-request-id")
+		set("x-session-affinity")
+	case "openrouter":
+		set("x-session-id")
+	}
 }
 
 func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(string), onToolCall func(id, name, args string)) (Message, Usage, error) {
@@ -502,6 +548,7 @@ func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(s
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return Message{}, Usage{}, err
 	}
+	ctx = c.cacheContext(ctx, req)
 	c.applyCache(&req)
 	body, err := c.chatBody(req)
 	if err != nil {
@@ -665,6 +712,7 @@ func (c *OpenAI) Complete(ctx context.Context, req Request) (string, Usage, erro
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return "", Usage{}, err
 	}
+	ctx = c.cacheContext(ctx, req)
 	c.applyCache(&req)
 	body, err := c.chatBody(req)
 	if err != nil {

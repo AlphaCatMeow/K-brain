@@ -115,6 +115,24 @@ func endpointURL(raw string) error {
 }
 
 func updateProvider(p config.Provider, in settingsProviderUpdate) (config.Provider, error) {
+	if in.CacheCapabilities != nil {
+		if err := in.CacheCapabilities.Validate(); err != nil {
+			return p, err
+		}
+		p.CacheCapabilities = *in.CacheCapabilities
+	}
+	if in.CacheSessionAffinity != nil {
+		p.CacheSessionAffinity = in.CacheSessionAffinity
+	}
+	if in.CacheControlFormat != nil {
+		if *in.CacheControlFormat != "" && *in.CacheControlFormat != "anthropic" {
+			return p, fmt.Errorf("unsupported cacheControlFormat")
+		}
+		p.CacheControlFormat = *in.CacheControlFormat
+	}
+	if in.PromptCacheRetention != "" && in.PromptCacheRetention != "none" && in.PromptCacheRetention != "short" && in.PromptCacheRetention != "long" {
+		return p, fmt.Errorf("unsupported promptCacheRetention")
+	}
 	if in.Type != "" {
 		if !slices.Contains([]string{"codex", "claude_code", "gemini", "xai", "deepseek"}, in.Type) {
 			return p, fmt.Errorf("unsupported provider type")

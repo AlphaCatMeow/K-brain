@@ -18,28 +18,29 @@ import (
 )
 
 type Provider struct {
-	Name                   string         `json:"name,omitempty"`
-	Type                   string         `json:"type,omitempty"`
-	BaseURL                string         `json:"baseUrl"`
-	IsFullURL              bool           `json:"isFullUrl,omitempty"`
-	ModelsURL              string         `json:"modelsUrl,omitempty"`
-	API                    string         `json:"api"`
-	APIKey                 string         `json:"apiKey"`
-	CustomHeaders          []CustomHeader `json:"customHeaders,omitempty"`
-	ActiveModels           []string       `json:"activeModels"`
-	ModelOrder             []string       `json:"modelOrder,omitempty"`
-	RequestFormat          string         `json:"requestFormat,omitempty"`
-	Reasoning              string         `json:"reasoning,omitempty"`
-	PromptCacheHintMode    string         `json:"promptCacheHintMode,omitempty"`
-	NativeWebSearchEnabled bool           `json:"nativeWebSearchEnabled,omitempty"`
-	UseSystemProxy         bool           `json:"useSystemProxy,omitempty"`
-	Metadata               map[string]any `json:"metadata,omitempty"`
-	PromptCachingEnabled   *bool          `json:"promptCachingEnabled,omitempty"`
-	PromptCacheRetention   string         `json:"promptCacheRetention,omitempty"`
-	RetryPolicy            map[string]any `json:"retryPolicy,omitempty"`
-	UsageQuery             map[string]any `json:"usageQuery,omitempty"`
-	CacheSessionAffinity   *bool          `json:"cacheSessionAffinity,omitempty"`
-	CacheControlFormat     string         `json:"cacheControlFormat,omitempty"`
+	Name                   string               `json:"name,omitempty"`
+	Type                   string               `json:"type,omitempty"`
+	BaseURL                string               `json:"baseUrl"`
+	IsFullURL              bool                 `json:"isFullUrl,omitempty"`
+	ModelsURL              string               `json:"modelsUrl,omitempty"`
+	API                    string               `json:"api"`
+	APIKey                 string               `json:"apiKey"`
+	CustomHeaders          []CustomHeader       `json:"customHeaders,omitempty"`
+	ActiveModels           []string             `json:"activeModels"`
+	ModelOrder             []string             `json:"modelOrder,omitempty"`
+	RequestFormat          string               `json:"requestFormat,omitempty"`
+	Reasoning              string               `json:"reasoning,omitempty"`
+	PromptCacheHintMode    string               `json:"promptCacheHintMode,omitempty"`
+	NativeWebSearchEnabled bool                 `json:"nativeWebSearchEnabled,omitempty"`
+	UseSystemProxy         bool                 `json:"useSystemProxy,omitempty"`
+	Metadata               map[string]any       `json:"metadata,omitempty"`
+	PromptCachingEnabled   *bool                `json:"promptCachingEnabled,omitempty"`
+	PromptCacheRetention   string               `json:"promptCacheRetention,omitempty"`
+	RetryPolicy            map[string]any       `json:"retryPolicy,omitempty"`
+	UsageQuery             map[string]any       `json:"usageQuery,omitempty"`
+	CacheSessionAffinity   *bool                `json:"cacheSessionAffinity,omitempty"`
+	CacheControlFormat     string               `json:"cacheControlFormat,omitempty"`
+	CacheCapabilities      ai.CacheCapabilities `json:"cacheCapabilities,omitzero"`
 
 	Models []PiModel `json:"models"`
 }
@@ -329,6 +330,12 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 	sharedMetadata := make(map[string]PiModel)
 	for _, name := range slices.Sorted(maps.Keys(cfg.Providers)) {
 		provider := cfg.Providers[name]
+		if err := provider.CacheCapabilities.Validate(); err != nil {
+			return fmt.Errorf("provider %q: %w", name, err)
+		}
+		if provider.CacheControlFormat != "" && provider.CacheControlFormat != "anthropic" {
+			return fmt.Errorf("provider %q: unsupported cacheControlFormat", name)
+		}
 		if provider.API == "" {
 			switch provider.Type {
 			case "claude_code":
