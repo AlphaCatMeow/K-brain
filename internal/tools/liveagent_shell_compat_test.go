@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/tools/bashrun"
 )
@@ -92,10 +93,24 @@ func TestLiveAgentShellOverrideSyncYieldManaged(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := fieldValue(out, "process_id")
+			waitProcessExitForTest(t, manager, id)
 			result, err := findToolForTest(catalog, "ProcessWait").Run(ctx, mustJSON(map[string]any{"session_id": id, "yield_time_ms": 10000, "cursor": 0}))
 			if err != nil || !strings.Contains(result, "exit_code=7") || !strings.Contains(result, "override-ok 中文") {
 				t.Fatalf("%s output=%q err=%v", name, result, err)
 			}
 		}
+	}
+}
+
+func waitProcessExitForTest(t *testing.T, manager *ManagedProcessManager, id string) {
+	t.Helper()
+	p, err := manager.get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("process failed to finish")
 	}
 }

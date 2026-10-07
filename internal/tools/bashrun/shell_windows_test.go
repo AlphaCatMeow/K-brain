@@ -74,7 +74,9 @@ func TestWindowsPowerShellErrorsAndCwd(t *testing.T) {
 	}
 	res := Run(t.Context(), Options{Shell: "powershell", Command: "[Console]::Write((Get-Location).Path)"})
 	wd, _ := os.Getwd()
-	if res.Exit != "" || !strings.EqualFold(strings.TrimSpace(res.Output), wd) {
+	want, wantErr := os.Stat(wd)
+	got, gotErr := os.Stat(strings.TrimSpace(res.Output))
+	if res.Exit != "" || wantErr != nil || gotErr != nil || !os.SameFile(want, got) {
 		t.Fatalf("%+v, cwd %q", res, wd)
 	}
 }

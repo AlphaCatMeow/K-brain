@@ -94,7 +94,8 @@ func startTerminal(ctx context.Context, cmd *exec.Cmd, cols, rows uint16) (termi
 	if result == 0 {
 		return nil, attrErr
 	}
-	si := windows.StartupInfoEx{StartupInfo: windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))}, ProcThreadAttributeList: attrs.List()}
+	// Prevent inheriting the parent's console handles instead of ConPTY's streams.
+	si := windows.StartupInfoEx{StartupInfo: windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{})), Flags: windows.STARTF_USESTDHANDLES}, ProcThreadAttributeList: attrs.List()}
 	app, err := windows.UTF16PtrFromString(cmd.Path)
 	if err != nil {
 		return nil, err

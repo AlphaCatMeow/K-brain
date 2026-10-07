@@ -44,6 +44,7 @@ func TestWindowsLiveAgentPowerShellInvocationAndExit(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				waitProcessExitForTest(t, manager, fieldValue(out, "process_id"))
 				out, err = findToolForTest(catalog, "ProcessWait").Run(ctx, mustJSON(map[string]any{"session_id": fieldValue(out, "process_id"), "yield_time_ms": 10000, "cursor": 0}))
 				if err != nil || !strings.Contains(out, "exit_code=7") || !strings.Contains(out, "unicode 中文") {
 					t.Fatalf("%s yield: %q %v", shell, out, err)
