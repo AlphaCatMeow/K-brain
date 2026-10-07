@@ -134,6 +134,10 @@ func (m *LiveManager) Statuses() []LiveStatus {
 	out := make([]LiveStatus, 0, len(settings.Servers))
 	for _, server := range settings.Servers {
 		st := byName[server.ID]
+		if isManagedComputerServer(server) {
+			out = append(out, LiveStatus{LiveServer: redactLiveServer(server), Status: "managed", Error: "Computer use is owned by K-brain computer_exec; configure it through computer settings"})
+			continue
+		}
 		out = append(out, LiveStatus{LiveServer: redactLiveServer(server), Status: st.Status.String(), Error: st.Err, Tools: st.Tools})
 	}
 	return out
@@ -194,6 +198,9 @@ func (m *LiveManager) Reload() error {
 func (m *LiveManager) reloadLocked() error {
 	configs := make(map[string]ServerConfig)
 	for _, server := range m.settings.Servers {
+		if isManagedComputerServer(server) {
+			continue
+		}
 		cfg, err := m.transportConfig(server)
 		if err != nil {
 			return fmt.Errorf("mcp server %q: %w", server.ID, err)
@@ -214,6 +221,12 @@ func (m *LiveManager) reloadLocked() error {
 		old.Close()
 	}
 	return nil
+}
+
+func isManagedComputerServer(server LiveServer) bool {
+	command := strings.ReplaceAll(strings.Trim(strings.TrimSpace(server.Command), "\""), "\\", "/")
+	name := strings.ToLower(filepath.Base(command))
+	return strings.EqualFold(strings.TrimSpace(server.ID), "cua-driver") || name == "cua-driver" || name == "cua-driver.exe"
 }
 
 func (m *LiveManager) transportConfig(server LiveServer) (ServerConfig, error) {

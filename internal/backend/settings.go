@@ -81,12 +81,13 @@ type settingsModel struct {
 	Vision          bool     `json:"vision,omitempty"`
 }
 type settingsProjection struct {
-	Version         string             `json:"version"`
-	Mode            string             `json:"mode"`
-	DefaultModel    string             `json:"defaultModel"`
-	DefaultProvider string             `json:"defaultProvider"`
-	Providers       []settingsProvider `json:"providers"`
-	Models          []settingsModel    `json:"models"`
+	Computer        config.ComputerConfig `json:"computer"`
+	Version         string                `json:"version"`
+	Mode            string                `json:"mode"`
+	DefaultModel    string                `json:"defaultModel"`
+	DefaultProvider string                `json:"defaultProvider"`
+	Providers       []settingsProvider    `json:"providers"`
+	Models          []settingsModel       `json:"models"`
 }
 type settingsModelUpdate struct {
 	Provider        string    `json:"provider,omitempty"`
@@ -129,6 +130,7 @@ type settingsProviderUpdate struct {
 	Models                 []settingsModelUpdate `json:"models"`
 }
 type settingsUpdate struct {
+	Computer        *config.ComputerConfig   `json:"computer,omitempty"`
 	DefaultModel    *string                  `json:"defaultModel,omitempty"`
 	DefaultProvider *string                  `json:"defaultProvider,omitempty"`
 	Providers       []settingsProviderUpdate `json:"providers,omitempty"`
@@ -149,6 +151,7 @@ func publicBaseURL(raw string) string {
 
 func projectSettings(cfg *config.Config) settingsProjection {
 	out := settingsProjection{Version: protocol.Version, Mode: "kbrain", DefaultModel: cfg.DefaultModel, DefaultProvider: cfg.DefaultProvider, Providers: []settingsProvider{}, Models: []settingsModel{}}
+	out.Computer = cfg.Computer
 	for id, p := range cfg.Providers {
 		pv := settingsProvider{ID: id, Name: p.Name, Type: p.Type, API: p.API, BaseURL: publicBaseURL(p.BaseURL), IsFullURL: p.IsFullURL, ModelsURL: publicModelsURL(p.ModelsURL), APIKeyConfigured: p.APIKey != "", CustomHeaders: publicHeaders(p.CustomHeaders), ModelOrder: slices.Clone(p.ModelOrder), ActiveModels: slices.Clone(p.ActiveModels), RequestFormat: p.RequestFormat, Reasoning: p.Reasoning, PromptCachingEnabled: p.PromptCachingEnabled, PromptCacheHintMode: p.PromptCacheHintMode, PromptCacheRetention: p.PromptCacheRetention, NativeWebSearchEnabled: p.NativeWebSearchEnabled, UseSystemProxy: p.UseSystemProxy, RetryPolicy: p.RetryPolicy, UsageQuery: publicMetadata(p.UsageQuery), Metadata: publicMetadata(p.Metadata), Models: []settingsModel{}}
 		for modelID, m := range cfg.Models {
@@ -239,6 +242,19 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func applySettings(cfg *config.Config, update settingsUpdate) error {
+	if update.Computer != nil {
+		computer := *update.Computer
+		if computer.Backend != "" && computer.Backend != "cua" && computer.Backend != "legacy" {
+			return fmt.Errorf("computer.backend must be cua or legacy")
+		}
+		if computer.ApprovalPolicy != "" && computer.ApprovalPolicy != "ask" && computer.ApprovalPolicy != "allow" && computer.ApprovalPolicy != "deny" {
+			return fmt.Errorf("computer.approvalPolicy must be ask, allow or deny")
+		}
+		if len(computer.Command) > 0 && strings.TrimSpace(computer.Command[0]) == "" {
+			return fmt.Errorf("computer.command executable cannot be empty")
+		}
+		cfg.Computer = computer
+	}
 	if cfg.Providers == nil {
 		cfg.Providers = map[string]config.Provider{}
 	}

@@ -85,6 +85,7 @@ func (a *Agent) newSub(o SubModel) *Agent {
 	sub.WorktreeSubagents = a.WorktreeSubagents
 	sub.BrowserDisabled = a.BrowserDisabled
 	sub.ComputerDisabled = a.ComputerDisabled
+	sub.ComputerConfig = a.ComputerConfig
 	sub.SandboxPolicy = a.SandboxPolicy
 	sub.Hooks = a.Hooks
 	sub.PluginHook = a.PluginHook

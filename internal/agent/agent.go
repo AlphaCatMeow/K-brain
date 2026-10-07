@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/hooks"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
@@ -168,6 +169,7 @@ type Agent struct {
 	BrowserDisabled bool
 
 	ComputerDisabled bool
+	ComputerConfig   config.ComputerConfig
 	SandboxPolicy    *sandbox.Policy
 
 	OnOrphanedSteer func(text string)
@@ -367,7 +369,11 @@ func New(client ai.Client, model string, maxTokens int, systemPrompt string, opt
 		a.Tools = append(a.Tools, tools.BrowserExec())
 	}
 	if !a.ComputerDisabled {
-		a.Tools = append(a.Tools, tools.ComputerExec())
+		if a.ComputerConfig.Backend == "legacy" {
+			a.Tools = append(a.Tools, tools.LegacyComputerExec())
+		} else {
+			a.Tools = append(a.Tools, tools.ComputerExec())
+		}
 	}
 	sessionTools := []tools.Tool{tools.QuestionTool(), taskTool(a), taskSteerTool(a)}
 	sessionTools = append(sessionTools, newContextTool(a))
@@ -504,7 +510,7 @@ func (a *Agent) ContinueUser(ctx context.Context, messageID string, ev Events) (
 	return a.turnPending(ctx, "", nil, true, messageID, ev)
 }
 
-func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.ContentPart, authored bool, resumeID string, ev Events) (string, error) {
+func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.ContentPart, authored bool, resumeID string, ev Events) (answer string, turnErr error) {
 	if !a.turnMu.TryLock() {
 		return "", ErrBusy
 	}
@@ -537,6 +543,11 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	}
 	if err := a.StartSession(ctx); err != nil {
 		return "", err
+	}
+	if !a.ComputerDisabled && a.ComputerConfig.Backend != "legacy" {
+		var closeComputer func() error
+		ctx, closeComputer = a.computerTurn(ctx)
+		defer func() { turnErr = errors.Join(turnErr, closeComputer()) }()
 	}
 	a.RefreshMemory()
 	if a.memoryRuntime != nil {

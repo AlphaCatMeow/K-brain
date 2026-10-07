@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
@@ -17,15 +18,12 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/backend"
-	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/mcp"
-	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
 	sysprompt "github.com/Stack-Cairn/K-brain/internal/prompts"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
-	"github.com/Stack-Cairn/K-brain/internal/resources"
 	"github.com/Stack-Cairn/K-brain/internal/routing"
-	"github.com/Stack-Cairn/K-brain/internal/session"
+	"github.com/Stack-Cairn/K-brain/internal/storage"
 )
 
 func backendCLI(args []string) error {
@@ -34,6 +32,9 @@ func backendCLI(args []string) error {
 	parentStdio := fs.Bool("parent-stdio", false, "shut down when stdin reaches EOF or returns a read error")
 	token := fs.String("token", os.Getenv("K_BRAIN_BACKEND_TOKEN"), "Bearer token; defaults to K_BRAIN_BACKEND_TOKEN")
 	configPath := fs.String("config", "", "Configuration file; defaults to the user configuration")
+	dataDir := fs.String("data-dir", "", "User data root (configuration, sessions, memory, and prompts)")
+	prepareStorage := fs.Bool("prepare-storage", false, "Initialize and validate storage, then exit without starting tools or model clients")
+	legacyDesktopDir := fs.String("legacy-desktop-dir", "", "Import legacy desktop data before opening storage (honors previous migration markers)")
 	sessionDir := fs.String("session-dir", "", "Session storage directory; defaults to project storage")
 	memoryOrganizerInterval := fs.Duration("memory-organizer-interval", 24*time.Hour, "interval for backend memory organizer runs; 0 uses 24h")
 	fs.Usage = func() {
@@ -44,41 +45,28 @@ func backendCLI(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	var cfg *config.Config
-	var err error
-	if *configPath != "" {
-		cfg, err = config.LoadFile(*configPath)
-	} else {
-		cfg, err = config.Load()
-	}
-	if err != nil {
-		return err
-	}
-	var store *session.Store
-	if *sessionDir != "" {
-		store, err = session.OpenProjectDir(*sessionDir)
-	} else {
-		var dir string
-		dir, err = config.Dir()
-		if err == nil {
-			store, err = session.OpenProjectHome(dir)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("session storage: %w", err)
-	}
-	defer store.Close()
-
-	configFilename := *configPath
-	if configFilename == "" {
-		configFilename, err = config.Path()
+	if *dataDir != "" {
+		root, err := filepath.Abs(*dataDir)
 		if err != nil {
 			return err
 		}
+		// Resource loaders in the runtime must use the same root as persistent stores.
+		if err := os.Setenv("LIVEAGENT_HOME", root); err != nil {
+			return err
+		}
+		*dataDir = root
 	}
-	settings := backend.NewSettingsStore(cfg, func(next *config.Config) error {
-		return next.SaveFile(configFilename)
-	})
+	data, err := storage.OpenLocal(storage.Options{Root: *dataDir, ConfigPath: *configPath, SessionDir: *sessionDir, LegacyDesktopDir: *legacyDesktopDir})
+	if err != nil {
+		return fmt.Errorf("initialize backend storage: %w", err)
+	}
+	defer data.Close()
+	if *prepareStorage {
+		fmt.Println("k-brain backend storage prepared")
+		return nil
+	}
+	cfg, store, configFilename := data.Config, data.Sessions, data.ConfigPath
+	settings := backend.NewSettingsStore(cfg, data.SaveConfig)
 	closeTools, err := initializeToolRuntime(cfg)
 	if err != nil {
 		return err
@@ -89,14 +77,7 @@ func backendCLI(args []string) error {
 		return fmt.Errorf("MCP manager: %w", err)
 	}
 	defer liveMCP.Close()
-	promptRoot, promptErr := config.Dir()
-	if promptErr != nil {
-		return fmt.Errorf("prompt resources: %w", promptErr)
-	}
-	promptStore, promptErr := resources.OpenPrompts(promptRoot)
-	if promptErr != nil {
-		return fmt.Errorf("prompt resources: %w", promptErr)
-	}
+	promptStore := data.Prompts
 
 	models := make([]backendModel, 0, len(cfg.Models))
 	for name, model := range cfg.Models {
@@ -148,10 +129,7 @@ func backendCLI(args []string) error {
 		return ag, nil
 	}
 
-	memoryStore, memoryErr := memory.OpenStore("")
-	if memoryErr != nil {
-		return fmt.Errorf("memory storage: %w", memoryErr)
-	}
+	memoryStore := data.Memory
 	memoryRuntimeFactory := func(ctx context.Context, cwd string, selected protocol.ModelRef) (*memoryruntime.Runtime, error) {
 		resolve := func(resolveCtx context.Context, requested string) (ai.Client, string, error) {
 			name := requested
@@ -173,6 +151,7 @@ func backendCLI(args []string) error {
 	}
 	server, err := backend.New(backend.Options{
 		Store:                   store,
+		MemoryStore:             memoryStore,
 		Factory:                 factory,
 		MemoryRuntimeFactory:    memoryRuntimeFactory,
 		MemoryOrganizerInterval: organizerInterval,

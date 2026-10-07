@@ -18,7 +18,7 @@ func TestComputerExecGates(t *testing.T) {
 	defer func() { ComputerPolicy, ComputerApprover = oldP, oldA }()
 	ComputerPolicy, ComputerApprover = nil, nil
 
-	out := Execute(t.Context(), []Tool{ComputerExec()}, "computer_exec", []byte(`{"code":"print(chrome_state())"}`))
+	out := Execute(t.Context(), []Tool{LegacyComputerExec()}, "computer_exec", []byte(`{"code":"print(chrome_state())"}`))
 	if !strings.HasPrefix(out, "Error") {
 		t.Fatalf("want error, got %q", out[:80])
 	}

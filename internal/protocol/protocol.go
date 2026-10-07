@@ -134,11 +134,12 @@ type ToolCall struct {
 }
 
 type ToolResult struct {
-	ID        string `json:"id"`
-	Name      string `json:"name,omitempty"`
-	Output    string `json:"output"`
-	Failed    bool   `json:"failed,omitempty"`
-	Cancelled bool   `json:"cancelled,omitempty"`
+	Content   []ContentBlock `json:"content,omitempty"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name,omitempty"`
+	Output    string         `json:"output"`
+	Failed    bool           `json:"failed,omitempty"`
+	Cancelled bool           `json:"cancelled,omitempty"`
 }
 
 type Usage struct {

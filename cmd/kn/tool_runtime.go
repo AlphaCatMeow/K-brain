@@ -56,5 +56,6 @@ func withToolAvailability(cfg *config.Config) agent.Option {
 	return func(a *agent.Agent) {
 		a.BrowserDisabled = cfg.Browser.Enabled != nil && !*cfg.Browser.Enabled
 		a.ComputerDisabled = cfg.Computer.Enabled != nil && !*cfg.Computer.Enabled
+		agent.WithComputerConfig(cfg.Computer)(a)
 	}
 }

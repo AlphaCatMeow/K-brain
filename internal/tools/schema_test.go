@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuiltinToolSchemasParse(t *testing.T) {
-	for _, tool := range append(append(All(), BrowserExec()), ComputerExec()) {
+	for _, tool := range append(append(All(), BrowserExec()), ComputerExec(), LegacyComputerExec()) {
 		var v any
 		if err := json.Unmarshal(tool.Def.Function.Parameters, &v); err != nil {
 			t.Errorf("%s: schema does not parse: %v", tool.Def.Function.Name, err)

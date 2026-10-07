@@ -48,6 +48,7 @@ type Options struct {
 	Settings                *SettingsStore
 	Prompts                 *resources.PromptStore
 	MemoryRoot              string
+	MemoryStore             *memory.Store
 	MemoryRuntimeFactory    MemoryRuntimeFactory
 	MemoryOrganizerInterval time.Duration
 	QuestionTimeout         time.Duration
@@ -149,9 +150,12 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	memoryStore, err := memory.OpenStore(opts.MemoryRoot)
-	if err != nil {
-		return nil, err
+	memoryStore := opts.MemoryStore
+	if memoryStore == nil {
+		memoryStore, err = memory.OpenStore(opts.MemoryRoot)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cron, err := newCronManager(opts.Store, opts.DefaultCWD, opts.Settings)
 	if err != nil {
@@ -304,6 +308,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/v1/settings" {
 		s.handleSettings(w, r)
+		return
+	}
+	if r.URL.Path == "/v1/computer" {
+		s.handleComputer(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/settings/providers/") && strings.HasSuffix(r.URL.Path, "/models") {
@@ -1102,10 +1110,27 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		if options.Mode == "chat" {
 			return tools.GateReject, "chat mode disables tools"
 		}
+		if options.ApprovalPolicy == "deny" {
+			return tools.GateReject, "approval policy denies this action"
+		}
 		if isUnattendedRun(req.Context) {
 			return tools.GateReject, "unattended scheduled runs cannot request interactive approval"
 		}
-		return runToolGate(options, req, func(req tools.GateRequest) (tools.GateDecision, string) {
+		gateOptions := options
+		if req.Tool == "computer_exec" {
+			policy := computerApprovalPolicy(rt.agent.ComputerConfig)
+			if policy == "deny" {
+				return tools.GateReject, "computer use denied by backend configuration"
+			}
+			if policy == "ask" {
+				gateOptions.ApprovalPolicy = "ask"
+				gateOptions.Tools = &protocol.ToolSelection{Policies: map[string]string{"computer_exec": "ask"}}
+				if options.Tools != nil && options.Tools.Policies["computer_exec"] == "deny" {
+					return tools.GateReject, "computer use denied for this run"
+				}
+			}
+		}
+		return runToolGate(gateOptions, req, func(req tools.GateRequest) (tools.GateDecision, string) {
 			rt.mu.Lock()
 			active := rt.runID == runID && !rt.runDone && !rt.deleted
 			rt.mu.Unlock()
@@ -1200,7 +1225,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}, OnToolStart: func(id, name, args string) {
 		_, _ = rt.publish(protocol.EventToolCall, protocol.ToolCallEvent{ToolCall: protocol.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}}, "")
 	}, OnToolResult: func(id, name string, result tools.Result) {
-		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Failed: result.Failed, Cancelled: result.Cancelled}}, "")
+		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Content: protocol.FromAIMessage(ai.Message{Role: "tool", Parts: result.Parts}).Content, Failed: result.Failed, Cancelled: result.Cancelled}}, "")
 	}, OnToolOutput: func(id, output string) {
 		_, _ = rt.publish(protocol.EventToolStatus, protocol.ToolStatus{ToolCallID: id, Status: "running", Message: output}, "")
 	}, OnUsage: func(u ai.Usage) {

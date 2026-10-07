@@ -46,5 +46,5 @@ func (m *model) computerUseCommand(args []string, text string) {
 }
 
 func computerUseInstruction(task string) string {
-	return "The user asked for this to be done with computer-use. Use the computer_exec tool (drive supported desktop apps; AppleScript helpers are macOS-only) to accomplish it; do not fall back to browser_exec or shell unless computer_exec can't express the step.\n\nTask: " + task
+	return "The user asked for this to be done with computer-use. Use computer_exec to drive supported desktop apps, following its current tool description and runtime instructions; do not fall back to browser_exec or shell unless computer_exec can't express the step.\n\nTask: " + task
 }

@@ -16,3 +16,16 @@ func TestBrowserStepLabel(t *testing.T) {
 		t.Errorf("bare hash: %q", got)
 	}
 }
+
+func TestCuaStepLabel(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"action":"discover"}`:                "Discover Cua tools",
+		`{"action":"describe","tool":"click"}`: "Describe click",
+		`{"action":"call","tool":"type_text","arguments":{"text":"private input"}}`: "type_text",
+		`{"action":"guide","guide":"SKILL.md"}`:                                     "Read Cua guide SKILL.md",
+	} {
+		if got := browserStepLabel(raw); got != want {
+			t.Errorf("%s: %q want %q", raw, got, want)
+		}
+	}
+}

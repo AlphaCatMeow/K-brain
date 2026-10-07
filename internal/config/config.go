@@ -181,6 +181,10 @@ type Hook struct {
 }
 
 type ComputerConfig struct {
+	Backend        string   `json:"backend,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	ApprovalPolicy string   `json:"approvalPolicy,omitempty"`
+
 	Allow []string `json:"allow,omitempty"`
 
 	Deny []string `json:"deny,omitempty"`

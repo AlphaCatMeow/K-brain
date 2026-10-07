@@ -207,6 +207,7 @@ func redactTrajectoryEvents(events []protocol.Event) []protocol.Event {
 		case protocol.EventToolResult:
 			if result, ok := p["tool_result"].(map[string]any); ok {
 				result["output"] = "[redacted]"
+				delete(result, "content")
 			}
 		case protocol.EventToolStatus:
 			p["message"] = "[redacted]"
@@ -229,6 +230,7 @@ func redactTrajectoryEvents(events []protocol.Event) []protocol.Event {
 					}
 					if msg.Content[j].ToolResult != nil {
 						msg.Content[j].ToolResult.Output = "[redacted]"
+						msg.Content[j].ToolResult.Content = nil
 					}
 				}
 				out[i].Payload, _ = json.Marshal(msg)

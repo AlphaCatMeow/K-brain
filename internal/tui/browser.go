@@ -11,10 +11,27 @@ import (
 
 func browserStepLabel(argsJSON string) string {
 	var a struct {
-		Code string `json:"code"`
+		Code   string `json:"code"`
+		Action string `json:"action"`
+		Tool   string `json:"tool"`
+		Guide  string `json:"guide"`
 	}
-	if err := json.Unmarshal([]byte(argsJSON), &a); err != nil || a.Code == "" {
+	if err := json.Unmarshal([]byte(argsJSON), &a); err != nil {
 		return ""
+	}
+	if a.Code == "" {
+		switch a.Action {
+		case "discover":
+			return "Discover Cua tools"
+		case "describe":
+			return "Describe " + a.Tool
+		case "call":
+			return a.Tool
+		case "guide":
+			return "Read Cua guide " + a.Guide
+		default:
+			return ""
+		}
 	}
 	for line := range strings.SplitSeq(a.Code, "\n") {
 		line = strings.TrimSpace(line)
