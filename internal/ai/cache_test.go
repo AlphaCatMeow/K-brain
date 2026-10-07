@@ -2,12 +2,41 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestAnthropicCacheBoundaries(t *testing.T) {
+	for _, retention := range []string{"", "none", "short", "long"} {
+		for _, native := range []bool{false, true} {
+			req := Request{Model: "claude-sonnet-4-6", PromptCacheRetention: retention, NativeWebSearch: native,
+				Messages: []Message{{Role: "system", Content: "rules"}, {Role: "user", Content: "question"}},
+				Tools:    []Tool{NewTool("read", "read file", `{"type":"object"}`)},
+			}
+			payload, err := anthropicPayload(req, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := json.Marshal(payload)
+			want := 3 // tool definitions, system instructions, message tail
+			if retention == "none" || retention == "" {
+				want = 0
+			}
+			if count := strings.Count(string(body), `"cache_control"`); count != want {
+				t.Fatalf("retention=%q native=%t: cache boundaries=%d want=%d", retention, native, count, want)
+			}
+			ts := payload["tools"].([]any)
+			_, marked := ts[len(ts)-1].(map[string]any)["cache_control"]
+			if marked != (want > 0) {
+				t.Fatal("tool boundary must include the final native tool")
+			}
+		}
+	}
+}
 
 func TestPromptCacheKeyStampedFromClient(t *testing.T) {
 	var body []byte

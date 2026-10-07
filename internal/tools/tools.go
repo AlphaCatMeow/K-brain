@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,6 +78,8 @@ func Defs(ts []Tool) []ai.Tool {
 	for i, t := range ts {
 		defs[i] = t.Def
 	}
+	// Discovery order can vary across MCP reconnects without changing the tools.
+	sort.SliceStable(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 

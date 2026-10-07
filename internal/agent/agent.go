@@ -181,6 +181,7 @@ type Agent struct {
 	memoryDisabled       bool
 	memoryRuntime        MemoryRuntime
 	systemPromptResolver func() (string, error)
+	turnTimeContext      bool
 
 	usageMu    sync.Mutex
 	usage      ai.Usage
@@ -569,6 +570,8 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	a.msgsMu.Lock()
 	if resumeID == "" {
 		a.Messages = append(a.Messages, msg)
+	} else {
+		msg = a.Messages[len(a.Messages)-1]
 	}
 	a.msgsMu.Unlock()
 	if err := observeUserMessage(ctx, msg); err != nil {

@@ -35,6 +35,16 @@ func username() string {
 }
 
 func Build(wd string, now time.Time) string {
+	return build(wd, "Current date/time: "+now.Format("Mon Jan 2, 2006 15:04:05 MST (UTC-07:00)"))
+}
+
+// BuildStable keeps reloadable instructions independent of the wall clock.
+// Authored user messages carry their persisted send time in model requests.
+func BuildStable(wd string) string {
+	return build(wd, "Date/time: use the latest user message's <kbrain-turn-time> when present; otherwise query the system clock if needed.")
+}
+
+func build(wd, clock string) string {
 	prompt := `You are an expert coding assistant operating inside k-brain, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
@@ -67,13 +77,13 @@ Here is some useful information about the environment you are running in:
   Working directory: ` + wd + `
   Platform: ` + runtime.GOOS + `
   Default shell: ` + bashrun.DefaultShell() + `
-  Current date/time: ` + now.Format("Mon Jan 2, 2006 15:04:05 MST (UTC-07:00)") + `
+  ` + clock + `
   User: ` + username() + `
 </env>`
 	if custom := config.SystemInstructions(); custom != "" {
 		prompt = custom
 		if !strings.Contains(prompt, "<env>") {
-			prompt += fmt.Sprintf("\n\n<env>\n  Working directory: %s\n  Platform: %s\n  Default shell: %s\n  Current date/time: %s\n  User: %s\n</env>", wd, runtime.GOOS, bashrun.DefaultShell(), now.Format("Mon Jan 2, 2006 15:04:05 MST (UTC-07:00)"), username())
+			prompt += fmt.Sprintf("\n\n<env>\n  Working directory: %s\n  Platform: %s\n  Default shell: %s\n  %s\n  User: %s\n</env>", wd, runtime.GOOS, bashrun.DefaultShell(), clock, username())
 		}
 	}
 	if extra := config.BrainInstructions(); extra != "" {

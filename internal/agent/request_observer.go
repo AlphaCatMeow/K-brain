@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 )
@@ -36,6 +37,9 @@ func withRequestTask(ctx context.Context, id string) context.Context {
 }
 
 func (a *Agent) streamObserved(ctx context.Context, request ai.Request, ev Events) (ai.Message, ai.Usage, error) {
+	if a.turnTimeContext {
+		request.Messages = withTurnTimes(request.Messages)
+	}
 	observer, _ := ctx.Value(requestObserverKey{}).(RequestObserver)
 	if observer != nil {
 		scope, _ := ctx.Value(requestTaskKey{}).(requestTaskScope)
@@ -63,4 +67,21 @@ func (a *Agent) streamObserved(ctx context.Context, request ai.Request, ev Event
 		observer.End(ctx, message, usage, err)
 	}
 	return message, usage, err
+}
+
+// WithTurnTimeContext supplies current context alongside a clock-free system prompt.
+func WithTurnTimeContext() Option {
+	return func(a *Agent) { a.turnTimeContext = true }
+}
+
+// Render persisted timestamps only in requests, without changing displayed history.
+// UTC avoids prefix changes when a session reloads in a different local timezone.
+func withTurnTimes(messages []ai.Message) []ai.Message {
+	out := append([]ai.Message(nil), messages...)
+	for i, message := range out {
+		if message.Role == "user" && message.Authored && message.SentAt != nil && !message.SentAt.IsZero() {
+			out[i].Content = "<kbrain-turn-time>" + message.SentAt.UTC().Format(time.RFC3339) + "</kbrain-turn-time>\n\n" + message.Content
+		}
+	}
+	return out
 }

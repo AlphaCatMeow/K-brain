@@ -63,6 +63,31 @@ func TestSystemPromptEnvBlock(t *testing.T) {
 	}
 }
 
+func TestStableSystemPromptRefreshesResourcesWithoutClock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LIVEAGENT_HOME", home)
+	project := t.TempDir()
+	first := BuildStable(project)
+	if strings.Contains(first, "Current date/time:") || !strings.Contains(first, "<kbrain-turn-time>") {
+		t.Fatal("stable prompt must refer to per-message time instead of wall clock")
+	}
+	if second := BuildStable(project); second != first {
+		t.Fatal("unchanged resources changed the prompt")
+	}
+	if err := os.WriteFile(filepath.Join(project, "AGENTS.md"), []byte("New project rule."), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next := BuildStable(project); next == first || !strings.Contains(next, "New project rule.") {
+		t.Fatal("stable prompt froze project resources")
+	}
+	if err := os.WriteFile(filepath.Join(home, "system.md"), []byte("Custom stable rules."), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if next := BuildStable(project); !strings.Contains(next, "Custom stable rules.") || strings.Contains(next, "Current date/time:") {
+		t.Fatal("custom prompt did not retain stable environment")
+	}
+}
+
 func TestSystemPromptAppendsProjectInstructions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LIVEAGENT_HOME", home)

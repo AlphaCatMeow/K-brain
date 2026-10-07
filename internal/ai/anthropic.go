@@ -171,6 +171,12 @@ func anthropicPayload(req Request, stream bool) (map[string]any, error) {
 	if req.NativeWebSearch {
 		p["tools"] = appendSearchTool(p["tools"], map[string]any{"type": "web_search_20250305", "name": "web_search"})
 	}
+	if cache {
+		if ts, ok := p["tools"].([]any); ok && len(ts) > 0 {
+			// Preserve tool-schema reuse even when system instructions change.
+			ts[len(ts)-1].(map[string]any)["cache_control"] = map[string]any{"type": "ephemeral"}
+		}
+	}
 	return p, nil
 }
 func reasoningBudget(e string, max int) int {
