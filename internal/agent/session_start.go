@@ -54,7 +54,6 @@ func (a *Agent) RefreshMemory() {
 	if len(a.Messages) == 0 || a.Messages[0].Role != "system" {
 		return
 	}
-	content := strings.TrimSuffix(a.Messages[0].Content, a.runtimeMemoryBlock)
-	a.Messages[0].Content = strings.TrimSuffix(content, a.memoryBlock) + block
+	a.Messages[0].Content = strings.TrimSuffix(a.Messages[0].Content, a.memoryBlock) + block
 	a.memoryBlock = block
 }

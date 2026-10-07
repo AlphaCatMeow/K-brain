@@ -26,7 +26,7 @@ func (c *cronWiringClient) Clone() ai.Client { return c }
 func (c *cronWiringClient) Stream(_ context.Context, request ai.Request, text, think func(string), tool func(string, string, string)) (ai.Message, ai.Usage, error) {
 	foundMemory := false
 	for _, m := range request.Messages {
-		if m.Role == "system" && strings.Contains(m.Content, "Memory Index") {
+		if m.Role == "user" && strings.Contains(m.Content, "<kbrain-memory-runtime>") && strings.Contains(m.Content, "Memory Index") {
 			foundMemory = true
 		}
 	}

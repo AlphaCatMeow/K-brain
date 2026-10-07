@@ -97,7 +97,7 @@ func TestTodowriteEndToEnd(t *testing.T) {
 	var sawBlock bool
 	srv := textServer(t, func(n int, req ai.Request) string {
 		for _, m := range req.Messages {
-			if m.Role == "system" && strings.Contains(m.Content, "Your current plan") {
+			if m.Role == "user" && strings.Contains(m.Content, "Your current plan") {
 				sawBlock = true
 				if !strings.Contains(m.Content, "write tests") {
 					t.Errorf("request plan block missing open item:\n%s", m.Content)

@@ -76,7 +76,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	use := ai.Usage{PromptTokens: 12, CompletionTokens: 4}
 	msgs := []ai.Message{
 		{Role: "system", Content: "sys"},
-		{Role: "user", Content: "first question here", Authored: true, SentAt: &sent},
+		{Role: "user", Content: "first question here", Authored: true, SentAt: &sent, PromptContext: "persisted plan and memory"},
 		{
 			Role: "assistant", Content: "the answer", Usage: &use, Model: "kimi-k3-fast @ inference",
 			ToolCalls: []ai.ToolCall{{ID: "c1", DurationMs: 42, ExitCode: 0}},
@@ -102,6 +102,9 @@ func TestStoreRoundTrip(t *testing.T) {
 
 	if got[0].SentAt == nil || !got[0].SentAt.Equal(sent) {
 		t.Fatalf("SentAt did not round-trip: %+v", got[0])
+	}
+	if got[0].PromptContext != msgs[1].PromptContext || got[0].Content != msgs[1].Content {
+		t.Fatal("request snapshot did not round-trip separately from user content")
 	}
 
 	asst := got[1]

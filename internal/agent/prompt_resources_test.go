@@ -24,7 +24,7 @@ func TestSystemPromptResolverPreservesHistoryAndMemory(t *testing.T) {
 	if len(messages) != 2 || messages[1].Content != "history" {
 		t.Fatalf("history changed: %+v", messages)
 	}
-	if messages[0].Content != current+a.memoryBlock+a.runtimeMemoryBlock || strings.Contains(messages[0].Content, "first template") {
+	if messages[0].Content != current+a.memoryBlock || strings.Contains(messages[0].Content, "first template") {
 		t.Fatalf("system prompt = %q", messages[0].Content)
 	}
 }

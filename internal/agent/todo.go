@@ -92,6 +92,25 @@ func (a *Agent) TodosJSON() string {
 	return string(b)
 }
 
+func (a *Agent) todoContext() string {
+	block := a.todoBlock()
+	if block == "" {
+		return ""
+	}
+	a.msgsMu.Lock()
+	defer a.msgsMu.Unlock()
+	for i := len(a.Messages) - 1; i >= 0; i-- {
+		message := a.Messages[i]
+		if message.Role == "tool" && message.Name == "todowrite" {
+			if strings.HasSuffix(message.Content, "\n\n"+block) {
+				return ""
+			}
+			break
+		}
+	}
+	return block
+}
+
 func (a *Agent) LoadTodosJSON(s string) {
 	var items []Todo
 	if s != "" && json.Unmarshal([]byte(s), &items) == nil {
@@ -118,7 +137,11 @@ func todoTool(a *Agent) tools.Tool {
 			if len(in.Todos) == 0 {
 				return "Plan cleared.", nil
 			}
-			return fmt.Sprintf("Plan updated: %d item(s), %d open.", len(in.Todos), open), nil
+			result := fmt.Sprintf("Plan updated: %d item(s), %d open.", len(in.Todos), open)
+			if block := a.todoBlock(); block != "" {
+				result += "\n\n" + block
+			}
+			return result, nil
 		},
 	}
 }

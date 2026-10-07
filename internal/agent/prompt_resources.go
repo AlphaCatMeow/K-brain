@@ -17,7 +17,7 @@ func (a *Agent) refreshSystemPrompt() error {
 	}
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
-	prompt += a.memoryBlock + a.runtimeMemoryBlock
+	prompt += a.memoryBlock
 	if len(a.Messages) > 0 && a.Messages[0].Role == "system" {
 		a.Messages[0].Content = prompt
 	} else {

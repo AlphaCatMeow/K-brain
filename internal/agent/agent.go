@@ -539,7 +539,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	}
 	a.RefreshMemory()
 	if a.memoryRuntime != nil {
-		if block, err := a.memoryRuntime.Inject(ctx, a.WorkingDir); err == nil && strings.TrimSpace(block) != "" {
+		if block, err := a.memoryRuntime.Inject(ctx, a.WorkingDir); err == nil {
 			a.installRuntimeMemory(block)
 		}
 	}
@@ -558,7 +558,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if requestedID, ok := ctx.Value(userMessageIDKey{}).(string); ok && requestedID != "" {
 		messageID = requestedID
 	}
-	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored}
+	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored, PromptContext: a.promptContext()}
 	if resumeID != "" {
 		userMessage.ID = resumeID
 	}
@@ -598,12 +598,6 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		if notice := a.takeContextNotice(); notice != "" {
 			msgs = append(append([]ai.Message(nil), msgs...), ai.Message{Role: "system", Content: notice})
 		}
-		if block := a.todoBlock(); block != "" {
-
-			msgs = append(append([]ai.Message(nil), a.Messages...),
-				ai.Message{Role: "system", Content: block})
-		}
-
 		requestTools := a.AllTools()
 		if a.RequestToolFilter != nil {
 			requestTools = a.RequestToolFilter(requestTools)
@@ -856,6 +850,9 @@ func EstimateTokens(msgs []ai.Message) int {
 	total := 0
 	for _, m := range msgs {
 		total += 4 + (len(m.TextContent())+3)/4
+		if m.PromptContext != "" {
+			total += (len(m.PromptContext) + len("\n\n<kbrain-context>\n\n</kbrain-context>") + 3) / 4
+		}
 		for _, p := range m.Parts {
 			if p.Type != "text" {
 				total += ai.PartTokens(p)

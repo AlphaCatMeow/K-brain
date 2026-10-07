@@ -33,6 +33,7 @@ func stripAuthored(msgs []Message) []Message {
 	for i := range out {
 		out[i].Authored = false
 		out[i].SentAt = nil
+		out[i].PromptContext = ""
 		out[i].Usage = nil
 		out[i].Model = ""
 		out[i].RewoundFrom = ""

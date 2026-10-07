@@ -3,10 +3,27 @@ package protocol
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 )
+
+func TestPromptContextRemainsBackendOwned(t *testing.T) {
+	m := ai.Message{Role: "user", Content: "visible question", PromptContext: "private request snapshot"}
+	canonical := FromAIMessage(m)
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "private request snapshot") || strings.Contains(string(encoded), "prompt_context") {
+		t.Fatal("request context leaked into public history")
+	}
+	converted, err := canonical.ToAIMessage()
+	if err != nil || converted.Content != m.Content || converted.PromptContext != "" {
+		t.Fatalf("unexpected history projection: %+v %v", converted, err)
+	}
+}
 
 func TestMessageRoundTripPreservesCanonicalSemantics(t *testing.T) {
 	args := json.RawMessage(`{"command":"printf hi"}`)

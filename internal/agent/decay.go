@@ -213,7 +213,7 @@ func hotBoundary(msgs []ai.Message) int {
 }
 
 func msgTokens(m ai.Message) int {
-	n := len(m.Content) + len(m.ToolCallID) + len(m.Name)
+	n := len(m.Content) + len(m.PromptContext) + len(m.ToolCallID) + len(m.Name)
 	for _, tc := range m.ToolCalls {
 		n += len(tc.Function.Name) + len(tc.Function.Arguments)
 	}

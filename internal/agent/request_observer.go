@@ -2,10 +2,28 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 )
+
+func (a *Agent) promptContext() string {
+	plan := a.todoContext()
+	a.msgsMu.Lock()
+	defer a.msgsMu.Unlock()
+	block := a.runtimeMemoryBlock
+	for i := len(a.Messages) - 1; block != "" && i >= 0; i-- {
+		previous := a.Messages[i].PromptContext
+		if strings.Contains(previous, "<kbrain-memory-runtime>") {
+			if strings.HasSuffix(previous, block) {
+				block = ""
+			}
+			break
+		}
+	}
+	return plan + block
+}
 
 type RequestObservation struct {
 	ToolCallID   string
@@ -37,6 +55,7 @@ func withRequestTask(ctx context.Context, id string) context.Context {
 }
 
 func (a *Agent) streamObserved(ctx context.Context, request ai.Request, ev Events) (ai.Message, ai.Usage, error) {
+	request.Messages = withPromptContext(request.Messages)
 	if a.turnTimeContext {
 		request.Messages = withTurnTimes(request.Messages)
 	}
@@ -67,6 +86,17 @@ func (a *Agent) streamObserved(ctx context.Context, request ai.Request, ev Event
 		observer.End(ctx, message, usage, err)
 	}
 	return message, usage, err
+}
+
+func withPromptContext(messages []ai.Message) []ai.Message {
+	out := append([]ai.Message(nil), messages...)
+	for i, message := range out {
+		if message.PromptContext != "" {
+			out[i].Content = message.Content + "\n\n<kbrain-context>\n" + message.PromptContext + "\n</kbrain-context>"
+			out[i].PromptContext = ""
+		}
+	}
+	return out
 }
 
 // WithTurnTimeContext supplies current context alongside a clock-free system prompt.

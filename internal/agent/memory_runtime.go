@@ -49,14 +49,8 @@ func (a *Agent) installRuntimeMemory(block string) {
 	const marker = "\n\n<kbrain-memory-runtime>\n"
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
-	if len(a.Messages) == 0 || a.Messages[0].Role != "system" {
-		return
+	if strings.TrimSpace(block) == "" {
+		block = "No current memory entries."
 	}
-	content := a.Messages[0].Content
-	if a.runtimeMemoryBlock != "" {
-		content = strings.TrimSuffix(content, a.runtimeMemoryBlock)
-	}
-	runtimeBlock := marker + block + "\n</kbrain-memory-runtime>"
-	a.Messages[0].Content = strings.TrimRight(content, "\n") + runtimeBlock
-	a.runtimeMemoryBlock = runtimeBlock
+	a.runtimeMemoryBlock = marker + "Current memory index; replaces earlier memory index snapshots.\n" + block + "\n</kbrain-memory-runtime>"
 }

@@ -24,6 +24,9 @@ type Message struct {
 
 	SentAt *time.Time `json:"sent_at,omitempty"`
 
+	// PromptContext is a persisted request-only snapshot, not user-authored text.
+	PromptContext string `json:"prompt_context,omitempty"`
+
 	Usage *Usage `json:"usage,omitempty"`
 
 	Model string `json:"model,omitempty"`
@@ -88,6 +91,7 @@ type messageWire struct {
 	Name          string          `json:"name,omitempty"`
 	Authored      bool            `json:"authored,omitempty"`
 	SentAt        *time.Time      `json:"sent_at,omitempty"`
+	PromptContext string          `json:"prompt_context,omitempty"`
 	Usage         *Usage          `json:"usage,omitempty"`
 	Model         string          `json:"model,omitempty"`
 	StopReason    StopReason      `json:"stop_reason,omitempty"`
@@ -101,8 +105,9 @@ func (m Message) MarshalJSON() ([]byte, error) {
 		Reasoning: m.Reasoning,
 		Replay:    m.Replay,
 		Name:      m.Name, Authored: m.Authored, SentAt: m.SentAt, Usage: m.Usage,
-		HostedSearch: m.HostedSearch,
-		Model:        m.Model, RewoundFrom: m.RewoundFrom,
+		PromptContext: m.PromptContext,
+		HostedSearch:  m.HostedSearch,
+		Model:         m.Model, RewoundFrom: m.RewoundFrom,
 		StopReason: m.StopReason, RawStopReason: m.RawStopReason,
 	}
 	if len(m.Parts) > 0 {
@@ -122,6 +127,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	*m = Message{ID: raw.ID, Reasoning: raw.Reasoning, Replay: raw.Replay}
 	m.Role, m.ToolCalls, m.ToolCallID, m.Name = raw.Role, raw.ToolCalls, raw.ToolCallID, raw.Name
 	m.Authored, m.SentAt, m.Usage, m.Model, m.RewoundFrom = raw.Authored, raw.SentAt, raw.Usage, raw.Model, raw.RewoundFrom
+	m.PromptContext = raw.PromptContext
 	m.StopReason, m.RawStopReason = raw.StopReason, raw.RawStopReason
 	if len(raw.Content) == 0 {
 		return nil
