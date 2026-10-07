@@ -1,0 +1,28 @@
+name: Tool runtime compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'internal/tools/**'
+      - 'cmd/kn/tool_runtime*'
+      - '.github/workflows/tool-compat.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Shell selection and command/result compatibility
+        run: go test ./internal/tools/bashrun ./internal/tools -run 'Test(DefaultShellPriority|ShellCommand|PowerShellEncoding|ShellOverride|Windows|ConPTY|LiveAgentShell|LiveAgentSharedShell)' -count=1 -v

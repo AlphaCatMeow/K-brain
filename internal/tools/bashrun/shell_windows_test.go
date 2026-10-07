@@ -48,7 +48,7 @@ func TestWindowsShellExecution(t *testing.T) {
 func TestWindowsShellDefaultsAndContext(t *testing.T) {
 	t.Setenv("K_BRAIN_SHELL", "")
 	t.Setenv("SHELL", "/bin/bash")
-	if got := DefaultShell(); got != "pwsh.exe" && got != "powershell.exe" {
+	if got := ShellName(DefaultShell()); got != "pwsh" && got != "powershell" && got != "bash" && got != "cmd" {
 		t.Fatal(got)
 	}
 	t.Setenv("K_BRAIN_SHELL", "missing-shell")

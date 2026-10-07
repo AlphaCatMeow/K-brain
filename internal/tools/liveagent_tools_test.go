@@ -120,8 +120,8 @@ func TestLiveAgentOriginalSchemaCoverage(t *testing.T) {
 		"Image":           "path,paths,url,urls,base64,base64s,mimeType,source,sources",
 		"Write":           "path,content", "Edit": "path,old_string,new_string,expected_replacements,replace_all",
 		"Delete": "path", "List": "path,depth,offset,max_results", "Glob": "pattern,path,offset,max_results,sort_by",
-		"Grep": "pattern,path,file_pattern,ignore_case,output_mode,head_limit,offset,context,multiline", "Bash": "command,cwd,timeout_ms,yield_time_ms",
-		"ManagedProcess": "action,command,cwd,label,isolated,process_id,cursor,yield_time_ms,max_bytes", "ProcessWait": "session_id,cursor,yield_time_ms", "ProcessStop": "session_id,cursor",
+		"Grep": "pattern,path,file_pattern,ignore_case,output_mode,head_limit,offset,context,multiline", "Bash": "command,cwd,shell,timeout_ms,yield_time_ms",
+		"ManagedProcess": "action,command,cwd,shell,label,isolated,process_id,cursor,yield_time_ms,max_bytes", "ProcessWait": "session_id,cursor,yield_time_ms", "ProcessStop": "session_id,cursor",
 	}
 	required := map[string]string{"TerminalSession": "command", "ReadTerminal": "session_id", "Read": "path", "Write": "path,content", "Edit": "path,old_string,new_string", "Delete": "path", "Glob": "pattern", "Grep": "pattern", "Bash": "command", "ManagedProcess": "action", "ProcessWait": "session_id", "ProcessStop": "session_id"}
 	metadata := LiveAgentToolCatalogMetadata()

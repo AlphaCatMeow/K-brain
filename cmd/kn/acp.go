@@ -43,6 +43,11 @@ func acpCLI(args []string) error {
 	if err != nil {
 		return err
 	}
+	closeTools, err := initializeToolRuntime(cfg)
+	if err != nil {
+		return err
+	}
+	defer closeTools()
 	route, err := routing.ResolveRoute(cfg, *modelFlag, *providerFlag, false)
 	if err != nil {
 		return err
@@ -69,7 +74,7 @@ func acpCLI(args []string) error {
 	}()
 
 	factory := func(ctx context.Context, wd string, servers map[string]mcp.ServerConfig) (*agent.Agent, *mcp.Manager, error) {
-		ag := agent.New(route.Client.Clone(), route.APIModel, route.MaxOutput, sysprompt.Build(wd, time.Now()), agent.WithExperimental(cfg.Experimental))
+		ag := agent.New(route.Client.Clone(), route.APIModel, route.MaxOutput, sysprompt.Build(wd, time.Now()), agent.WithExperimental(cfg.Experimental), withToolAvailability(cfg))
 		ag.WorkingDir = wd
 		ag.WorktreeSubagents = cfg.WorktreeSubagents != nil && *cfg.WorktreeSubagents
 		ag.Hooks = hooks.New(cfg.Hooks)

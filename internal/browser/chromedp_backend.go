@@ -42,7 +42,7 @@ func openChromedp(ctx context.Context, mode Mode, sessionName string) (*chromedp
 			}
 			return openChromedp(ctx, ModeDedicated, sessionName)
 		}
-		allocCtx, cancel = chromedp.NewRemoteAllocator(ctx, ws)
+		allocCtx, cancel = chromedp.NewRemoteAllocator(context.WithoutCancel(ctx), ws)
 		b.obtained = ObtainedLive
 	case ModeDedicated, ModeHeadless:
 
@@ -56,7 +56,7 @@ func openChromedp(ctx context.Context, mode Mode, sessionName string) (*chromedp
 		if bin := os.Getenv("ROD_BROWSER_BIN"); bin != "" {
 			opts = append(opts, chromedp.ExecPath(bin))
 		}
-		allocCtx, cancel = chromedp.NewExecAllocator(ctx, opts...)
+		allocCtx, cancel = chromedp.NewExecAllocator(context.WithoutCancel(ctx), opts...)
 		b.obtained = ObtainedLaunched
 	default:
 		return nil, fmt.Errorf("unknown browser mode %q", mode)
@@ -66,7 +66,14 @@ func openChromedp(ctx context.Context, mode Mode, sessionName string) (*chromedp
 	targetCtx, targetOff := chromedp.NewContext(allocCtx)
 	b.targetCtx, b.targetOff = targetCtx, targetOff
 
-	if err := chromedp.Run(targetCtx); err != nil {
+	// Startup obeys this call's cancellation; the established browser outlives it.
+	stopStartup := context.AfterFunc(ctx, cancel)
+	err := chromedp.Run(targetCtx)
+	stopped := stopStartup()
+	if !stopped && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if err != nil {
 		_ = b.Close()
 		return nil, fmt.Errorf("chromedp connect: %w", err)
 	}
@@ -74,11 +81,16 @@ func openChromedp(ctx context.Context, mode Mode, sessionName string) (*chromedp
 }
 
 func (b *chromedpBackend) run(ctx context.Context, actions ...chromedp.Action) error {
-
-	c := b.targetCtx
+	c, cancel := context.WithCancel(b.targetCtx)
+	defer cancel()
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if d, ok := ctx.Deadline(); ok {
 		var off context.CancelFunc
-		c, off = context.WithDeadline(b.targetCtx, d)
+		c, off = context.WithDeadline(c, d)
 		defer off()
 	}
 	return chromedp.Run(c, actions...)
@@ -239,26 +251,7 @@ func (b *chromedpBackend) PressKey(ctx context.Context, key string) error {
 }
 
 func (b *chromedpBackend) Fill(ctx context.Context, selector, text string) error {
-	sel, _ := json.Marshal(selector)
-	focused, err := b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return false;e.focus();return true})()`, sel))
-	if err != nil {
-		return err
-	}
-	if focused != "true" {
-		return fmt.Errorf("fill: element not found: %s", selector)
-	}
-	if _, err := b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return;const s=window.getSelection(),r=document.createRange();e.select&&e.select();r.selectNodeContents(e);s.removeAllRanges();s.addRange(r)})()`, sel)); err != nil {
-		return err
-	}
-	if err := b.PressKey(ctx, "Backspace"); err != nil {
-		return err
-	}
-	for _, ch := range text {
-		if err := b.PressKey(ctx, string(ch)); err != nil {
-			return err
-		}
-	}
-	_, err = b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))})()`, sel))
+	_, err := b.Eval(ctx, fillExpression(selector, text))
 	return err
 }
 

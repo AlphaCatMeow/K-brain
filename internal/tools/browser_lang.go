@@ -84,6 +84,10 @@ func splitStatements(code string) []string {
 }
 
 func parseStatement(s string) (helperStmt, error) {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "await ") || strings.HasPrefix(s, "await\t") {
+		s = strings.TrimSpace(s[len("await"):])
+	}
 	open := strings.Index(s, "(")
 	if open <= 0 || !strings.HasSuffix(s, ")") {
 		return helperStmt{}, fmt.Errorf("malformed statement %q — expected name(args...)", s)

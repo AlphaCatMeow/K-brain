@@ -55,6 +55,9 @@ func LiveAgentCatalogWithManagers(provider []string, terminalManager *TerminalMa
 		if name == "Bash" {
 			def = ai.NewTool(name, "Execute a non-interactive shell command for builds, tests, package managers or external CLIs. Use dedicated file tools for workspace operations. cwd is relative to the workspace; timeout_ms is milliseconds (default 120000, maximum 600000). Commands remain backend-owned and obey permission and sandbox policy.", `{"type":"object","additionalProperties":false,"properties":{"command":{"type":"string","description":"Shell command to execute (prefer non-interactive, idempotent commands)."},"cwd":{"type":"string","description":"Optional working directory. Omit to use the workspace root."},"timeout_ms":{"type":"number","minimum":1000,"maximum":600000,"description":"Timeout in milliseconds (default: 120000, maximum: 600000)."},"yield_time_ms":{"type":"number","minimum":1,"maximum":300000,"description":"Return after this many milliseconds while the same Bash command continues; use ProcessWait with the returned session_id."}},"required":["command"]}`)
 		}
+		if name == "Bash" || name == "ManagedProcess" {
+			def = liveagentShellDefinition(def)
+		}
 		if name == "Bash" {
 			def.Function.Description = strings.ReplaceAll(def.Function.Description, "default 120000, maximum 600000", fmt.Sprintf("default %d, provider maximum %d", bashDefault, bashCap))
 			def.Function.Parameters = json.RawMessage(strings.ReplaceAll(string(def.Function.Parameters), "default: 120000, maximum 600000", fmt.Sprintf("default: %d, provider cap: %d; larger values are clamped", bashDefault, bashCap)))
@@ -373,7 +376,8 @@ func liveagentBash(ctx context.Context, manager *liveagentProcessManager, a map[
 	if strings.TrimSpace(command) == "" {
 		return "", errors.New("Bash.command is required")
 	}
-	if err := liveagentValidateBackground(command); err != nil {
+	ctx = bashrun.WithShell(ctx, bashrun.ResolveShell(ctx, laString(a, "shell")))
+	if err := liveagentValidateShellBackground(ctx, command, false); err != nil {
 		return "", err
 	}
 	raw := laString(a, "cwd")

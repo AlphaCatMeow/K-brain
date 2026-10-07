@@ -138,6 +138,11 @@ func runCLI(args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
+	closeTools, err := initializeToolRuntime(cfg)
+	if err != nil {
+		return err
+	}
+	defer closeTools()
 	route, err := routing.ResolveRouteContext(ctx, cfg, *modelFlag, *providerFlag, false)
 	if err != nil {
 		return err
@@ -155,7 +160,7 @@ func runCLI(args []string) (runErr error) {
 		sys = string(data)
 	}
 
-	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sys, agent.WithExperimental(cfg.Experimental))
+	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sys, agent.WithExperimental(cfg.Experimental), withToolAvailability(cfg), func(a *agent.Agent) { a.ComputerDisabled = true })
 	ag.WorkingDir = cwd()
 	ag.WorktreeSubagents = cfg.WorktreeSubagents != nil && *cfg.WorktreeSubagents
 	ag.Hooks = hooks.New(cfg.Hooks)

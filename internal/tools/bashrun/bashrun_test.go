@@ -172,19 +172,19 @@ func TestUserShellResolution(t *testing.T) {
 	t.Setenv("K_BRAIN_SHELL", "")
 	if runtime.GOOS == "windows" {
 		t.Setenv("SHELL", "/bin/zsh")
-		if got := userShell(); got != "pwsh.exe" && got != "powershell.exe" {
+		if got := ShellName(userShell()); got != "pwsh" && got != "powershell" && got != "bash" && got != "cmd" {
 			t.Fatalf("Windows default shell: %q", got)
 		}
 		return
 	}
 	t.Setenv("SHELL", "/bin/zsh")
-	if sh := userShell(); sh != "/bin/zsh" {
-		t.Fatalf("$SHELL should win, got %q", sh)
+	if sh := userShell(); ShellName(sh) != "bash" {
+		t.Fatalf("bash should precede $SHELL, got %q", sh)
 	}
 
 	t.Setenv("SHELL", "")
 	if sh := userShell(); sh == "" {
-		t.Fatal("empty $SHELL must fall back to the passwd entry or bash")
+		t.Fatal("empty $SHELL must fall back to a platform shell")
 	}
 
 	t.Setenv("SHELL", "/bin/sh")

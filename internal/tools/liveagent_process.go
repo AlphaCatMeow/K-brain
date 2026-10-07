@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -111,7 +109,7 @@ func (m *liveagentProcessManager) startWithID(ctx context.Context, prefix, comma
 	policy := sandbox.FromContext(ctx)
 	commandContext := ctx
 	if isolated {
-		commandContext = sandbox.WithPolicy(context.Background(), policy)
+		commandContext = bashrun.WithShell(sandbox.WithPolicy(context.Background(), policy), bashrun.ResolveShell(ctx, ""))
 	}
 	cmd, err := liveagentShellCommand(commandContext, command)
 	if err != nil {
@@ -371,19 +369,7 @@ func (m *liveagentProcessManager) wait(ctx context.Context, p *liveagentProcess,
 }
 
 func liveagentShellCommand(ctx context.Context, command string) (*exec.Cmd, error) {
-	shell := bashrun.DefaultShell()
-	base := strings.TrimSuffix(strings.ToLower(filepath.Base(shell)), ".exe")
-	switch base {
-	case "powershell", "pwsh", "powershell7":
-		return exec.CommandContext(ctx, shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command), nil
-	case "cmd":
-		return exec.CommandContext(ctx, shell, "/D", "/S", "/C", command), nil
-	default:
-		if runtime.GOOS == "windows" && shell == "" {
-			return nil, errors.New("no shell is configured")
-		}
-		return exec.CommandContext(ctx, shell, "-c", command), nil
-	}
+	return bashrun.Command(ctx, "", command)
 }
 
 func newLiveAgentProcessID(prefix string) string {
@@ -428,7 +414,8 @@ func liveagentProcessText(action string, snap liveagentProcessSnapshot, output s
 
 func liveagentProcessStart(ctx context.Context, manager *liveagentProcessManager, a map[string]any) (string, error) {
 	command := laString(a, "command")
-	if err := liveagentValidateManagedCommand(command); err != nil {
+	ctx = bashrun.WithShell(ctx, bashrun.ResolveShell(ctx, laString(a, "shell")))
+	if err := liveagentValidateShellBackground(ctx, command, true); err != nil {
 		return "", err
 	}
 	cwd, err := liveagentPath(ctx, laString(a, "cwd"), "write", "ManagedProcess", true)

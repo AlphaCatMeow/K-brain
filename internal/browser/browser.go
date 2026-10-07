@@ -499,29 +499,7 @@ func (b *Browser) PressKey(ctx context.Context, key string) error {
 }
 
 func (b *Browser) Fill(ctx context.Context, selector, text string) error {
-	sel, _ := json.Marshal(selector)
-	focused, err := b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return false;e.focus();return true})()`, sel))
-	if err != nil {
-		return err
-	}
-	if focused != "true" {
-		return fmt.Errorf("fill: element not found: %s", selector)
-	}
-	if err := b.PressKey(ctx, "Backspace"); err != nil {
-		return err
-	}
-	if _, err := b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return;const s=window.getSelection(),r=document.createRange();e.select&&e.select();r.selectNodeContents(e);s.removeAllRanges();s.addRange(r)})()`, sel)); err != nil {
-		return err
-	}
-	if err := b.PressKey(ctx, "Backspace"); err != nil {
-		return err
-	}
-	for _, ch := range text {
-		if err := b.PressKey(ctx, string(ch)); err != nil {
-			return err
-		}
-	}
-	_, err = b.Eval(ctx, fmt.Sprintf(`(()=>{const e=document.querySelector(%s);if(!e)return;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))})()`, sel))
+	_, err := b.Eval(ctx, fillExpression(selector, text))
 	return err
 }
 

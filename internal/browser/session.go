@@ -61,7 +61,11 @@ func (m *Manager) Session(name string) (*Session, error) {
 }
 
 func (s *Session) Do(ctx context.Context, fn func(b Backend) (string, error)) (string, error) {
-	s.sem <- struct{}{}
+	select {
+	case s.sem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	defer func() { <-s.sem }()
 	b, err := s.get(ctx)
 	if err != nil {

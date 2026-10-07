@@ -8,9 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"runtime"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -20,40 +18,7 @@ import (
 )
 
 func userShell() string {
-	if sh := os.Getenv("K_BRAIN_SHELL"); sh != "" {
-		return sh
-	}
-	if runtime.GOOS == "windows" {
-		if _, err := exec.LookPath("pwsh.exe"); err == nil {
-			return "pwsh.exe"
-		}
-		return "powershell.exe"
-	}
-	if sh := os.Getenv("SHELL"); sh != "" {
-		return sh
-	}
-	if sh := passwdShell(); sh != "" {
-		return sh
-	}
-	return "bash"
-}
-
-func passwdShell() string {
-	u, err := user.Current()
-	if err != nil {
-		return ""
-	}
-	data, err := os.ReadFile("/etc/passwd")
-	if err != nil {
-		return ""
-	}
-	for line := range strings.Lines(string(data)) {
-		fields := strings.Split(strings.TrimRight(line, "\n"), ":")
-		if len(fields) == 7 && fields[2] == u.Uid {
-			return fields[6]
-		}
-	}
-	return ""
+	return resolveDefaultShell(runtime.GOOS, os.Getenv, exec.LookPath)
 }
 
 type Result struct {
@@ -122,11 +87,7 @@ func Run(ctx context.Context, opts Options) Result {
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	shell := opts.Shell
-	if shell == "" {
-		shell, _ = ctx.Value(shellKey{}).(string)
-	}
-	cmd, err := shellCommand(ctx, shell, opts.Command)
+	cmd, err := Command(ctx, opts.Shell, opts.Command)
 	if err != nil {
 		return Result{Exit: err.Error()}
 	}

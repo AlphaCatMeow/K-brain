@@ -4,6 +4,20 @@ import (
 	"testing"
 )
 
+func TestBrowserHelpersAcceptOptionalAwait(t *testing.T) {
+	program, err := parseHelperProgram(`await goto("https://example.com"); print(await js("'await stays in text'"))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(program) != 2 || program[0].name != "goto" {
+		t.Fatalf("program=%+v", program)
+	}
+	inner := program[1].args[0].(helperStmt)
+	if inner.name != "js" || inner.args[0] != `'await stays in text'` {
+		t.Fatalf("nested helper=%+v", inner)
+	}
+}
+
 func TestParseBrowserProgram(t *testing.T) {
 	prog, err := parseHelperProgram(`# Searching example for widgets
 goto("https://example.com"); waitLoad()
