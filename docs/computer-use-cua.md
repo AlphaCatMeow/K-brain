@@ -161,3 +161,23 @@ Native screenshot/input, macOS service-backed onboarding, Windows interactive
 desktop, Linux compositor behavior and LiveAgent end-to-end desktop acceptance
 still require suitable test environments. Protocol mocks and cross-compilation
 do not establish native desktop success.
+
+## Embedded release verification (2026-10-08)
+
+All six pinned upstream archives were downloaded, SHA-256 verified and normalized.
+Each matching payload was embedded into a successful `CGO_ENABLED=0` build of
+`./cmd/kn` for darwin, linux and windows on amd64 and arm64. These are compilation
+checks, not native execution on all six targets.
+
+On this Mac, the embedded darwin-arm64 archive extracted successfully, reported
+Cua 0.33.4, discovered 52 tools through MCP, completed a read-only permission
+probe and cleaned up its session. Run the opt-in check with a matching payload:
+
+```sh
+python3 scripts/prepare-cua.py --target darwin-arm64
+KB_TEST_CUA_BUNDLE=1 go test ./internal/computer/cua \
+  -run '^TestBundledRuntimeReadOnly$' -v -count=1
+```
+
+The full Go suite, focused Cua race tests and Python archive-path tests passed.
+No new release tag was created for these checks.
