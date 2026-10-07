@@ -274,6 +274,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.generateText(w, r)
 		return
 	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/generate" {
+		s.generate(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/terminal") {
 		s.handleTerminal(w, r)
 		return

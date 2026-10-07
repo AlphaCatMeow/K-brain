@@ -44,13 +44,7 @@ func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
 }
 
 func (c *Anthropic) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
-	req.Messages = repairToolHistory(stripAuthored(req.Messages))
-	for i := range req.Messages {
-		replay := req.Messages[i].Replay
-		if replay != nil && (replay.API != APIMessages || replay.Endpoint != c.Endpoint() || replay.Model != req.Model) {
-			req.Messages[i].Replay = nil
-		}
-	}
+	req.Messages = prepareRequestHistory(req.Messages, APIMessages, c.Endpoint(), req.Model)
 	if err := validateAttachments(req.Messages, false, "Anthropic"); err != nil {
 		return nil, err
 	}

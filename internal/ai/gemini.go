@@ -427,6 +427,7 @@ func (c *Gemini) signature(model, id string) string {
 }
 
 func (c *Gemini) do(ctx context.Context, req Request, stream bool) (*http.Response, error) {
+	req.Messages = prepareRequestHistory(req.Messages, APIGemini, c.Endpoint(), req.Model)
 	if err := validateGeminiAttachments(req.Messages); err != nil {
 		return nil, err
 	}

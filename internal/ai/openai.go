@@ -82,42 +82,38 @@ func stripAuthored(msgs []Message) []Message {
 }
 
 func repairToolHistory(msgs []Message) []Message {
-	answered := make(map[string]bool, len(msgs))
-	callName := make(map[string]string, len(msgs))
-	for i, m := range msgs {
-		if m.Role != "assistant" {
-			continue
-		}
-		for _, tc := range m.ToolCalls {
-			answered[tc.ID] = false
-			callName[tc.ID] = tc.Function.Name
-			for _, r := range msgs[i+1:] {
-				if r.Role == "tool" && r.ToolCallID == tc.ID {
-					answered[tc.ID] = true
-					break
-				}
-				if r.Role == "assistant" || r.Role == "user" {
-					break
-				}
-			}
-		}
-	}
 	out := make([]Message, 0, len(msgs))
-	var pending []string
+	var pending []ToolCall
+	answered := map[string]bool{}
 	flush := func() {
-		for _, id := range pending {
+		for _, call := range pending {
+			if answered[call.ID] {
+				continue
+			}
 			out = append(out, Message{
 				Role:       "tool",
 				Content:    "(interrupted before execution)",
-				ToolCallID: id,
-				Name:       callName[id],
+				ToolCallID: call.ID,
+				Name:       call.Function.Name,
 			})
 		}
 		pending = nil
+		answered = map[string]bool{}
 	}
 	for _, m := range msgs {
 		if m.Role == "tool" {
-			if _, ok := answered[m.ToolCallID]; !ok {
+			matched := false
+			for _, call := range pending {
+				if call.ID == m.ToolCallID && !answered[call.ID] {
+					answered[call.ID] = true
+					if m.Name == "" {
+						m.Name = call.Function.Name
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				flush()
 
 				out = append(out, Message{
@@ -133,11 +129,7 @@ func repairToolHistory(msgs []Message) []Message {
 		flush()
 		out = append(out, m)
 		if m.Role == "assistant" {
-			for _, tc := range m.ToolCalls {
-				if !answered[tc.ID] {
-					pending = append(pending, tc.ID)
-				}
-			}
+			pending = m.ToolCalls
 		}
 	}
 	flush()
@@ -544,7 +536,7 @@ func (c *OpenAI) Stream(ctx context.Context, req Request, onText, onThink func(s
 	req.StreamOptions = &struct {
 		IncludeUsage bool `json:"include_usage"`
 	}{IncludeUsage: true}
-	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	req.Messages = prepareRequestHistory(req.Messages, APIChatCompletions, c.Endpoint(), req.Model)
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return Message{}, Usage{}, err
 	}
@@ -708,7 +700,7 @@ func validToolCallArgs(s string) bool {
 
 func (c *OpenAI) Complete(ctx context.Context, req Request) (string, Usage, error) {
 	req.Stream = false
-	req.Messages = repairToolHistory(stripAuthored(req.Messages))
+	req.Messages = prepareRequestHistory(req.Messages, APIChatCompletions, c.Endpoint(), req.Model)
 	if err := validateAttachments(req.Messages, false, "Chat Completions"); err != nil {
 		return "", Usage{}, err
 	}

@@ -42,12 +42,7 @@ func (c *Responses) Complete(ctx context.Context, req Request) (string, Usage, e
 }
 
 func (c *Responses) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {
-	req.Messages = repairToolHistory(stripAuthored(req.Messages))
-	for i := range req.Messages {
-		if !replayMatches(req.Messages[i], APIResponses, c.Endpoint(), req.Model) {
-			req.Messages[i].Replay = nil
-		}
-	}
+	req.Messages = prepareRequestHistory(req.Messages, APIResponses, c.Endpoint(), req.Model)
 	if err := validateAttachments(req.Messages, true, "Responses"); err != nil {
 		return nil, err
 	}
