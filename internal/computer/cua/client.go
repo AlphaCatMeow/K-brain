@@ -50,6 +50,9 @@ func ResolveCommand(command []string) ([]string, error) {
 		}
 		return append([]string{path}, command[1:]...), nil
 	}
+	if command, err := bundledCommand(); err != nil || len(command) > 0 {
+		return command, err
+	}
 	if path, err := exec.LookPath("cua-driver"); err == nil {
 		return []string{path, "mcp"}, nil
 	}

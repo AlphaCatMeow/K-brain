@@ -1,6 +1,6 @@
 # Computer use with Cua Driver
 
-K-brain's default `computer_exec` implementation connects to an installed
+K-brain's default `computer_exec` implementation connects to a bundled or installed
 `cua-driver mcp` process using the official Go MCP SDK. Cua owns native desktop
 automation on macOS, Windows and Linux. K-brain does not copy Cua's Rust runtime,
 reimplement its input drivers, or require the ChatGPT/LCU runtime.
@@ -18,14 +18,19 @@ reimplement its input drivers, or require the ChatGPT/LCU runtime.
 ```
 
 `backend` defaults to `cua`. `command` is an argv array, not shell text. When
-omitted, K-brain searches PATH, `~/.local/bin/cua-driver`, and on macOS the
+omitted, release builds first unpack their verified embedded runtime under the KB
+data directory in `runtimes/cua/<archive-hash>`. Source builds without an embedded
+runtime search PATH, `~/.local/bin/cua-driver`, and on macOS the
 signed `/Applications/CuaDriver.app/Contents/MacOS/cua-driver`. Windows uses
 `cua-driver.exe` and also checks the canonical
 `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` install location; no Bash dependency
 is introduced for this transport.
 
-Installation, service startup and OS permission grants remain explicit user
-setup. K-brain does not download a driver, grant permissions, enable existing
+OS permission grants remain explicit user setup. Embedded macOS runtimes use
+`mcp --direct` from the signed app executable; KB owns the connection and process.
+No shared daemon is installed or launched. Host permission attribution still needs
+native acceptance. Separately installed drivers retain the normal `mcp` behavior.
+At runtime K-brain does not download a driver, grant permissions, enable existing
 browser profiles, or switch to unrestricted mode. Keep Cua's trusted launch
 configuration and capability manifest with the driver. An unavailable driver
 fails on first computer use, not application startup or ordinary chat.
@@ -44,8 +49,15 @@ automatic fallback and does not prove that cursor overlays or capture work.
 
 LiveAgent keeps downloading its fixed, checksum-verified K-brain Release
 binary. This change adds no Go or Rust compilation to the LiveAgent release
-workflow. Cua Driver is currently a separate prerequisite, **not bundled in
-K-brain or LiveAgent artifacts**.
+workflow. The KB release workflow embeds the complete platform archive, including
+license notices, before Go compilation for all six targets. `scripts/cua.lock.json`
+pins upstream 0.33.4 URLs and SHA-256 hashes; `scripts/prepare-cua.py` verifies them.
+Extraction uses a process lock, atomic rename and file hashes. Explicit commands
+still take precedence. LA carries Cua inside its existing pinned backend download,
+without another installer or compiler. Existing published releases are unchanged.
+
+LA no longer exposes a dedicated Computer Use settings page. KB owns configuration,
+permissions and execution; normal tool-result and approval rendering remain.
 
 ## Model-facing protocol
 

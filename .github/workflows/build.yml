@@ -23,6 +23,7 @@ jobs:
         with:
           python-version: '3.x'
       - run: go test ./internal/computer/... -count=1
+      - run: python scripts/test_prepare_cua.py
       - name: Linux desktop integration
         if: runner.os == 'Linux'
         shell: bash
@@ -92,6 +93,7 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           mkdir -p dist
+          python3 scripts/prepare-cua.py --target "$GOOS-$GOARCH"
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
             -o "dist/k-brain-${GOOS}-${{ matrix.asset_arch }}${{ matrix.extension }}" ./cmd/kn
           go build -trimpath -ldflags "-s -w" \

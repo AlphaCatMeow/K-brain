@@ -6,6 +6,8 @@
 /k-brain-computer.exe
 /vendor/
 /dist/
+/internal/computer/cua/bundle/runtime.zip
+/internal/computer/cua/bundle/runtime.tmp
 /.idea/
 internal/tui/k-brain-transcript-*.md
 
