@@ -231,6 +231,16 @@ func (s *Store) writeLockedReview(args WriteArgs, allowDaily bool) (MutationResp
 	if err := atomicStoreWrite(path, []byte(rendered)); err != nil {
 		return MutationResponse{}, err
 	}
+	// An entry loaded from a legacy project directory is now stored under the
+	// current id; drop the superseded copy so the project does not split.
+	if found && e.legacyDir != "" && e.path != "" && e.path != path {
+		if err := s.safe(e.path); err != nil {
+			return MutationResponse{}, err
+		}
+		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
+			return MutationResponse{}, err
+		}
+	}
 	return MutationResponse{Slug: e.Slug, Scope: e.Scope, Created: !found, Updated: found, IndexUpdated: true, AppliedConfidence: confidence, AutoDowngraded: &downgraded}, nil
 }
 func (s *Store) Write(args WriteArgs) (MutationResponse, error) {
