@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +32,9 @@ type storedEntry struct {
 	source   map[string]any
 	evidence *Evidence
 	path     string
+	// legacyDir is the on-disk projects/<id> name when it differs from WorkdirHash
+	// (a directory written by the legacy desktop store).
+	legacyDir string
 }
 
 func OpenStore(root string) (*Store, error) {
@@ -54,22 +57,17 @@ func OpenStore(root string) (*Store, error) {
 		return nil, err
 	}
 	lock, _ := storeLocks.LoadOrStore(root, &sync.Mutex{})
-	return &Store{root: root, mu: lock.(*sync.Mutex)}, nil
+	s := &Store{root: root, mu: lock.(*sync.Mutex)}
+	s.migrateLegacyProjectsOnce()
+	return s, nil
 }
 func (s *Store) Root() string { return s.root }
 func ProjectHash(workdir string) (string, error) {
-	if strings.TrimSpace(workdir) == "" {
-		return "", storeError("workdir_required", "project memory requires workdir")
-	}
-	p, err := filepath.Abs(workdir)
+	p, err := resolveProjectPath(workdir)
 	if err != nil {
 		return "", err
 	}
-	if real, e := filepath.EvalSymlinks(p); e == nil {
-		p = real
-	}
-	hash := sha256.Sum256([]byte(filepath.Clean(p)))
-	return hex.EncodeToString(hash[:8]), nil
+	return hashProjectPath(p), nil
 }
 func splitHeader(raw string) (string, string) {
 	raw = strings.TrimPrefix(strings.ReplaceAll(raw, "\r\n", "\n"), "\ufeff")
@@ -202,7 +200,6 @@ func (s *Store) load() ([]storedEntry, error) {
 			}
 		}
 		if parts[0] == "projects" && len(parts) > 2 {
-			entry.WorkdirHash = parts[1]
 			marker := filepath.Join(s.root, "projects", parts[1], ".workdir.json")
 			if e := s.safe(marker); e != nil {
 				return e
@@ -215,6 +212,14 @@ func (s *Store) load() ([]storedEntry, error) {
 				if json.Unmarshal(data, &m) == nil {
 					entry.WorkdirPath = m.Path
 				}
+			}
+			// A directory written by the legacy desktop store carries the id of a
+			// differently spelled path. Report the current id for its workdir so
+			// every scope comparison agrees, and remember the on-disk directory so
+			// a later write can supersede it instead of leaving a duplicate.
+			entry.WorkdirHash = logicalProjectHash(parts[1], entry.WorkdirPath)
+			if entry.WorkdirHash != parts[1] {
+				entry.legacyDir = parts[1]
 			}
 		}
 		entry.CreatedAt = timestamp(f["createdAt"], info.ModTime().UnixMilli())
@@ -349,7 +354,9 @@ func scopeHash(workdir, hash string) (string, error) {
 		if e != nil {
 			return "", e
 		}
-		if hash != "" && h != strings.ToLower(hash) {
+		// Ids written by the legacy desktop store for the same workdir are the
+		// same project; normalize them to the current id.
+		if lower := strings.ToLower(hash); hash != "" && h != lower && !slices.Contains(legacyProjectHashes(workdir), lower) {
 			return "", storeError("scope_mismatch", "workdir and hash disagree")
 		}
 		return h, nil
@@ -375,7 +382,7 @@ func findEntry(entries []storedEntry, args ReadArgs) (storedEntry, error) {
 		if e.Slug != args.Slug {
 			continue
 		}
-		if e.Scope == "project" && e.WorkdirHash == hash && args.Scope != "global" {
+		if e.Scope == "project" && (e.WorkdirHash == hash || (e.legacyDir != "" && e.legacyDir == hash)) && args.Scope != "global" {
 			return e, nil
 		}
 		if e.Scope == "global" && args.Scope != "project" {

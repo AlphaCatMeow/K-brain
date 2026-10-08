@@ -38,6 +38,16 @@ func (s *Store) DeleteProject(workdir, actor, reason string) (map[string]any, er
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
+	// Remove directories the legacy desktop store wrote for this workdir as well.
+	for _, legacy := range legacyProjectHashes(workdir) {
+		legacyDir := filepath.Join(s.root, "projects", legacy)
+		if err := s.safe(legacyDir); err != nil {
+			return nil, err
+		}
+		if err := os.RemoveAll(legacyDir); err != nil {
+			return nil, err
+		}
+	}
 	if reason != "" {
 		if err := s.saveState(state); err != nil {
 			return nil, err
