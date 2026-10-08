@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/gofrs/flock"
 )
 
 // Project memory lives under projects/<id>/, where id is the first 8 bytes of
@@ -131,17 +135,28 @@ func isProjectID(name string) bool {
 // and process. Failures are logged and never block opening the store: legacy
 // directories stay readable through logicalProjectHash and are moved on write.
 func (s *Store) migrateLegacyProjectsOnce() {
-	if _, done := legacyMigrations.LoadOrStore(s.root, true); done {
-		return
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, done := legacyMigrations.Load(s.root); done {
+		return
+	}
 	if err := s.migrateLegacyProjects(); err != nil {
 		log.Printf("memory: legacy project migration: %v", err)
+		return
 	}
+	legacyMigrations.Store(s.root, true)
 }
 
 func (s *Store) migrateLegacyProjects() error {
+	lockPath := filepath.Join(s.root, ".legacy-project-migration.lock")
+	if err := s.safe(lockPath); err != nil {
+		return err
+	}
+	lock := flock.New(lockPath, flock.SetPermissions(0600))
+	if err := lock.Lock(); err != nil {
+		return err
+	}
+	defer lock.Unlock()
 	projects := filepath.Join(s.root, "projects")
 	if err := s.safe(projects); err != nil {
 		return err
@@ -153,7 +168,6 @@ func (s *Store) migrateLegacyProjects() error {
 	if err != nil {
 		return err
 	}
-	remapped := map[string]string{}
 	var errs []string
 	for _, item := range items {
 		name := item.Name()
@@ -161,20 +175,23 @@ func (s *Store) migrateLegacyProjects() error {
 			continue
 		}
 		legacy := filepath.Join(projects, name)
+		if err := s.safe(filepath.Join(legacy, ".workdir.json")); err != nil {
+			errs = append(errs, name+": "+err.Error())
+			continue
+		}
 		workdir := readWorkdirMarker(legacy)
 		current := logicalProjectHash(name, workdir)
 		if current == name {
 			continue
 		}
+		// Persist aliases before moving their only on-disk workdir marker.
+		if err := s.remapRejections(map[string]string{name: current}); err != nil {
+			errs = append(errs, "rejections: "+err.Error())
+			continue
+		}
 		if err := s.foldProjectDir(legacy, filepath.Join(projects, current), name); err != nil {
 			errs = append(errs, fmt.Sprintf("%s -> %s: %v", name, current, err))
 			continue
-		}
-		remapped[name] = current
-	}
-	if len(remapped) > 0 {
-		if err := s.remapRejections(remapped); err != nil {
-			errs = append(errs, "rejections: "+err.Error())
 		}
 	}
 	if len(errs) > 0 {
@@ -196,6 +213,27 @@ func (s *Store) foldProjectDir(legacy, target, legacyName string) error {
 		return err
 	}
 	conflicts := filepath.Join(target, ".legacy-"+legacyName)
+	if err := s.safe(conflicts); err != nil {
+		return err
+	}
+	marker := filepath.Join(legacy, ".workdir.json")
+	if err := s.safe(marker); err != nil {
+		return err
+	}
+	if err := s.safe(filepath.Join(target, ".workdir.json")); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(filepath.Join(target, ".workdir.json")); os.IsNotExist(err) {
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			return err
+		}
+		if err := atomicStoreWrite(filepath.Join(target, ".workdir.json"), data); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
 	err := filepath.WalkDir(legacy, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -206,11 +244,18 @@ func (s *Store) foldProjectDir(legacy, target, legacyName string) error {
 		if d.IsDir() {
 			return nil
 		}
+		// Keep the marker until the fold succeeds so partial migrations can retry.
+		if path == marker {
+			return nil
+		}
 		rel, err := filepath.Rel(legacy, path)
 		if err != nil {
 			return err
 		}
 		dst := filepath.Join(target, rel)
+		if err := s.safe(dst); err != nil {
+			return err
+		}
 		if _, err := os.Lstat(dst); os.IsNotExist(err) {
 			return moveFile(path, dst)
 		} else if err != nil {
@@ -219,18 +264,67 @@ func (s *Store) foldProjectDir(legacy, target, legacyName string) error {
 		// Both directories hold this file. For memory entries the newer one stays
 		// live; the other is preserved, out of the index, under .legacy-<id>/.
 		if filepath.Ext(rel) == ".md" && entryUpdatedAt(path) > entryUpdatedAt(dst) {
-			if err := moveFile(dst, filepath.Join(conflicts, rel)); err != nil {
+			if err := s.preserveLegacyFile(dst, filepath.Join(conflicts, rel)); err != nil {
 				return err
 			}
 			return moveFile(path, dst)
 		}
-		return moveFile(path, filepath.Join(conflicts, rel))
+		return s.preserveLegacyFile(path, filepath.Join(conflicts, rel))
 	})
 	if err != nil {
 		return err
 	}
+	if err := s.preserveLegacyFile(marker, filepath.Join(conflicts, ".workdir.json")); err != nil {
+		return err
+	}
 	// Every file has been moved; only empty directories remain.
 	return os.RemoveAll(legacy)
+}
+
+// Reserve each backup exclusively; a repeated import must not replace history.
+func (s *Store) preserveLegacyFile(src, dst string) error {
+	if err := s.safe(src); err != nil {
+		return err
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return storeError("invalid_path", "memory backup source must be a regular file")
+	}
+	for n := 0; ; n++ {
+		candidate := dst
+		if n > 0 {
+			candidate = fmt.Sprintf("%s.%d", dst, n)
+		}
+		if err := s.safe(candidate); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(candidate), 0700); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		in, err := os.Open(src)
+		if err == nil {
+			_, err = io.Copy(out, in)
+			err = errors.Join(err, in.Close())
+		}
+		if err == nil {
+			err = out.Sync()
+		}
+		err = errors.Join(err, out.Close())
+		if err != nil {
+			return errors.Join(err, os.Remove(candidate))
+		}
+		return os.Remove(src)
+	}
 }
 
 func moveFile(src, dst string) error {

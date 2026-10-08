@@ -1,0 +1,36 @@
+name: Memory store tests
+
+on:
+  pull_request:
+    paths:
+      - 'internal/memory/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/memory-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/memory/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/memory-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    name: Memory store (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./internal/memory/... -count=1 -timeout=3m
+      - run: go vet ./internal/memory/...
