@@ -191,7 +191,9 @@ func TestQuestionTimeoutCancellationAndIdentity(t *testing.T) {
 					json.Unmarshal(e.Payload, &resolution)
 				}
 			}
-			if mode == "timeout" && (!resolution.TimedOut || resolution.Answers[0].SelectedLabel != "Fast") {
+			// A timeout must never pick an option on the user's behalf.
+			if mode == "timeout" && (!resolution.TimedOut || len(resolution.Answers) != 0 ||
+				!strings.Contains(resolution.Text, "no option was selected") || strings.Contains(resolution.Text, "Fast")) {
 				t.Fatalf("timeout: %+v", resolution)
 			}
 			if mode == "cancel" && (!resolution.Cancelled || len(resolution.Answers) != 0) {
@@ -290,4 +292,15 @@ func TestQuestionConcurrentSessionsRemainIsolated(t *testing.T) {
 			t.Fatalf("session %d did not receive its own answer", i)
 		}
 	}
+}
+
+// questionDefaults picks each question's first (recommended) option; tests use it to
+// build a valid answer payload.
+
+func questionDefaults(questions []protocol.Question) []protocol.QuestionAnswer {
+	answers := make([]protocol.QuestionAnswer, len(questions))
+	for i, q := range questions {
+		answers[i] = protocol.QuestionAnswer{QuestionID: q.ID, Prompt: q.Prompt, SelectedLabel: q.Options[0].Label}
+	}
+	return answers
 }
