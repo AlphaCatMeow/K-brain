@@ -110,14 +110,6 @@ func normalizeQuestions(input []protocol.Question) ([]protocol.Question, error) 
 	return out, nil
 }
 
-func questionDefaults(questions []protocol.Question) []protocol.QuestionAnswer {
-	answers := make([]protocol.QuestionAnswer, len(questions))
-	for i, q := range questions {
-		answers[i] = protocol.QuestionAnswer{QuestionID: q.ID, Prompt: q.Prompt, SelectedLabel: q.Options[0].Label}
-	}
-	return answers
-}
-
 func validateQuestionAnswers(questions []protocol.Question, input []protocol.QuestionAnswer) ([]protocol.QuestionAnswer, error) {
 	if len(input) != len(questions) {
 		return nil, errors.New("one answer is required for every question")
@@ -181,13 +173,17 @@ func (rt *runtimeSession) settleQuestionLocked(waiter *questionWaiter, answers [
 		answers = []protocol.QuestionAnswer{}
 	}
 	result := protocol.QuestionResolution{QuestionID: waiter.request.QuestionID, ToolCallID: waiter.request.ToolCallID, RunID: waiter.request.RunID, Kind: "ask_user_question", Questions: waiter.request.Questions, Answers: answers, TimedOut: state == "timeout", Cancelled: state == "cancelled"}
-	if result.Cancelled {
+	switch {
+	case result.Cancelled:
 		result.Text = "The user stopped the turn without answering. Do not assume any selection."
-	} else {
+	case result.TimedOut:
+		// No option is chosen on the user's behalf: option order says nothing about intent,
+		// and a question about a destructive step must not turn into consent by waiting.
+		result.Text = "The user did not answer within the time limit, so no option was selected. " +
+			"Do not assume an answer or act on any option. If the next step depends on this choice, " +
+			"stop and tell the user what you need from them; otherwise continue without it."
+	default:
 		result.Text = "The user answered every question. Their selections are final — proceed accordingly:"
-		if result.TimedOut {
-			result.Text = "The user did not answer within the time limit; the recommended (or first) option was auto-selected for every question. Proceed accordingly:"
-		}
 		for i, a := range answers {
 			result.Text += fmt.Sprintf("\n%d. %s\n   → %s", i+1, a.Prompt, a.SelectedLabel)
 			if a.Custom {
@@ -240,11 +236,11 @@ func (s *Server) waitQuestion(ctx context.Context, rt *runtimeSession, runID, to
 	defer rt.mu.Unlock()
 	defer delete(rt.questions, waiter.request.QuestionID)
 	if waiter.resolution == nil {
-		state, answers := "timeout", questionDefaults(questions)
+		state := "timeout"
 		if ctx.Err() != nil {
-			state, answers = "cancelled", nil
+			state = "cancelled"
 		}
-		if err := rt.settleQuestionLocked(waiter, answers, state); err != nil {
+		if err := rt.settleQuestionLocked(waiter, nil, state); err != nil {
 			return nil, err
 		}
 	}
@@ -313,11 +309,11 @@ func (s *Server) answerQuestion(w http.ResponseWriter, r *http.Request, id, ques
 		return
 	}
 	if waiter.ctx.Err() != nil || time.Now().UnixMilli() >= request.DeadlineAt {
-		state, defaults := "timeout", questionDefaults(request.Questions)
+		state := "timeout"
 		if waiter.ctx.Err() != nil {
-			state, defaults = "cancelled", nil
+			state = "cancelled"
 		}
-		if err := rt.settleQuestionLocked(waiter, defaults, state); err != nil {
+		if err := rt.settleQuestionLocked(waiter, nil, state); err != nil {
 			writeJSONError(w, 500, err.Error())
 			return
 		}
