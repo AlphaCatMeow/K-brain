@@ -38,6 +38,11 @@ type legacyHistoryImportRequest struct {
 	SourceMetadata    json.RawMessage         `json:"source_metadata"`
 }
 
+// maxLegacyHistoryBodyBytes caps one-shot conversation imports. Legacy clients
+// send the whole conversation, and their source metadata repeats it, so real
+// histories reach ~30 MiB; 64 MiB leaves 2x headroom over the largest observed.
+const maxLegacyHistoryBodyBytes = 64 << 20
+
 func importFingerprint(in legacyHistoryImportRequest) string {
 	raw, _ := json.Marshal(in)
 	digest := sha256.Sum256(raw)
@@ -46,7 +51,7 @@ func importFingerprint(in legacyHistoryImportRequest) string {
 
 func (s *Server) importLegacyHistory(w http.ResponseWriter, r *http.Request) {
 	var in legacyHistoryImportRequest
-	if err := decodeJSON(w, r, &in); err != nil {
+	if err := decodeJSONLimit(w, r, &in, maxLegacyHistoryBodyBytes); err != nil {
 		return
 	}
 	in.SourceID, in.SourceFingerprint, in.ConversationID = strings.TrimSpace(in.SourceID), strings.TrimSpace(in.SourceFingerprint), strings.TrimSpace(in.ConversationID)
