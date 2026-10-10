@@ -1149,6 +1149,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		roots[i] = tools.WorkspaceRoot{Path: root.Path, Access: root.Access}
 	}
 	ctx = tools.WithWorkspaceRoots(ctx, roots)
+	// The system prompt points the model at SKILL.md files by absolute path; grant those
+	// directories read-only so following the prompt is not rejected by the root policy.
+	ctx = tools.WithSkillReadRoots(ctx, skillReadRoots(rt.agent.WorkingDir))
 	ctx = tools.WithGate(ctx, gate)
 	ctx = tools.WithAsk(ctx, func(questionCtx context.Context, req tools.AskRequest) ([]string, bool) {
 		if isUnattendedRun(questionCtx) {
@@ -1496,10 +1499,26 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return decodeJSONLimit(w, r, v, maxBodyBytes)
+}
+
+// maxOversizedBodyDrainBytes bounds how much of a rejected body is read so the
+// 413 reply reaches the client instead of a connection reset.
+const maxOversizedBodyDrainBytes = 1 << 30
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	body := r.Body
+	r.Body = http.MaxBytesReader(w, body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			// Closing with unread request bytes makes the peer see a reset, not this response.
+			_, _ = io.Copy(io.Discard, io.LimitReader(body, maxOversizedBodyDrainBytes))
+			writeJSONError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("request body exceeds %d MiB limit", limit>>20))
+			return err
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return err
 	}

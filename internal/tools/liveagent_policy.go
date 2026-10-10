@@ -26,6 +26,39 @@ func workspaceRoots(ctx context.Context) []WorkspaceRoot {
 	return roots
 }
 
+type skillReadRootsKey struct{}
+
+// WithSkillReadRoots grants read-only access to the directories the system prompt
+// advertises skills from. The prompt tells the model to read each skill's SKILL.md by
+// absolute path, and those directories usually live outside the workspace. They extend
+// the run's roots (or its default working-directory grant) and never replace them.
+func WithSkillReadRoots(ctx context.Context, dirs []string) context.Context {
+	return context.WithValue(ctx, skillReadRootsKey{}, append([]string(nil), dirs...))
+}
+
+// withSkillReadRoots appends advertised skill directories that no existing root already
+// covers. A skill directory inside a writable workspace root keeps that write access.
+func withSkillReadRoots(ctx context.Context, roots []WorkspaceRoot) []WorkspaceRoot {
+	dirs, _ := ctx.Value(skillReadRootsKey{}).([]string)
+	for _, dir := range dirs {
+		dir = filepath.Clean(dir)
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		covered := false
+		for _, root := range roots {
+			if rootPath := filepath.Clean(root.Path); filepath.IsAbs(rootPath) && safeWorkspacePath(rootPath, dir) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			roots = append(roots, WorkspaceRoot{Path: dir, Access: "read"})
+		}
+	}
+	return roots
+}
+
 type liveagentNamedRootsKey struct{}
 
 // WithLiveAgentNamedRoots maps root:// aliases and enabled skill:// names to
@@ -97,6 +130,7 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 		}
 		roots = []WorkspaceRoot{{Path: WorkingDir(ctx), Access: "write"}}
 	}
+	roots = withSkillReadRoots(ctx, roots)
 	if access == "write" {
 		for _, root := range roots {
 			if root.Access != "write" && safeWorkspacePath(filepath.Clean(root.Path), path) {
@@ -117,6 +151,10 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 			}
 			return path, nil
 		}
+	}
+	if driveRootedPath(raw) {
+		return "", errors.New(tool + ".path is outside the authorized workspace roots (resolved to " + path +
+			`; on Windows a path starting with "/" or "\" is relative to the drive root, not the workspace or the system temp directory)`)
 	}
 	return "", errors.New(tool + ".path is outside the authorized workspace roots")
 }
