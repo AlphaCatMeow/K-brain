@@ -64,9 +64,25 @@ func ResolvePath(ctx context.Context, path string) string {
 		return path
 	}
 	if dir := WorkingDir(ctx); dir != "" {
+		// Windows treats "/tmp/x" and `\tmp\x` as rooted on the current drive; joining them
+		// under the working directory silently redirected them into the workspace.
+		if driveRootedPath(path) {
+			if volume := filepath.VolumeName(dir); volume != "" {
+				return filepath.Join(volume, path)
+			}
+		}
 		return filepath.Join(dir, path)
 	}
 	return path
+}
+
+// driveRootedPath reports a Windows path that starts at the drive root without naming the
+// drive ("/tmp/x" or `\tmp\x`). UNC paths (`\server\share`) are already absolute.
+func driveRootedPath(path string) bool {
+	if runtime.GOOS != "windows" || path == "" || (path[0] != '/' && path[0] != '\\') {
+		return false
+	}
+	return len(path) == 1 || (path[1] != '/' && path[1] != '\\')
 }
 
 func WithOnUpdate(ctx context.Context, onUpdate func(outputSoFar string)) context.Context {

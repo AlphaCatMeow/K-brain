@@ -1149,6 +1149,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		roots[i] = tools.WorkspaceRoot{Path: root.Path, Access: root.Access}
 	}
 	ctx = tools.WithWorkspaceRoots(ctx, roots)
+	// The system prompt points the model at SKILL.md files by absolute path; grant those
+	// directories read-only so following the prompt is not rejected by the root policy.
+	ctx = tools.WithSkillReadRoots(ctx, skillReadRoots(rt.agent.WorkingDir))
 	ctx = tools.WithGate(ctx, gate)
 	ctx = tools.WithAsk(ctx, func(questionCtx context.Context, req tools.AskRequest) ([]string, bool) {
 		if isUnattendedRun(questionCtx) {
