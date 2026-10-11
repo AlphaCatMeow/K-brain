@@ -15,6 +15,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/hooks"
 	"github.com/Stack-Cairn/K-brain/internal/plugins"
@@ -23,6 +24,7 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 	"github.com/Stack-Cairn/K-brain/internal/session/recording"
+	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
 func resolveCacheKey(explicit, sessionID string) string {
@@ -238,6 +240,23 @@ func runCLI(args []string) (runErr error) {
 		note("task model: %v — subagents use the run's model", terr)
 	}
 
+	if cfg.AIApproval.Enabled() {
+		run := approval.NewRun(cfg.AIApproval.Mode, prompt, approval.New(ctx, cfg), func(phase, tool string, report approval.Report, automatic bool) {
+			if !report.Safe() || automatic {
+				note("AI %s %s: %s", phase, tool, report.Description())
+			}
+		})
+		ctx = tools.WithReview(ctx, run.Hooks(func(req tools.GateRequest) (tools.GateDecision, string) {
+			report, ok := req.Context.Value(approval.ActionReportKey{}).(approval.Report)
+			if !ok || !report.Safe() {
+				return tools.GateReject, "AI review requires interactive approval; resume in TUI or LiveAgent"
+			}
+			if tools.Gate != nil {
+				return tools.Gate(req)
+			}
+			return tools.GateAllowOnce, "AI approved this action once"
+		}))
+	}
 	final, err = ag.Turn(ctx, prompt, ev)
 	stopReason = ag.LastStopReason()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

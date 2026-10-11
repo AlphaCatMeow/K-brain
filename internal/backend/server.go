@@ -21,6 +21,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"github.com/Stack-Cairn/K-brain/internal/mcp"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
@@ -1110,6 +1111,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}
 	message.Content = append(message.Content, in.Content...)
 	converted, _ := message.ToAIMessage()
+	reviewer := s.newRunReviewer(ctx, rt, in.Prompt)
 	gate := func(req tools.GateRequest) (tools.GateDecision, string) {
 		if options.Mode == "chat" {
 			return tools.GateReject, "chat mode disables tools"
@@ -1134,12 +1136,36 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 				}
 			}
 		}
+		if reviewer != nil && reviewer.RequiresManual(req.Context) {
+			gateOptions.ApprovalPolicy = "ask"
+			policies := make(map[string]string)
+			if gateOptions.Tools != nil {
+				for tool, policy := range gateOptions.Tools.Policies {
+					policies[tool] = policy
+				}
+			}
+			if policies[req.Tool] != "deny" {
+				policies[req.Tool] = "ask"
+			}
+			gateOptions.Tools = &protocol.ToolSelection{Policies: policies}
+		}
 		return runToolGate(gateOptions, req, func(req tools.GateRequest) (tools.GateDecision, string) {
 			rt.mu.Lock()
 			active := rt.runID == runID && !rt.runDone && !rt.deleted
 			rt.mu.Unlock()
 			if !active {
 				return tools.GateReject, "interactive approval requires the owning active run"
+			}
+			if reviewer != nil {
+				if reviewed, ok := req.Context.Value(approval.ReviewedActionKey{}).(string); ok && reviewed == req.Tool {
+					return tools.GateAllowOnce, "action already approved"
+				}
+				if report, ok := req.Context.Value(approval.ActionReportKey{}).(approval.Report); ok {
+					req.Description = report.Description()
+					if reviewer.Mode == "auto" && report.Safe() && req.Context.Err() == nil {
+						return tools.GateAllowOnce, "AI approved this action once"
+					}
+				}
 			}
 			return s.waitPermission(rt, runID, req, req.Context)
 		})
@@ -1153,6 +1179,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	// directories read-only so following the prompt is not rejected by the root policy.
 	ctx = tools.WithSkillReadRoots(ctx, skillReadRoots(rt.agent.WorkingDir))
 	ctx = tools.WithGate(ctx, gate)
+	if reviewer != nil {
+		ctx = tools.WithReview(ctx, reviewer.Hooks(gate))
+	}
 	ctx = tools.WithAsk(ctx, func(questionCtx context.Context, req tools.AskRequest) ([]string, bool) {
 		if isUnattendedRun(questionCtx) {
 			return nil, false
@@ -1339,7 +1368,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 
 func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.GateRequest, ctx context.Context) (tools.GateDecision, string) {
 	id := newRunID()
-	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Options: []protocol.PermissionOption{{ID: "allow_once", Label: "Allow once", Kind: "allow_once"}, {ID: "reject", Label: "Reject", Kind: "reject_once"}}}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
+	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: []protocol.PermissionOption{{ID: "allow_once", Label: "Allow once", Kind: "allow_once"}, {ID: "reject", Label: "Reject", Kind: "reject_once"}}}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
 	rt.mu.Lock()
 	rt.permissions[id] = p
 	rt.mu.Unlock()

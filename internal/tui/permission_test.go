@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
@@ -99,4 +101,42 @@ func configDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestAIApprovalNeverOverridesPlanAndUnknownRequiresManual(t *testing.T) {
+	for _, tc := range []struct {
+		mode, risk           string
+		plan, manual, reject bool
+	}{
+		{"auto", "low", false, false, false},
+		{"auto", "unknown", false, true, false},
+		{"auto", "low", true, false, true},
+		{"risk_only", "low", false, true, false},
+	} {
+		m := &model{cfg: &config.Config{AIApproval: config.AIApprovalConfig{Mode: tc.mode}}, perms: permRules{}}
+		if tc.plan {
+			m.permissionMode = "plan"
+		}
+		if tc.mode == "auto" && tc.risk == "unknown" {
+			m.permissionMode = "always"
+		}
+		report := approval.Report{Risk: tc.risk, Sandbox: tc.risk, SensitiveData: tc.risk, ModelBehavior: tc.risk, Injection: tc.risk, Reason: "review"}
+		ctx := context.WithValue(t.Context(), approval.ActionReportKey{}, report)
+		reply := make(chan permAnswer, 1)
+		m.receivePermission(permRequest{req: tools.GateRequest{Context: ctx, Tool: "bash", Command: "pwd"}, reply: reply})
+		if tc.manual {
+			if m.permDialog == nil {
+				t.Fatal("manual fallback missing")
+			}
+			continue
+		}
+		select {
+		case answer := <-reply:
+			if (answer.decision == tools.GateReject) != tc.reject {
+				t.Fatalf("decision=%v", answer)
+			}
+		default:
+			t.Fatal("no answer")
+		}
+	}
 }

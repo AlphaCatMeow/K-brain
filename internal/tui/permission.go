@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"strings"
 	"sync"
 
@@ -96,11 +97,28 @@ func (m *model) installPermGate() {
 type permClose struct{ reply chan permAnswer }
 
 func (m *model) receivePermission(msg permRequest) {
+	report, reviewed := approval.Report{}, false
+	if msg.req.Context != nil {
+		report, reviewed = msg.req.Context.Value(approval.ActionReportKey{}).(approval.Report)
+		if reviewed {
+			msg.req.Description = report.Description()
+		}
+	}
+	auto := m.cfg != nil && m.cfg.AIApproval.Mode == "auto"
+	alreadyApproved := false
+	if msg.req.Context != nil {
+		name, _ := msg.req.Context.Value(approval.ReviewedActionKey{}).(string)
+		alreadyApproved = name == msg.req.Tool
+	}
 	switch {
 	case msg.req.Context != nil && msg.req.Context.Err() != nil:
 		msg.reply <- permAnswer{tools.GateReject, "cancelled"}
 	case m.permissionMode == "plan":
 		msg.reply <- permAnswer{tools.GateReject, "Plan mode only allows read-only inspection"}
+	case alreadyApproved || (auto && reviewed && report.Safe()):
+		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
+	case auto && reviewed && !report.Safe():
+		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
 	case m.permissionMode == "always" || m.perms.coveredBy(msg.req):
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	default:
@@ -185,6 +203,9 @@ func (m *model) permView() string {
 	}
 	b.WriteString(youStyle.Render("⚠ " + title))
 	b.WriteString("\n  " + ansi_Truncate(d.req.Command, m.width-4))
+	if d.req.Description != "" {
+		b.WriteString("\n" + wrap(d.req.Description, max(20, m.width-4)))
+	}
 	rule := d.req.Rule
 	if d.req.Tool != "bash" {
 		rule = d.req.Command

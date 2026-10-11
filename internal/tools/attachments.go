@@ -25,6 +25,14 @@ type attachments struct {
 }
 
 func ExecuteResult(ctx context.Context, ts []Tool, name string, args json.RawMessage, vision bool) Result {
+	hooks, _ := ctx.Value(reviewKey{}).(ReviewHooks)
+	if hooks.Before != nil {
+		var err error
+		ctx, err = hooks.Before(ctx, name, args)
+		if err != nil {
+			return Result{Text: "Permission denied: " + err.Error(), Failed: true, Cancelled: ctx.Err() != nil}
+		}
+	}
 	a := &attachments{enabled: vision}
 	defer a.close()
 	callCtx := context.WithValue(ctx, attachmentKey{}, a)
@@ -34,6 +42,9 @@ func ExecuteResult(ctx context.Context, ts []Tool, name string, args json.RawMes
 		parts = nil
 	}
 	result.Parts = parts
+	if hooks.After != nil {
+		result = hooks.After(ctx, name, args, result)
+	}
 	return result
 }
 

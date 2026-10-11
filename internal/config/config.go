@@ -154,9 +154,10 @@ type Config struct {
 
 	Browser BrowserConfig `json:"browser,omitzero"`
 
-	Computer ComputerConfig    `json:"computer,omitzero"`
-	Sandbox  SandboxConfig     `json:"sandbox,omitzero"`
-	Hooks    map[string][]Hook `json:"hooks,omitempty"`
+	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
+	Computer   ComputerConfig    `json:"computer,omitzero"`
+	Sandbox    SandboxConfig     `json:"sandbox,omitzero"`
+	Hooks      map[string][]Hook `json:"hooks,omitempty"`
 }
 
 type SandboxConfig struct {
@@ -322,6 +323,9 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 				return fmt.Errorf("hook %s[%d] timeout must be non-negative", event, i)
 			}
 		}
+	}
+	if err := cfg.AIApproval.Validate(); err != nil {
+		return err
 	}
 	if cfg.Sandbox.Mode != "" && cfg.Sandbox.Mode != "off" && cfg.Sandbox.Mode != "disabled" && cfg.Sandbox.Mode != "workspace" && cfg.Sandbox.Mode != "strict" {
 		return fmt.Errorf("sandbox.mode must be off, workspace, or strict")

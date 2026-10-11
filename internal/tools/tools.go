@@ -102,7 +102,19 @@ func Defs(ts []Tool) []ai.Tool {
 var Suggester func(name string) []string
 
 func Execute(ctx context.Context, ts []Tool, name string, args json.RawMessage) string {
-	return executeResult(ctx, ts, name, args).Text
+	hooks, _ := ctx.Value(reviewKey{}).(ReviewHooks)
+	if hooks.Before != nil {
+		var err error
+		ctx, err = hooks.Before(ctx, name, args)
+		if err != nil {
+			return "Permission denied: " + err.Error()
+		}
+	}
+	result := executeResult(ctx, ts, name, args)
+	if hooks.After != nil {
+		result = hooks.After(ctx, name, args, result)
+	}
+	return result.Text
 }
 
 func executeResult(ctx context.Context, ts []Tool, name string, args json.RawMessage) Result {
