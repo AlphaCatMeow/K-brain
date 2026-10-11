@@ -582,3 +582,27 @@ func (r *restoreReader) emit(dst []byte) (int, error) {
 }
 
 func (r *restoreReader) Close() error { return r.src.Close() }
+
+// RedactText irreversibly masks recognized sensitive values without retaining a
+// restoration map. Use this when forwarding evidence to a separate reviewer.
+func RedactText(text string) (string, bool) {
+	changed := false
+	for _, rule := range rules {
+		text = rule.rx.ReplaceAllStringFunc(text, func(match string) string {
+			value := match
+			if rule.valueGroup > 0 {
+				groups := rule.rx.FindStringSubmatch(match)
+				if len(groups) <= rule.valueGroup {
+					return match
+				}
+				value = groups[rule.valueGroup]
+			}
+			if rule.name != "SECRET" && rule.check != nil && !rule.check(value) {
+				return match
+			}
+			changed = true
+			return "[REDACTED_" + rule.name + "]"
+		})
+	}
+	return text, changed
+}

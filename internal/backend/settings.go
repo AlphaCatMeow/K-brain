@@ -84,13 +84,14 @@ type settingsModel struct {
 	Vision          bool     `json:"vision,omitempty"`
 }
 type settingsProjection struct {
-	Computer        config.ComputerConfig `json:"computer"`
-	Version         string                `json:"version"`
-	Mode            string                `json:"mode"`
-	DefaultModel    string                `json:"defaultModel"`
-	DefaultProvider string                `json:"defaultProvider"`
-	Providers       []settingsProvider    `json:"providers"`
-	Models          []settingsModel       `json:"models"`
+	AIApproval      config.AIApprovalConfig `json:"aiApproval"`
+	Computer        config.ComputerConfig   `json:"computer"`
+	Version         string                  `json:"version"`
+	Mode            string                  `json:"mode"`
+	DefaultModel    string                  `json:"defaultModel"`
+	DefaultProvider string                  `json:"defaultProvider"`
+	Providers       []settingsProvider      `json:"providers"`
+	Models          []settingsModel         `json:"models"`
 }
 type settingsModelUpdate struct {
 	Provider        string    `json:"provider,omitempty"`
@@ -136,6 +137,7 @@ type settingsProviderUpdate struct {
 	Models                 []settingsModelUpdate `json:"models"`
 }
 type settingsUpdate struct {
+	AIApproval      *config.AIApprovalConfig `json:"aiApproval,omitempty"`
 	Computer        *config.ComputerConfig   `json:"computer,omitempty"`
 	DefaultModel    *string                  `json:"defaultModel,omitempty"`
 	DefaultProvider *string                  `json:"defaultProvider,omitempty"`
@@ -158,6 +160,10 @@ func publicBaseURL(raw string) string {
 func projectSettings(cfg *config.Config) settingsProjection {
 	out := settingsProjection{Version: protocol.Version, Mode: "kbrain", DefaultModel: cfg.DefaultModel, DefaultProvider: cfg.DefaultProvider, Providers: []settingsProvider{}, Models: []settingsModel{}}
 	out.Computer = cfg.Computer
+	out.AIApproval = cfg.AIApproval
+	if out.AIApproval.Mode == "" {
+		out.AIApproval.Mode = "off"
+	}
 	for id, p := range cfg.Providers {
 		pv := settingsProvider{ID: id, Name: p.Name, Type: p.Type, API: p.API, BaseURL: publicBaseURL(p.BaseURL), IsFullURL: p.IsFullURL, ModelsURL: publicModelsURL(p.ModelsURL), APIKeyConfigured: p.APIKey != "", CustomHeaders: publicHeaders(p.CustomHeaders), ModelOrder: slices.Clone(p.ModelOrder), ActiveModels: slices.Clone(p.ActiveModels), RequestFormat: p.RequestFormat, Reasoning: p.Reasoning, PromptCachingEnabled: p.PromptCachingEnabled, PromptCacheHintMode: p.PromptCacheHintMode, PromptCacheRetention: p.PromptCacheRetention, NativeWebSearchEnabled: p.NativeWebSearchEnabled, UseSystemProxy: p.UseSystemProxy, RetryPolicy: p.RetryPolicy, UsageQuery: publicMetadata(p.UsageQuery), Metadata: publicMetadata(p.Metadata), Models: []settingsModel{}}
 		pv.CacheCapabilities, pv.CacheSessionAffinity, pv.CacheControlFormat = p.CacheCapabilities, p.CacheSessionAffinity, p.CacheControlFormat
@@ -250,6 +256,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func applySettings(cfg *config.Config, update settingsUpdate) error {
+	if update.AIApproval != nil {
+		if err := update.AIApproval.Validate(); err != nil {
+			return err
+		}
+		cfg.AIApproval = *update.AIApproval
+	}
+
 	if update.Computer != nil {
 		computer := *update.Computer
 		if computer.Backend != "" && computer.Backend != "cua" && computer.Backend != "legacy" {
@@ -374,6 +387,13 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 	} else if !slices.ContainsFunc(projection.Models, func(m settingsModel) bool { return m.ID == cfg.DefaultModel && m.Provider == cfg.DefaultProvider }) {
 		cfg.DefaultModel = projection.Models[0].ID
 		cfg.DefaultProvider = projection.Models[0].Provider
+	}
+	if update.AIApproval != nil && cfg.AIApproval.Enabled() {
+		provider, ok := cfg.Providers[cfg.AIApproval.Provider]
+		model, exists := cfg.Models[cfg.AIApproval.Model]
+		if !ok || !exists || !slices.Contains(model.Providers, cfg.AIApproval.Provider) || !provider.ModelActive(cfg.AIApproval.Model) {
+			return fmt.Errorf("AI approval reviewer must be an active configured provider/model")
+		}
 	}
 	return nil
 }

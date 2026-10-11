@@ -3317,6 +3317,7 @@ func (m *model) submitTurn(text string, authored bool) (tea.Model, tea.Cmd) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = sandbox.WithPolicy(ctx, m.sandboxPolicy)
+	ctx = m.withAIApproval(ctx, text)
 	m.cancel = cancel
 	p := m.prog
 

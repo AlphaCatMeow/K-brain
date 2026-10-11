@@ -211,3 +211,16 @@ func TestTransportLeavesOversizedBodyComplete(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestReviewerRedactionHasNoRestorableTokens(t *testing.T) {
+	ClearMemory()
+	masked, changed := RedactText("alice@example.com password=abcdefgh sk-abcdefghijklmnopqrstuv")
+	if !changed || strings.Contains(masked, "alice@example.com") || strings.Contains(masked, "abcdefgh") || strings.Contains(masked, "__KBR_") {
+		t.Fatalf("bad redaction %q", masked)
+	}
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+	if len(remembered) != 0 {
+		t.Fatal("irreversible redaction retained secrets")
+	}
+}

@@ -22,10 +22,11 @@ const (
 )
 
 type GateRequest struct {
-	Context context.Context
-	Tool    string
-	Command string
-	Rule    string
+	Context     context.Context
+	Tool        string
+	Command     string
+	Rule        string
+	Description string
 }
 
 var Gate func(GateRequest) (GateDecision, string)
