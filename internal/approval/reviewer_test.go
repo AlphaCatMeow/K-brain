@@ -137,3 +137,20 @@ func TestTurnBudgetFallsBack(t *testing.T) {
 		t.Fatal("unbounded reviewer requests")
 	}
 }
+
+func TestInFlightReviewerCancellationCannotApprove(t *testing.T) {
+	started := make(chan struct{})
+	r := &Reviewer{complete: func(ctx context.Context, _ ai.Request) (string, ai.Usage, error) {
+		close(started)
+		<-ctx.Done()
+		return low, ai.Usage{}, nil
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan Report, 1)
+	go func() { done <- r.Review(ctx, Evidence{}) }()
+	<-started
+	cancel()
+	if report := <-done; report.Safe() {
+		t.Fatal("late reviewer reply approved a cancelled action")
+	}
+}
