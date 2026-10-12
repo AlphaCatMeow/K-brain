@@ -80,11 +80,12 @@ type Server struct {
 	hookRunner           *BackendHookRunner
 	mcp                  *mcp.LiveManager
 
-	mu         sync.Mutex
-	sessions   map[string]*runtimeSession
-	closed     bool
-	reaperStop chan struct{}
-	reaperDone chan struct{}
+	mu           sync.Mutex
+	sessions     map[string]*runtimeSession
+	closed       bool
+	shuttingDown atomic.Bool
+	reaperStop   chan struct{}
+	reaperDone   chan struct{}
 }
 
 type runRecord struct {
@@ -193,6 +194,7 @@ func New(opts Options) (*Server, error) {
 }
 
 func (s *Server) Close() error {
+	s.shuttingDown.Store(true)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -206,6 +208,20 @@ func (s *Server) Close() error {
 	s.mu.Unlock()
 	if s.reaperDone != nil {
 		<-s.reaperDone
+	}
+	s.mu.Lock()
+	runtimes := make([]*runtimeSession, 0, len(s.sessions))
+	for _, rt := range s.sessions {
+		runtimes = append(runtimes, rt)
+	}
+	s.mu.Unlock()
+	for _, rt := range runtimes {
+		rt.mu.Lock()
+		rt.closing = true
+		if rt.cancel != nil {
+			rt.cancel()
+		}
+		rt.mu.Unlock()
 	}
 	if s.organizerCancel != nil {
 		s.organizerCancel()
@@ -221,20 +237,6 @@ func (s *Server) Close() error {
 	if planningCancel != nil {
 		planningCancel()
 		<-planningDone
-	}
-	s.mu.Lock()
-	runtimes := make([]*runtimeSession, 0, len(s.sessions))
-	for _, rt := range s.sessions {
-		runtimes = append(runtimes, rt)
-	}
-	s.mu.Unlock()
-	for _, rt := range runtimes {
-		rt.mu.Lock()
-		rt.closing = true
-		if rt.cancel != nil {
-			rt.cancel()
-		}
-		rt.mu.Unlock()
 	}
 	for _, rt := range runtimes {
 		// Runs persist history, checkpoints and terminal events after cancellation.
@@ -259,6 +261,10 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.shuttingDown.Load() {
+		writeJSONError(w, http.StatusServiceUnavailable, "backend is closing")
+		return
+	}
 	s.cors(w, r)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)

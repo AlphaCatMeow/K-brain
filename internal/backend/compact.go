@@ -55,7 +55,7 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request, id strin
 
 	requestHash := hashCompact(in)
 	rt.mu.Lock()
-	if rt.closing {
+	if rt.closing || s.shuttingDown.Load() {
 		rt.mu.Unlock()
 		writeJSONError(w, http.StatusServiceUnavailable, "backend is closing")
 		return

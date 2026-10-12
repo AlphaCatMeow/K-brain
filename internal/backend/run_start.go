@@ -52,7 +52,7 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	if rt.closing {
+	if rt.closing || s.shuttingDown.Load() {
 		return fail(http.StatusServiceUnavailable, "backend is closing")
 	}
 	if rt.deleted {

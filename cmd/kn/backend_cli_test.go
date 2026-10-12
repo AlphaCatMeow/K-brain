@@ -286,6 +286,65 @@ func TestBackendCLIParentStdioLifecycle(t *testing.T) {
 	waitForPortClosed(t, ready)
 }
 
+func TestBackendCLIParentExitCancelsActiveSSE(t *testing.T) {
+	fixture := t.TempDir()
+	started := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"working\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+	configPath := filepath.Join(fixture, "config.json")
+	config := fmt.Sprintf(`{"defaultModel":"fixture-model","providers":{"fixture":{"api":"openai-completions","baseUrl":%q,"apiKey":"fixture","models":[{"id":"fixture-model","contextWindow":4096,"maxTokens":256}]}}}`, upstream.URL)
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(fixture, "kn")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", binary, "./cmd/kn")
+	build.Dir = repoRoot(t)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	process := startBackendProcessWithArgs(t, binary, ":0", configPath, filepath.Join(fixture, "sessions"), "-parent-stdio")
+	t.Cleanup(func() { stopBackendProcess(t, process) })
+	ready := waitForBackendReady(t, process)
+	base := "http://" + ready
+	sid := createExecutableSession(t, base, fixture)
+	runExecutablePrompt(t, base, sid, "parent-exit", "keep working")
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream did not start")
+	}
+	response := doExecutableRequest(t, http.MethodGet, base+"/v1/sessions/"+sid+"/events", nil)
+	defer response.Body.Close()
+	streamDone := make(chan struct{})
+	go func() { _, _ = io.Copy(io.Discard, response.Body); close(streamDone) }()
+	start := time.Now()
+	if err := process.stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitBackendProcess(t, process, true)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("parent exit blocked on active SSE for %s", elapsed)
+	}
+	select {
+	case <-streamDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSE did not close")
+	}
+	waitForPortClosed(t, ready)
+}
+
 func TestBackendCLIDefaultModeIgnoresStdinEOF(t *testing.T) {
 	fixture := t.TempDir()
 	configPath := filepath.Join(fixture, "config.json")

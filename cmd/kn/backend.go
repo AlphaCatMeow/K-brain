@@ -195,9 +195,10 @@ func backendCLI(args []string) error {
 			return err
 		}
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return httpServer.Shutdown(shutdownCtx)
+	// Stop accepting requests and close SSE before cancelling runs; draining HTTP
+	// first waits for streams whose tasks are only cancelled by server.Close.
+	httpErr := httpServer.Close()
+	return errors.Join(httpErr, server.Close())
 }
 
 func watchParentStdio(r io.Reader) <-chan struct{} {
