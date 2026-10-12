@@ -52,7 +52,7 @@ func ClientForProviderContext(ctx context.Context, prov config.Provider, name st
 			api = ai.APIChatCompletions
 		}
 	}
-	client, err := ai.NewClient(ai.ClientOptions{API: api, BaseURL: prov.BaseURL, APIKey: key, MaxRetries: maxRetries, IsFullURL: prov.IsFullURL, ModelsURL: prov.ModelsURL, Headers: headers})
+	client, err := ai.NewClient(ai.ClientOptions{API: api, BaseURL: prov.BaseURL, APIKey: key, MaxRetries: maxRetries, IsFullURL: prov.IsFullURL, ModelsURL: prov.ModelsURL, Headers: headers, UseProxy: prov.UseSystemProxy})
 	if err != nil {
 		return nil, fmt.Errorf("provider %q: %w", name, err)
 	}
@@ -73,6 +73,7 @@ func ClientForProviderOptionalContext(ctx context.Context, prov config.Provider,
 	}
 	if strings.TrimSpace(prov.BaseURL) == "" || strings.TrimSpace(prov.APIKey) == "" {
 		client := ai.New(prov.BaseURL, "")
+		client.SetUseProxy(prov.UseSystemProxy)
 		client.MaxRetries = maxRetries
 		configureCache(client, prov)
 		return client, nil

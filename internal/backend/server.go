@@ -315,6 +315,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSettings(w, r)
 		return
 	}
+	if r.URL.Path == "/v1/network/proxy" {
+		s.handleNetworkProxy(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/computer" {
 		s.handleComputer(w, r)
 		return

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/netproxy"
 	"github.com/Stack-Cairn/K-brain/internal/privacy"
 )
 
@@ -234,7 +235,7 @@ func NewWithOptions(baseURL, apiKey string, full bool, modelsURL string, headers
 	}
 	return &OpenAI{
 		BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, IsFullURL: full, ModelsURL: modelsURL, Headers: h,
-		HTTP:           &http.Client{Transport: privacy.WrapTransport(http.DefaultTransport), Timeout: 10 * time.Minute},
+		HTTP:           &http.Client{Transport: privacy.WrapTransport(netproxy.Transport(false)), Timeout: 10 * time.Minute},
 		CacheRetention: "short",
 	}
 }
@@ -244,6 +245,13 @@ func (c *OpenAI) SetOnRetry(fn func(RetryEvent)) {
 }
 
 func (c *OpenAI) SetMaxRetries(n int) { c.MaxRetries = n }
+
+// SetUseProxy selects the proxied or direct transport for this provider.
+func (c *OpenAI) SetUseProxy(on bool) {
+	h := *c.HTTP
+	h.Transport = privacy.WrapTransport(netproxy.Transport(on))
+	c.HTTP = &h
+}
 
 type Request struct {
 	NativeWebSearch      bool      `json:"-"`
