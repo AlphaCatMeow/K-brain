@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -150,5 +152,69 @@ func TestContextTransportRoutesByProvider(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("proxy hits %d, want 1", hits.Load())
+	}
+}
+
+func TestRejectsUnusableProxyAddresses(t *testing.T) {
+	for _, value := range []string{"http://:8080", "http://proxy.test:0", "http://proxy.test:65536", "http://proxy.test:8080/path", "http://proxy.test:8080?token=secret", "http://proxy.test:8080#fragment"} {
+		t.Run(value, func(t *testing.T) {
+			if err := Set(value); !errors.Is(err, ErrInvalidProxy) {
+				t.Fatalf("expected invalid proxy, got %v", err)
+			}
+		})
+	}
+}
+
+func TestConcurrentFirstSetAndLoad(t *testing.T) {
+	defer Set("direct")
+	for range 5000 {
+		initOnce = sync.Once{}
+		current.Store(nil)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		start := make(chan struct{})
+		go func() { defer wg.Done(); <-start; _ = Set("direct") }()
+		go func() {
+			defer wg.Done()
+			<-start
+			if load() == nil {
+				t.Error("proxy state was nil after initialization")
+			}
+		}()
+		close(start)
+		wg.Wait()
+	}
+}
+
+func TestExistingClientUsesUpdatedProxy(t *testing.T) {
+	defer Set("direct")
+	first, firstHits := fakeProxy(t)
+	second, secondHits := fakeProxy(t)
+	client := &http.Client{Transport: Transport(true), Timeout: time.Second}
+	for _, value := range []string{first.URL, second.URL, "invalid", first.URL} {
+		if err := Set(value); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Get(target)
+		if value == "invalid" {
+			if !errors.Is(err, ErrInvalidProxy) {
+				t.Fatalf("expected fail-closed request, got %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if firstHits.Load() != 2 || secondHits.Load() != 1 {
+		t.Fatalf("unexpected proxy hits: %d / %d", firstHits.Load(), secondHits.Load())
+	}
+	if err := Set("direct"); err != nil {
+		t.Fatal(err)
+	}
+	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "provider.test"}}
+	if proxy, err := proxyForRequest(req); proxy != nil || err != nil {
+		t.Fatalf("direct route = %v, %v", proxy, err)
 	}
 }

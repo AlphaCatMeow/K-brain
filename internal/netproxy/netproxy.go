@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,8 +72,8 @@ func load() *state {
 // invalid (proxied requests fail) and reported to the caller.
 func Set(value string) error {
 	st, err := parse(value)
-	// Settle the one-time environment load first so it cannot overwrite this.
-	initOnce.Do(func() {})
+	// Publish a state before releasing concurrent initialization waiters.
+	initOnce.Do(func() { current.Store(st) })
 	current.Store(st)
 	return err
 }
@@ -86,7 +87,11 @@ func parse(value string) (*state, error) {
 		return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, ErrInvalidProxy }}, nil
 	}
 	u, err := url.Parse(value)
-	if err != nil || u.Host == "" || u.Port() == "" {
+	if err != nil || u.Hostname() == "" || u.Port() == "" {
+		return invalid(), ErrInvalidProxy
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return invalid(), ErrInvalidProxy
 	}
 	switch u.Scheme {

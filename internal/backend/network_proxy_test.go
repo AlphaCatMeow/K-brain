@@ -32,3 +32,31 @@ func TestNetworkProxyEndpoint(t *testing.T) {
 		t.Fatalf("GET: %d", r.Code)
 	}
 }
+
+func TestNetworkProxyEndpointRequiresAuthentication(t *testing.T) {
+	defer netproxy.Set("direct")
+	s := &Server{token: "proxy-test-token"}
+	server := httptest.NewServer(s)
+	defer server.Close()
+	for _, token := range []string{"", "wrong-token", "proxy-test-token"} {
+		req, err := http.NewRequest(http.MethodPut, server.URL+"/v1/network/proxy", strings.NewReader(`{"proxy":"direct"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		want := http.StatusUnauthorized
+		if token == "proxy-test-token" {
+			want = http.StatusOK
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, want)
+		}
+	}
+}
