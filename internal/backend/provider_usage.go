@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/netproxy"
 	"github.com/dop251/goja"
 )
 
@@ -87,7 +88,7 @@ type ProviderUsageService struct {
 }
 
 func NewProviderUsageService(settings *SettingsStore) *ProviderUsageService {
-	return &ProviderUsageService{settings: settings, cache: make(map[string]usageCacheEntry), client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &ProviderUsageService{settings: settings, cache: make(map[string]usageCacheEntry), client: &http.Client{Transport: netproxy.ContextTransport(), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (s *ProviderUsageService) Query(ctx context.Context, providerID string, refresh bool) ProviderUsageResult {
@@ -223,6 +224,7 @@ func usageError(message string) ProviderUsageResult {
 }
 
 func (s *ProviderUsageService) execute(ctx context.Context, p config.Provider, c usageConfig, providerKey string) ([]UsageData, *usageFailure) {
+	ctx = netproxy.WithProvider(ctx, p.UseSystemProxy)
 	timeout := usageDefaultTimeout
 	if c.TimeoutSecs > 0 && !math.IsNaN(c.TimeoutSecs) && !math.IsInf(c.TimeoutSecs, 0) {
 		seconds := math.Round(c.TimeoutSecs)

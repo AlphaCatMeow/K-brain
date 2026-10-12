@@ -23,6 +23,7 @@ type ClientOptions struct {
 	IsFullURL  bool
 	ModelsURL  string
 	Headers    map[string]string
+	UseProxy   bool
 }
 
 func NewClient(opts ClientOptions) (Client, error) {
@@ -55,6 +56,9 @@ func NewClient(opts ClientOptions) (Client, error) {
 	}
 	if setter, ok := client.(interface{ SetCacheOptions(CacheOptions) }); ok {
 		setter.SetCacheOptions(opts.Cache)
+	}
+	if setter, ok := client.(interface{ SetUseProxy(bool) }); ok {
+		setter.SetUseProxy(opts.UseProxy)
 	}
 	return client, nil
 }

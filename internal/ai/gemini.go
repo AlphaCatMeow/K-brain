@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/datapath"
+	"github.com/Stack-Cairn/K-brain/internal/netproxy"
 	"github.com/gofrs/flock"
 )
 
@@ -47,7 +48,7 @@ func NewGeminiWithOptions(baseURL, apiKey string, isFullURL bool, modelsURL stri
 	for key, value := range headers {
 		h.Set(key, value)
 	}
-	return &Gemini{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, IsFullURL: isFullURL, ModelsURL: modelsURL, Headers: h, HTTP: &http.Client{Timeout: 10 * time.Minute}, usedIDs: make(map[string]bool), signatures: make(map[string]string)}
+	return &Gemini{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, IsFullURL: isFullURL, ModelsURL: modelsURL, Headers: h, HTTP: &http.Client{Transport: netproxy.Transport(false), Timeout: 10 * time.Minute}, usedIDs: make(map[string]bool), signatures: make(map[string]string)}
 }
 
 func (c *Gemini) Clone() Client {
@@ -73,6 +74,13 @@ func (c *Gemini) SetCacheKey(string)             {}
 func (c *Gemini) Endpoint() string               { return c.BaseURL }
 func (c *Gemini) SetMaxRetries(n int)            { c.MaxRetries = n }
 func (c *Gemini) SetOnRetry(fn func(RetryEvent)) { c.OnRetry = fn }
+
+// SetUseProxy selects the proxied or direct transport for this provider.
+func (c *Gemini) SetUseProxy(on bool) {
+	h := *c.HTTP
+	h.Transport = netproxy.Transport(on)
+	c.HTTP = &h
+}
 
 func (c *Gemini) Models(ctx context.Context) ([]ModelInfo, error) {
 	endpoint := c.ModelsURL
