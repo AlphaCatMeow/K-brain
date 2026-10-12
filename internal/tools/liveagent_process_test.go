@@ -151,3 +151,20 @@ func TestManagedProcessCanonicalOwnershipAndReadPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestManagedProcessRunningRetention(t *testing.T) {
+	manager := newLiveAgentProcessManager()
+	defer manager.CloseAll()
+	if manager.HasRunningProcesses() {
+		t.Fatal("empty manager reports running")
+	}
+	done := make(chan struct{})
+	manager.processes["isolated"] = &liveagentProcess{done: done, isolated: true}
+	if !manager.HasRunningProcesses() {
+		t.Fatal("isolated running process ignored")
+	}
+	close(done)
+	if manager.HasRunningProcesses() {
+		t.Fatal("completed process reports running")
+	}
+}

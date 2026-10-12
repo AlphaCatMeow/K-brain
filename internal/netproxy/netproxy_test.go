@@ -218,3 +218,109 @@ func TestExistingClientUsesUpdatedProxy(t *testing.T) {
 		t.Fatalf("direct route = %v, %v", proxy, err)
 	}
 }
+
+// connectProxy counts CONNECT tunnels to provider.test, as HTTPS requests use.
+func connectProxy(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect && r.Host == "provider.test:443" {
+			hits.Add(1)
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &hits
+}
+
+func TestStandaloneBothTogglesUseEnvironmentProxy(t *testing.T) {
+	httpProxy, httpHits := fakeProxy(t)
+	httpsProxy, httpsHits := connectProxy(t)
+	t.Setenv("HTTP_PROXY", httpProxy.URL)
+	t.Setenv("HTTPS_PROXY", httpsProxy.URL)
+	t.Setenv("NO_PROXY", "")
+	standaloneForTest(t)
+	for _, useProxy := range []bool{false, true} {
+		resp, err := get(t, useProxy, target)
+		if err != nil {
+			t.Fatalf("useProxy=%v: %v", useProxy, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("useProxy=%v: status %d", useProxy, resp.StatusCode)
+		}
+		if _, err := get(t, useProxy, "https://provider.test/x"); err == nil {
+			t.Fatalf("useProxy=%v: expected CONNECT to be refused", useProxy)
+		}
+	}
+	if httpHits.Load() != 2 || httpsHits.Load() != 2 {
+		t.Fatalf("env proxy hits http=%d https=%d, want 2/2", httpHits.Load(), httpsHits.Load())
+	}
+}
+
+func TestStandaloneRespectsNoProxy(t *testing.T) {
+	proxy, hits := fakeProxy(t)
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "provider.test")
+	standaloneForTest(t)
+	for _, useProxy := range []bool{false, true} {
+		if _, err := get(t, useProxy, target); err == nil {
+			t.Fatalf("useProxy=%v: expected DNS failure for NO_PROXY host", useProxy)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("NO_PROXY host hit proxy %d times", hits.Load())
+	}
+}
+
+func TestManagedEnvDirectIgnoresEnvironmentProxy(t *testing.T) {
+	envProxy, envHits := fakeProxy(t)
+	appProxy, appHits := fakeProxy(t)
+	t.Setenv("HTTP_PROXY", envProxy.URL)
+	t.Setenv("HTTPS_PROXY", envProxy.URL)
+	t.Setenv("NO_PROXY", "")
+	for _, value := range []string{"direct", appProxy.URL} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(EnvVar, value)
+			resetForTest(t)
+			if _, err := get(t, false, target); err == nil {
+				t.Fatal("expected DNS failure for direct request")
+			}
+		})
+	}
+	if envHits.Load() != 0 || appHits.Load() != 0 {
+		t.Fatalf("toggle-off hit proxies env=%d app=%d", envHits.Load(), appHits.Load())
+	}
+}
+
+func TestSetSwitchesStandaloneToManaged(t *testing.T) {
+	envProxy, envHits := fakeProxy(t)
+	appProxy, appHits := fakeProxy(t)
+	t.Setenv("HTTP_PROXY", envProxy.URL)
+	t.Setenv("HTTPS_PROXY", envProxy.URL)
+	t.Setenv("NO_PROXY", "")
+	standaloneForTest(t)
+	direct := &http.Client{Transport: Transport(false), Timeout: 10 * time.Second}
+	proxied := &http.Client{Transport: Transport(true), Timeout: 10 * time.Second}
+	for _, c := range []*http.Client{direct, proxied} {
+		resp, err := c.Get(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if err := Set(appProxy.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := direct.Get(target); err == nil {
+		t.Fatal("expected DNS failure for managed direct request")
+	}
+	resp, err := proxied.Get(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if envHits.Load() != 2 || appHits.Load() != 1 {
+		t.Fatalf("proxy hits env=%d app=%d, want 2/1", envHits.Load(), appHits.Load())
+	}
+}

@@ -79,64 +79,86 @@ func TestTrajectoryRecordedRequestsSectionsTransportRetry(t *testing.T) {
 }
 
 func TestTrajectoryHistoryBranchEditPrunesAndCopies(t *testing.T) {
-	store, err := session.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	backend, server := newTestServer(t, store, t.TempDir(), &scriptedClient{response: "answer"})
-	sess := createTestSession(t, server.URL)
-	for i := 0; i < 3; i++ {
-		accepted := runRequest(t, server.URL, sess.ID, fmt.Sprint(i), fmt.Sprintf("turn %d", i))
-		readTrajectoryRun(t, server.URL, sess.ID, accepted, "allow_once")
-	}
-	loaded := getSession(t, server.URL, sess.ID)
-	users := []protocol.Message{}
-	for _, m := range loaded.Messages {
-		if m.Role == "user" {
-			users = append(users, m)
-		}
-	}
-	var branch protocol.Session
-	postJSON(t, http.DefaultClient, server.URL+"/v1/sessions/"+sess.ID+"/branch", protocol.BranchSessionRequest{ExpectedRevision: loaded.Revision, MessageRef: protocol.HistoryMessageRef{MessageID: users[1].ID}}, &branch)
-	var copied trajectoryWindow
-	trajectoryGET(t, server.URL+"/v1/sessions/"+branch.ID+"/trajectory", 200, &copied)
-	if copied.TotalSegmentCount != 2 || strings.Contains(copied.EventsJSON, "turn 2") {
-		t.Fatalf("branch leaked later run: %+v", copied)
-	}
-	for _, event := range copied.RawEvents {
-		if event.ConversationID != branch.ID {
-			t.Fatal("branch event identity not rewritten")
-		}
-		if event.Type == "trajectory.request.started" {
-			p := trajectoryRequestPayload(event)
-			refs := p["sections"].([]any)
-			var sections []trajectorySection
-			trajectoryGET(t, server.URL+"/v1/sessions/"+branch.ID+"/trajectory/sections?section_id="+refs[0].(string), 200, &sections)
-			if len(sections) != 1 {
-				t.Fatal("branch section not copied")
+	for _, bounded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bounded=%v", bounded), func(t *testing.T) {
+
+			store, err := session.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-	}
-	var original trajectoryWindow
-	trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &original)
-	var edited protocol.Session
-	response := postJSON(t, http.DefaultClient, server.URL+"/v1/sessions/"+sess.ID+"/edit", protocol.EditSessionRequest{ExpectedRevision: loaded.Revision, MessageRef: protocol.HistoryMessageRef{MessageID: users[1].ID}, Replacement: protocol.Message{Role: "user", Content: []protocol.ContentBlock{{Type: "text", Text: "replacement"}}}}, &edited)
-	if response.StatusCode != 200 {
-		t.Fatalf("edit: %d", response.StatusCode)
-	}
-	var retained trajectoryWindow
-	trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &retained)
-	if retained.TotalSegmentCount != 1 || retained.LastSeq <= original.LastSeq || retained.Truncated || strings.Contains(retained.EventsJSON, "turn 1") || strings.Contains(retained.EventsJSON, "turn 2") {
-		t.Fatalf("edit prefix: %+v", retained)
-	}
-	backend.mu.Lock()
-	delete(backend.sessions, sess.ID)
-	backend.mu.Unlock()
-	var cold trajectoryWindow
-	trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &cold)
-	if cold.LastSeq != retained.LastSeq || cold.Truncated {
-		t.Fatal("restart lost rebase high watermark")
+			defer store.Close()
+			backend, server := newTestServer(t, store, t.TempDir(), &scriptedClient{response: "answer"})
+			sess := createTestSession(t, server.URL)
+			for i := 0; i < 3; i++ {
+				accepted := runRequest(t, server.URL, sess.ID, fmt.Sprint(i), fmt.Sprintf("turn %d", i))
+				readTrajectoryRun(t, server.URL, sess.ID, accepted, "allow_once")
+			}
+			if bounded {
+				rt, err := backend.loadRuntimeByID(sess.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for range maxCachedEvents + 1 {
+					if _, err := backend.publish(rt, protocol.EventToolStatus, protocol.ToolStatus{Status: "running", Message: "tail"}, ""); err != nil {
+						t.Fatal(err)
+					}
+				}
+				sTruncated := rt.eventsTruncated
+				backend.releaseRuntime(rt)
+				if !sTruncated {
+					t.Fatal("cache did not truncate")
+				}
+			}
+			loaded := getSession(t, server.URL, sess.ID)
+			users := []protocol.Message{}
+			for _, m := range loaded.Messages {
+				if m.Role == "user" {
+					users = append(users, m)
+				}
+			}
+			var branch protocol.Session
+			postJSON(t, http.DefaultClient, server.URL+"/v1/sessions/"+sess.ID+"/branch", protocol.BranchSessionRequest{ExpectedRevision: loaded.Revision, MessageRef: protocol.HistoryMessageRef{MessageID: users[1].ID}}, &branch)
+			var copied trajectoryWindow
+			trajectoryGET(t, server.URL+"/v1/sessions/"+branch.ID+"/trajectory", 200, &copied)
+			if copied.TotalSegmentCount != 2 || strings.Contains(copied.EventsJSON, "turn 2") {
+				t.Fatalf("branch leaked later run: %+v", copied)
+			}
+			for _, event := range copied.RawEvents {
+				if event.ConversationID != branch.ID {
+					t.Fatal("branch event identity not rewritten")
+				}
+				if event.Type == "trajectory.request.started" {
+					p := trajectoryRequestPayload(event)
+					refs := p["sections"].([]any)
+					var sections []trajectorySection
+					trajectoryGET(t, server.URL+"/v1/sessions/"+branch.ID+"/trajectory/sections?section_id="+refs[0].(string), 200, &sections)
+					if len(sections) != 1 {
+						t.Fatal("branch section not copied")
+					}
+				}
+			}
+			var original trajectoryWindow
+			trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &original)
+			var edited protocol.Session
+			response := postJSON(t, http.DefaultClient, server.URL+"/v1/sessions/"+sess.ID+"/edit", protocol.EditSessionRequest{ExpectedRevision: loaded.Revision, MessageRef: protocol.HistoryMessageRef{MessageID: users[1].ID}, Replacement: protocol.Message{Role: "user", Content: []protocol.ContentBlock{{Type: "text", Text: "replacement"}}}}, &edited)
+			if response.StatusCode != 200 {
+				t.Fatalf("edit: %d", response.StatusCode)
+			}
+			var retained trajectoryWindow
+			trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &retained)
+			if retained.TotalSegmentCount != 1 || retained.LastSeq <= original.LastSeq || retained.Truncated || strings.Contains(retained.EventsJSON, "turn 1") || strings.Contains(retained.EventsJSON, "turn 2") {
+				t.Fatalf("edit prefix: %+v", retained)
+			}
+			backend.mu.Lock()
+			delete(backend.sessions, sess.ID)
+			backend.mu.Unlock()
+			var cold trajectoryWindow
+			trajectoryGET(t, server.URL+"/v1/sessions/"+sess.ID+"/trajectory", 200, &cold)
+			if cold.LastSeq != retained.LastSeq || cold.Truncated {
+				t.Fatal("restart lost rebase high watermark")
+			}
+
+		})
 	}
 }
 

@@ -169,6 +169,7 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if !s.mutationAllowed(w, rt) {
@@ -227,6 +228,19 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
+	defer func() {
+		rt.mu.Lock()
+		deleted := rt.deleted
+		rt.mu.Unlock()
+		if deleted {
+			s.mu.Lock()
+			if s.sessions[id] == rt {
+				delete(s.sessions, id)
+			}
+			s.mu.Unlock()
+		}
+	}()
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if !s.mutationAllowed(w, rt) {
@@ -238,6 +252,11 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 	}
 	rt.deleted = true
 	rt.recorder = nil
+	rt.agent = nil
+	rt.events = nil
+	rt.eventBytes = 0
+	rt.runs = nil
+	rt.terminalContexts = nil
 	terminalManager := rt.terminalManager
 	processManager := rt.processManager
 	rt.terminalManager = nil
@@ -298,6 +317,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request, id string) {
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.deleted {
@@ -398,6 +418,7 @@ func (s *Server) mutateHistory(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	if !s.mutationAllowed(w, rt) {
 		rt.mu.Unlock()
@@ -456,6 +477,7 @@ func (s *Server) mutateHistory(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(branch)
 	writeJSON(w, 201, s.sessionView(branch))
 }
 
@@ -479,6 +501,7 @@ func (s *Server) share(w http.ResponseWriter, r *http.Request, id string) {
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.deleted {

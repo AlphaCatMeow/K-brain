@@ -348,6 +348,7 @@ func (s *Server) checkpointPreview(w http.ResponseWriter, r *http.Request, id st
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	active := rt.activeLocked()
 	rt.mu.Unlock()
@@ -373,6 +374,7 @@ func (s *Server) checkpointRewind(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, 404, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	var in checkpointRewindRequest
 	if err := decodeJSON(w, r, &in); err != nil {
 		return

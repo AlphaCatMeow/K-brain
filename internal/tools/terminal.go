@@ -422,3 +422,17 @@ func (m *TerminalManager) CloseAll() {
 		_ = m.stop(id)
 	}
 }
+
+func (m *TerminalManager) HasRunningSessions() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, session := range m.sessions {
+		session.mu.Lock()
+		running := session.record.Running
+		session.mu.Unlock()
+		if running {
+			return true
+		}
+	}
+	return false
+}

@@ -189,7 +189,11 @@ func (rt *runtimeSession) trajectoryChildEvents(id string) agent.Events {
 }
 
 func (rt *runtimeSession) trajectoryTaskRunLocked(id string) string {
-	for _, event := range rt.events {
+	events, err := rt.allEventsLocked()
+	if err != nil {
+		return rt.runID
+	}
+	for _, event := range events {
 		if event.Type != protocol.EventSubagentStarted {
 			continue
 		}
@@ -277,7 +281,7 @@ func (rt *runtimeSession) publishTrajectory(runID, kind string, payload any, par
 		return event, err
 	}
 	rt.nextSeq = event.Seq
-	rt.events = append(rt.events, event)
+	rt.appendEventLocked(event)
 	old := rt.changed
 	rt.changed = make(chan struct{})
 	close(old)

@@ -2,7 +2,6 @@
 package backend
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -17,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
@@ -80,9 +80,11 @@ type Server struct {
 	hookRunner           *BackendHookRunner
 	mcp                  *mcp.LiveManager
 
-	mu       sync.Mutex
-	sessions map[string]*runtimeSession
-	closed   bool
+	mu         sync.Mutex
+	sessions   map[string]*runtimeSession
+	closed     bool
+	reaperStop chan struct{}
+	reaperDone chan struct{}
 }
 
 type runRecord struct {
@@ -103,6 +105,8 @@ type permissionWaiter struct {
 }
 
 type runtimeSession struct {
+	leases           atomic.Int32
+	lastUsed         time.Time
 	settingsRevision uint64
 	id               string
 	deleted          bool
@@ -117,6 +121,8 @@ type runtimeSession struct {
 	runDone          bool
 	nextSeq          int64
 	events           []protocol.Event
+	eventBytes       int
+	eventsTruncated  bool
 	changed          chan struct{}
 	runs             map[string]runRecord
 	terminalManager  *tools.TerminalManager
@@ -182,6 +188,7 @@ func New(opts Options) (*Server, error) {
 		server.organizerRuntime = runtime
 		server.organizerCancel = runtime.StartOrganizerScheduler(context.Background(), opts.DefaultCWD, interval)
 	}
+	server.startRuntimeReaper()
 	return server, nil
 }
 
@@ -192,8 +199,14 @@ func (s *Server) Close() error {
 		return nil
 	}
 	s.closed = true
+	if s.reaperStop != nil {
+		close(s.reaperStop)
+	}
 	planningCancel, planningDone := s.planningCancel, s.planningDone
 	s.mu.Unlock()
+	if s.reaperDone != nil {
+		<-s.reaperDone
+	}
 	if s.organizerCancel != nil {
 		s.organizerCancel()
 	}
@@ -539,6 +552,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	writeJSON(w, http.StatusCreated, s.sessionView(rt))
 }
 
@@ -548,6 +562,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request, id string) {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	view, err := s.sessionViewLocked(rt)
@@ -567,6 +582,7 @@ func (s *Server) historyRuntime(id string) (*runtimeSession, error) {
 	defer s.mu.Unlock()
 	rt := s.sessions[id]
 	if rt != nil {
+		rt.leases.Add(1)
 		return rt, nil
 	}
 	if _, _, err := s.store.Load(id); err != nil {
@@ -632,10 +648,14 @@ func (s *Server) loadRuntimeByID(id string) (*runtimeSession, error) {
 	}
 	s.mu.Lock()
 	if rt := s.sessions[id]; rt != nil {
+		rt.leases.Add(1)
 		s.mu.Unlock()
 		rt.mu.Lock()
 		deleted := rt.deleted
 		rt.mu.Unlock()
+		if deleted {
+			s.releaseRuntime(rt)
+		}
 		if deleted {
 			return nil, session.ErrNotFound
 		}
@@ -813,10 +833,14 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 		return nil, errors.New("backend is closed")
 	}
 	if rt := s.sessions[id]; rt != nil {
+		rt.leases.Add(1)
 		s.mu.Unlock()
 		rt.mu.Lock()
 		deleted := rt.deleted
 		rt.mu.Unlock()
+		if deleted {
+			s.releaseRuntime(rt)
+		}
 		if deleted {
 			return nil, session.ErrNotFound
 		}
@@ -872,15 +896,25 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 		return nil, errors.New("backend is closed")
 	}
 	if existing := s.sessions[id]; existing != nil {
+		existing.leases.Add(1)
 		s.mu.Unlock()
 		existing.mu.Lock()
 		deleted := existing.deleted
 		existing.mu.Unlock()
 		if deleted {
+			s.releaseRuntime(existing)
+		}
+		if deleted {
 			return nil, session.ErrNotFound
 		}
 		return existing, nil
 	}
+	if _, _, err := s.store.Load(id); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	rt.leases.Store(1)
+	rt.lastUsed = time.Now()
 	s.sessions[id] = rt
 	s.mu.Unlock()
 	adopted = true
@@ -948,6 +982,7 @@ func ptrTime(t time.Time) *time.Time {
 }
 
 func (rt *runtimeSession) loadJournal(dir string) error {
+	rt.eventDir = dir
 	path := filepath.Join(dir, rt.id+".jsonl")
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -957,24 +992,24 @@ func (rt *runtimeSession) loadJournal(dir string) error {
 		return err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), maxBodyBytes)
-	for sc.Scan() {
+	decoder := json.NewDecoder(f)
+	for {
 		var e protocol.Event
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		err := decoder.Decode(&e)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
 			return err
 		}
 		if err := e.Validate(); err != nil {
 			return err
 		}
-		rt.events = append(rt.events, e)
+		rt.appendEventLocked(e)
 		if e.Seq > rt.nextSeq {
 			rt.nextSeq = e.Seq
 		}
 		rt.runID = e.RunID
-	}
-	if err := sc.Err(); err != nil {
-		return err
 	}
 	return rt.loadRuns(dir)
 }
@@ -1022,7 +1057,7 @@ func (rt *runtimeSession) publish(typ string, payload any, parent string) (proto
 		return protocol.Event{}, err
 	}
 	rt.nextSeq = seq
-	rt.events = append(rt.events, e)
+	rt.appendEventLocked(e)
 	old := rt.changed
 	rt.changed = make(chan struct{})
 	close(old)
@@ -1049,7 +1084,7 @@ func (s *Server) publish(rt *runtimeSession, typ string, payload any, parent str
 		return protocol.Event{}, err
 	}
 	rt.nextSeq = seq
-	rt.events = append(rt.events, e)
+	rt.appendEventLocked(e)
 	old := rt.changed
 	rt.changed = make(chan struct{})
 	close(old)
@@ -1073,6 +1108,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request, id string) {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	var in protocol.PromptRequest
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
@@ -1407,6 +1443,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after_seq"), 10, 64)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1418,9 +1455,18 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	for {
 		rt.mu.Lock()
+		if rt.deleted {
+			rt.mu.Unlock()
+			return
+		}
 		pending := make([]protocol.Event, 0)
 		active := rt.cancel != nil && !rt.runDone
-		for _, e := range rt.events {
+		replay, err := rt.eventsAfterLocked(after)
+		if err != nil {
+			rt.mu.Unlock()
+			return
+		}
+		for _, e := range replay {
 			if e.Seq > after {
 				// Consumers may submit the next run as soon as they receive a terminal event.
 				if active && e.RunID == rt.runID && (e.Type == protocol.EventRunCompleted || e.Type == protocol.EventRunFailed || e.Type == protocol.EventRunCancelled) {
@@ -1442,6 +1488,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 		flusher.Flush()
+		if len(pending) > 0 {
+			continue
+		}
 		if !active {
 			return
 		}
@@ -1467,6 +1516,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request, id, run strin
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	if rt.runID != run || rt.cancel == nil {
 		rt.mu.Unlock()
@@ -1484,6 +1534,7 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request, id string)
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	if rt.cancel != nil {
 		rt.cancel()
@@ -1498,6 +1549,7 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	var in protocol.PermissionDecisionRequest
 	if err = decodeJSON(w, r, &in); err != nil {
 		return

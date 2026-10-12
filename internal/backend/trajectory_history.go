@@ -11,6 +11,10 @@ import (
 
 // Called with rt.mu held, before the history mutation loses its original anchors.
 func (s *Server) trajectoryHistoryPrefix(rt *runtimeSession, messageID string, edit bool) ([]protocol.Event, error) {
+	events, err := rt.allEventsLocked()
+	if err != nil {
+		return nil, err
+	}
 	snapshot, err := s.store.HistorySnapshot(rt.id)
 	if err != nil {
 		return nil, err
@@ -39,7 +43,7 @@ func (s *Server) trajectoryHistoryPrefix(rt *runtimeSession, messageID string, e
 			n++
 		}
 	}
-	for _, event := range rt.events {
+	for _, event := range events {
 		if event.Type == "trajectory.request.started" {
 			p := trajectoryRequestPayload(event)
 			if trajectoryString(p, "task_id") == "" {
@@ -50,7 +54,7 @@ func (s *Server) trajectoryHistoryPrefix(rt *runtimeSession, messageID string, e
 		}
 	}
 	ordinal := -1
-	for _, event := range rt.events {
+	for _, event := range events {
 		if event.Type != protocol.EventUserMessage {
 			continue
 		}
@@ -73,7 +77,7 @@ func (s *Server) trajectoryHistoryPrefix(rt *runtimeSession, messageID string, e
 		}
 	}
 	out := []protocol.Event{}
-	for _, event := range rt.events {
+	for _, event := range events {
 		if keep[event.RunID] {
 			out = append(out, event)
 		}
@@ -196,7 +200,12 @@ func (s *Server) applyTrajectoryHistory(rt *runtimeSession, destination string, 
 	}
 	if edit {
 		rt.nextSeq = copied[len(copied)-1].Seq
-		rt.events = copied
+		rt.events = nil
+		rt.eventBytes = 0
+		rt.eventsTruncated = false
+		for _, event := range copied {
+			rt.appendEventLocked(event)
+		}
 		rt.runs = runs
 		old := rt.changed
 		rt.changed = make(chan struct{})

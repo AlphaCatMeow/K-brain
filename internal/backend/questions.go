@@ -159,7 +159,7 @@ func (rt *runtimeSession) publishEventLocked(runID, eventType string, payload an
 		return err
 	}
 	rt.nextSeq = event.Seq
-	rt.events = append(rt.events, event)
+	rt.appendEventLocked(event)
 	close(rt.changed)
 	rt.changed = make(chan struct{})
 	return nil
@@ -264,12 +264,18 @@ func (s *Server) answerQuestion(w http.ResponseWriter, r *http.Request, id, ques
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	events, err := rt.allEventsLocked()
+	if err != nil {
+		mutationError(w, err)
+		return
+	}
 	var request *protocol.QuestionRequest
 	var resolved *protocol.QuestionResolution
-	for i := range rt.events {
-		event := &rt.events[i]
+	for i := range events {
+		event := &events[i]
 		if event.RunID != in.RunID {
 			continue
 		}

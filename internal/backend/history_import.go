@@ -123,6 +123,7 @@ func (s *Server) importLegacyHistory(w http.ResponseWriter, r *http.Request) {
 				writeJSONError(w, http.StatusInternalServerError, runtimeErr.Error())
 				return
 			}
+			defer s.releaseRuntime(rt)
 			rt.mu.Lock()
 			defer rt.mu.Unlock()
 			if !s.mutationAllowed(w, rt) {

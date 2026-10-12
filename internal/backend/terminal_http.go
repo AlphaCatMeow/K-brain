@@ -66,6 +66,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		writeTerminalAuthError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	action := strings.ToLower(strings.TrimSpace(in.Action))
 	if (action == "start" || action == "create" || action == "input" || action == "resize") && base.Err() != nil {
 		writeJSONError(w, 409, "terminal mutation requires an active canonical run")
@@ -120,6 +121,12 @@ func (s *Server) canonicalHostContext(conversationID, runID string) (*runtimeSes
 	if err != nil {
 		return nil, nil, err
 	}
+	success := false
+	defer func() {
+		if !success {
+			s.releaseRuntime(rt)
+		}
+	}()
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.deleted {
@@ -139,6 +146,7 @@ func (s *Server) canonicalHostContext(conversationID, runID string) (*runtimeSes
 	if ctx == nil {
 		return nil, nil, errors.New("canonical run host context is unavailable")
 	}
+	success = true
 	return rt, ctx, nil
 }
 

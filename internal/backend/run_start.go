@@ -134,9 +134,11 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	if err := rt.persistRuns(s.eventDir); err != nil {
 		return abort(err)
 	}
+	rt.leases.Add(1)
 	rt.runWorkers.Add(1)
 	go func() {
 		defer rt.runWorkers.Done()
+		defer s.releaseRuntime(rt)
 		s.executeRun(rt, runCtx, runID, in, options)
 	}()
 	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: runID, AcceptedSeq: acceptedSeq}, http.StatusAccepted, nil

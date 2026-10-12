@@ -213,6 +213,7 @@ func (s *Server) resolveClientTool(w http.ResponseWriter, r *http.Request, id, c
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	waiter := rt.clientTools[callID]
