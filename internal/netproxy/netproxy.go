@@ -1,8 +1,14 @@
 // Package netproxy selects the outbound transport for provider HTTP traffic.
 //
-// Providers whose useSystemProxy toggle is on use the proxied transport, which
-// resolves the proxy from the configuration LiveAgent hands over; all other
-// providers use the direct transport (Proxy == nil, environment ignored).
+// The package runs in one of two modes, decided per request:
+//
+//   - Managed: LiveAgent passed EnvVar at spawn or Set has been called.
+//     Providers whose useSystemProxy toggle is on use the app proxy; all
+//     others connect directly and HTTPS_PROXY/HTTP_PROXY/NO_PROXY are ignored.
+//   - Standalone: EnvVar is unset and Set has not been called. Both toggles
+//     resolve the proxy from HTTPS_PROXY/HTTP_PROXY/NO_PROXY, matching
+//     http.DefaultTransport.
+//
 // Loopback hosts are never proxied. Proxy URLs and credentials are never
 // logged or included in errors.
 package netproxy
@@ -24,8 +30,9 @@ import (
 
 // EnvVar carries the LiveAgent app proxy into the backend process. Values:
 // a proxy URL (http, https, socks5, socks5h), "direct" for app proxy disabled,
-// or "invalid" for an enabled but unusable app proxy. When unset, the standard
-// HTTPS_PROXY/HTTP_PROXY/NO_PROXY variables are used instead.
+// or "invalid" for an enabled but unusable app proxy. Any value selects
+// managed mode; when unset the package starts in standalone mode and uses the
+// standard HTTPS_PROXY/HTTP_PROXY/NO_PROXY variables for every provider.
 const EnvVar = "LIVEAGENT_KBRAIN_PROXY"
 
 const (
@@ -38,8 +45,11 @@ const (
 // misconfigured, instead of silently falling back to a direct connection.
 var ErrInvalidProxy = errors.New("app proxy is enabled but its configuration is invalid")
 
+// state is the published proxy configuration. managed is false only for the
+// standalone environment state built when EnvVar is unset.
 type state struct {
-	proxy func(*url.URL) (*url.URL, error)
+	proxy   func(*url.URL) (*url.URL, error)
+	managed bool
 }
 
 var (
@@ -67,9 +77,10 @@ func load() *state {
 	return current.Load()
 }
 
-// Set replaces the proxy used by proxied providers. It applies to subsequent
-// requests without rebuilding clients. An unparseable value is stored as
-// invalid (proxied requests fail) and reported to the caller.
+// Set replaces the proxy used by proxied providers and switches the package
+// to managed mode. It applies to subsequent requests without rebuilding
+// clients. An unparseable value is stored as invalid (proxied requests fail)
+// and reported to the caller.
 func Set(value string) error {
 	st, err := parse(value)
 	// Publish a state before releasing concurrent initialization waiters.
@@ -82,9 +93,9 @@ func parse(value string) (*state, error) {
 	value = strings.TrimSpace(value)
 	switch strings.ToLower(value) {
 	case "", valueDirect:
-		return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, nil }}, nil
+		return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, nil }, managed: true}, nil
 	case valueInvalid:
-		return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, ErrInvalidProxy }}, nil
+		return invalid(), nil
 	}
 	u, err := url.Parse(value)
 	if err != nil || u.Hostname() == "" || u.Port() == "" {
@@ -103,11 +114,11 @@ func parse(value string) (*state, error) {
 		return invalid(), ErrInvalidProxy
 	}
 	cfg := httpproxy.Config{HTTPProxy: u.String(), HTTPSProxy: u.String(), NoProxy: noProxy}
-	return &state{proxy: wrap(cfg.ProxyFunc())}, nil
+	return &state{proxy: wrap(cfg.ProxyFunc()), managed: true}, nil
 }
 
 func invalid() *state {
-	return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, ErrInvalidProxy }}
+	return &state{proxy: func(*url.URL) (*url.URL, error) { return nil, ErrInvalidProxy }, managed: true}
 }
 
 func wrap(fn func(*url.URL) (*url.URL, error)) func(*url.URL) (*url.URL, error) {
@@ -135,17 +146,28 @@ func proxyForRequest(req *http.Request) (*url.URL, error) {
 	return load().proxy(req.URL)
 }
 
+// directProxyForRequest backs the toggle-off transport. The mode is checked
+// per request so a runtime Set switches standalone use to managed mode.
+func directProxyForRequest(req *http.Request) (*url.URL, error) {
+	if !load().managed {
+		return proxyForRequest(req)
+	}
+	return nil, nil
+}
+
 func build() {
 	transports.once.Do(func() {
 		base := http.DefaultTransport.(*http.Transport)
 		transports.proxied = base.Clone()
 		transports.proxied.Proxy = proxyForRequest
 		transports.direct = base.Clone()
-		transports.direct.Proxy = nil
+		transports.direct.Proxy = directProxyForRequest
 	})
 }
 
-// Transport returns the cached transport for the provider toggle.
+// Transport returns the cached transport for the provider toggle. In managed
+// mode useProxy selects the app proxy or a strictly direct connection; in
+// standalone mode both transports use the environment proxy.
 func Transport(useProxy bool) http.RoundTripper {
 	build()
 	if useProxy {
@@ -163,7 +185,7 @@ func WithProvider(ctx context.Context, useProxy bool) context.Context {
 }
 
 // ContextTransport routes each request by the toggle stored with
-// WithProvider; requests without a mark go direct.
+// WithProvider; requests without a mark use the toggle-off transport.
 func ContextTransport() http.RoundTripper { return contextTransport{} }
 
 type contextTransport struct{}
