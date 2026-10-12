@@ -34,6 +34,7 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request, id strin
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	var in protocol.CompactRequest
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
@@ -125,9 +126,10 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request, id strin
 	}
 	if err == nil {
 		rt.nextSeq = started.Seq
-		rt.events = append(rt.events, started)
+		rt.appendEventLocked(started)
 		close(rt.changed)
 		rt.changed = make(chan struct{})
+		rt.leases.Add(1)
 		rt.runWorkers.Add(1)
 	}
 	rt.mu.Unlock()
@@ -140,6 +142,7 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request, id strin
 	acceptedRevision := currentRevision
 	go func() {
 		defer rt.runWorkers.Done()
+		defer s.releaseRuntime(rt)
 		s.executeCompaction(rt, ctx, cancel, runID, in.ClientRequestID, acceptedRevision, agentRef, recorder, transactionSnapshot)
 	}()
 	writeJSON(w, http.StatusAccepted, compactResponse{Version: protocol.Version, ConversationID: id, RunID: runID, AcceptedSeq: started.Seq, Status: "accepted", Revision: currentRevision})
@@ -285,7 +288,9 @@ func (s *Server) commitCompaction(rt *runtimeSession, usage *protocol.Usage, sav
 		return rollback(err)
 	}
 	rt.nextSeq = events[len(events)-1].Seq
-	rt.events = append(rt.events, events...)
+	for _, event := range events {
+		rt.appendEventLocked(event)
+	}
 	close(rt.changed)
 	rt.changed = make(chan struct{})
 	return nil

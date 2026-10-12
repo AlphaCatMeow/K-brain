@@ -37,24 +37,23 @@ func (s *Server) trajectorySnapshot(id string) ([]protocol.Event, error) {
 	s.mu.Lock()
 	rt := s.sessions[id]
 	if rt != nil {
+		rt.leases.Add(1)
 		s.mu.Unlock()
 		rt.mu.Lock()
+		defer s.releaseRuntime(rt)
 		defer rt.mu.Unlock()
 		if rt.deleted {
 			return nil, session.ErrNotFound
 		}
-		return append([]protocol.Event(nil), rt.events...), nil
+		return rt.allEventsLocked()
 	}
 	// Keep a newly created runtime from publishing while the cold journal is read.
 	defer s.mu.Unlock()
 	if _, _, err := s.store.Load(id); err != nil {
 		return nil, err
 	}
-	cold := &runtimeSession{id: id, runs: make(map[string]runRecord)}
-	if err := cold.loadJournal(s.eventDir); err != nil {
-		return nil, err
-	}
-	return cold.events, nil
+	cold := &runtimeSession{id: id, eventDir: s.eventDir}
+	return cold.journalEventsAfter(0, 0)
 }
 
 func trajectoryRuns(events []protocol.Event) ([]trajectoryRun, bool) {

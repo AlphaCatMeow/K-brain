@@ -3,7 +3,6 @@
 package bashrun
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -40,7 +39,7 @@ func runInteractive(ctx context.Context, cmd *exec.Cmd, opts Options) Result {
 		stop()
 	}()
 
-	var buf bytes.Buffer
+	var buf outputBuffer
 	outCh := make(chan []byte, 16)
 
 	go func() {
@@ -104,7 +103,7 @@ func runInteractive(ctx context.Context, cmd *exec.Cmd, opts Options) Result {
 
 			if !ok || chunk == nil {
 				waitErr := cmd.Wait()
-				res := Result{Output: buf.String(), Interactive: true, Killed: state.finish(waitErr)}
+				res := Result{Output: buf.result(), OutputFile: buf.path(), OutputBytes: buf.total, Interactive: true, Killed: state.finish(waitErr)}
 				if ctx.Err() == context.DeadlineExceeded {
 					res.TimedOut = true
 					res.Killed = true
@@ -132,7 +131,7 @@ func runInteractive(ctx context.Context, cmd *exec.Cmd, opts Options) Result {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				stop()
 				state.finish(cmd.Wait())
-				res := Result{Output: buf.String(), Killed: true, Interactive: true}
+				res := Result{Output: buf.result(), OutputFile: buf.path(), OutputBytes: buf.total, Killed: true, Interactive: true}
 				if errors.Is(ctxErr, context.DeadlineExceeded) {
 					res.TimedOut = true
 					res.Exit = "timed out"
@@ -145,7 +144,9 @@ func runInteractive(ctx context.Context, cmd *exec.Cmd, opts Options) Result {
 				stop()
 				state.finish(cmd.Wait())
 				res := Result{
-					Output:      buf.String(),
+					Output:      buf.result(),
+					OutputFile:  buf.path(),
+					OutputBytes: buf.total,
 					Exit:        "timed out waiting for input",
 					Killed:      true,
 					Interactive: true,

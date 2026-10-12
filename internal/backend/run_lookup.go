@@ -19,6 +19,7 @@ func (s *Server) lookupRun(w http.ResponseWriter, r *http.Request, id string) {
 		mutationError(w, err)
 		return
 	}
+	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.deleted {

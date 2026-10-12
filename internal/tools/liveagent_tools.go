@@ -417,6 +417,9 @@ func liveagentBash(ctx context.Context, manager *liveagentProcessManager, a map[
 	update, _ := ctx.Value(updateKey{}).(func(string))
 	res := bashrun.Run(ctx, bashrun.Options{Command: command, Dir: dir, Timeout: timeout, OnUpdate: update})
 	out := TruncateTail(res.Output)
+	if res.OutputFile != "" {
+		out += fmt.Sprintf("\n[full output (%d bytes): %s]", res.OutputBytes, res.OutputFile)
+	}
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}

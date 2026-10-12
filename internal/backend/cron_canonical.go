@@ -51,6 +51,7 @@ func (s *Server) executeCronPromptCanonical(ctx context.Context, task *CronTask,
 	if err != nil {
 		return false, err.Error()
 	}
+	defer s.releaseRuntime(rt)
 	in := protocol.PromptRequest{
 		ConversationID:  id,
 		ClientRequestID: "cron-" + run.ID,
@@ -90,8 +91,12 @@ func (s *Server) executeCronPromptCanonical(ctx context.Context, task *CronTask,
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	for i := len(rt.events) - 1; i >= 0; i-- {
-		event := rt.events[i]
+	events, err := rt.allEventsLocked()
+	if err != nil {
+		return false, err.Error()
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
 		if event.RunID != accepted.RunID || event.Type != protocol.EventAssistantMessage {
 			continue
 		}
@@ -123,7 +128,16 @@ func waitForCanonicalRun(rt *runtimeSession, runID string, ctx context.Context) 
 			rt.mu.Unlock()
 			return err
 		}
-		for _, event := range rt.events {
+		var events []protocol.Event
+		if done {
+			var err error
+			events, err = rt.allEventsLocked()
+			if err != nil {
+				rt.mu.Unlock()
+				return err
+			}
+		}
+		for _, event := range events {
 			if event.RunID != runID || !done {
 				continue
 			}

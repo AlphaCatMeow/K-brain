@@ -1,7 +1,6 @@
 package bashrun
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,7 +21,9 @@ func userShell() string {
 }
 
 type Result struct {
-	Output string
+	Output      string
+	OutputFile  string
+	OutputBytes int64
 
 	Exit string
 
@@ -48,7 +49,8 @@ type Options struct {
 
 	OnOutput func(chunk string)
 
-	OnUpdate func(outputSoFar string)
+	// OnUpdate receives a bounded tail snapshot when output changes.
+	OnUpdate func(outputTail string)
 
 	OnAwaitInput func(secLeft int)
 
@@ -153,7 +155,7 @@ func runPiped(ctx context.Context, cmd *exec.Cmd, onUpdate func(string)) Result 
 	state := track(cmd)
 	defer untrack(cmd)
 
-	var out bytes.Buffer
+	var out outputBuffer
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -178,8 +180,11 @@ func runPiped(ctx context.Context, cmd *exec.Cmd, onUpdate func(string)) Result 
 	var updatesDone chan struct{}
 	if onUpdate != nil {
 		updatesDone = make(chan struct{})
-		defer close(updatesDone)
+		stopped := make(chan struct{})
+		defer func() { close(updatesDone); <-stopped }()
 		go func() {
+			defer close(stopped)
+			var previous int64
 			ticker := time.NewTicker(updateInterval)
 			defer ticker.Stop()
 			for {
@@ -188,7 +193,12 @@ func runPiped(ctx context.Context, cmd *exec.Cmd, onUpdate func(string)) Result 
 					return
 				case <-ticker.C:
 					mu.Lock()
-					snap := out.String()
+					if out.total == previous {
+						mu.Unlock()
+						continue
+					}
+					previous = out.total
+					snap := out.snapshot()
 					mu.Unlock()
 					onUpdate(snap)
 				}
@@ -212,7 +222,9 @@ func runPiped(ctx context.Context, cmd *exec.Cmd, onUpdate func(string)) Result 
 	_ = stderr.Close()
 	wg.Wait()
 
-	res := Result{Output: out.String()}
+	mu.Lock()
+	res := Result{Output: out.result(), OutputFile: out.path(), OutputBytes: out.total}
+	mu.Unlock()
 	if ctx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.Killed = true

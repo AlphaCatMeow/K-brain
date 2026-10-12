@@ -495,3 +495,16 @@ func liveagentValidateManagedCommand(command string) error {
 	}
 	return nil
 }
+
+func (m *liveagentProcessManager) HasRunningProcesses() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, p := range m.processes {
+		select {
+		case <-p.done:
+		default:
+			return true
+		}
+	}
+	return false
+}

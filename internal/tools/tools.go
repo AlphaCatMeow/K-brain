@@ -248,7 +248,9 @@ func bashTool() Tool {
 				}
 				return s, nil
 			}
-			if len(res.Output) > maxOutput {
+			if res.OutputFile != "" {
+				s += fmt.Sprintf("\n[full output (%d bytes): %s]", res.OutputBytes, res.OutputFile)
+			} else if len(res.Output) > maxOutput {
 
 				if path := bashrun.Spill(res.Output); path != "" {
 					s += fmt.Sprintf("\n[full output (%d bytes): %s]", len(res.Output), path)
