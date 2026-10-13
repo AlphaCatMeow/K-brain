@@ -306,7 +306,7 @@ func (a *Agent) LaunchBackground(t *BackgroundTask, worktreePath string) {
 		a.bg.mu.Lock()
 		t.worktreePath = worktreePath
 		a.bg.mu.Unlock()
-		t.sub.setWorktree(worktreePath)
+		t.ctx = t.sub.setWorktree(t.ctx, worktreePath)
 		t.sub.Steer("Work entirely inside the git worktree at " + worktreePath + ". Your tools already use this working directory; its branch is isolated from other agents.")
 	}
 	a.launchBackground(t)

@@ -21,6 +21,31 @@ func WithWorkspaceRoots(ctx context.Context, roots []WorkspaceRoot) context.Cont
 	return context.WithValue(ctx, workspaceRootsKey{}, append([]WorkspaceRoot(nil), roots...))
 }
 
+// WithWorktreeWorkspaceRoots transfers the parent's workspace grants to an
+// isolated worktree. Preserve access levels and unrelated additional roots;
+// an explicitly empty grant set must remain empty.
+func WithWorktreeWorkspaceRoots(ctx context.Context, parent, worktree string) context.Context {
+	roots, explicit := ctx.Value(workspaceRootsKey{}).([]WorkspaceRoot)
+	if !explicit || !filepath.IsAbs(parent) || !filepath.IsAbs(worktree) {
+		return ctx
+	}
+	mapped := make([]WorkspaceRoot, 0, len(roots))
+	for _, root := range roots {
+		grant := root
+		if !filepath.IsAbs(root.Path) {
+			mapped = append(mapped, grant)
+			continue
+		}
+		if rel, err := filepath.Rel(parent, root.Path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			grant.Path = filepath.Join(worktree, rel)
+		} else if rel, err := filepath.Rel(root.Path, parent); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			grant.Path = worktree
+		}
+		mapped = append(mapped, grant)
+	}
+	return WithWorkspaceRoots(ctx, mapped)
+}
+
 func workspaceRoots(ctx context.Context) []WorkspaceRoot {
 	roots, _ := ctx.Value(workspaceRootsKey{}).([]WorkspaceRoot)
 	return roots
