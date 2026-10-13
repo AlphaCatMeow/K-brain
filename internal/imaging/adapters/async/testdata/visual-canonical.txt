@@ -1,0 +1,10 @@
+POST
+/
+Action=CVSync2AsyncSubmitTask&Version=2022-08-31
+content-type:application/json
+host:visual.volcengineapi.com
+x-content-sha256:21002cb521d92b0ad8e8f8c4f883dd5c1a03d5aba89a1bf3da136c35199a16ca
+x-date:20261011T123456Z
+
+content-type;host;x-content-sha256;x-date
+21002cb521d92b0ad8e8f8c4f883dd5c1a03d5aba89a1bf3da136c35199a16ca
