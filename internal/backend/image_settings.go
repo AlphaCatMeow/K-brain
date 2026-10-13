@@ -77,7 +77,7 @@ func NewImageSettingsManager(store *SettingsStore, secretPath string, opts Image
 	if store == nil || secretPath == "" || !filepath.IsAbs(secretPath) {
 		return nil, imageError(imaging.CodeInvalidInput)
 	}
-	m := &ImageSettingsManager{store: store, secretPath: filepath.Clean(secretPath), secrets: map[string]imageSecretRecord{}, verifications: map[string]imageVerificationRecord{}, dependencies: opts.Dependencies, resolveProviderSecret: opts.ResolveProviderSecret, verifyTarget: opts.VerifyTarget}
+	m := &ImageSettingsManager{store: store, secretPath: filepath.Clean(secretPath), secrets: map[string]imageSecretRecord{}, verifications: map[string]imageVerificationRecord{}, dependencies: opts.Dependencies, resolveProviderSecret: opts.ResolveProviderSecret}
 	if m.resolveProviderSecret == nil {
 		m.resolveProviderSecret = config.ResolveSecretContext
 	}
@@ -348,7 +348,9 @@ func (m *ImageSettingsManager) saveImageSettingsLocked(scope imaging.Scope, next
 // callbacks cannot certify durable outputs or preserve submission idempotency.
 // Use ImageVerificationManager.Start/Get with explicit consent instead.
 func (m *ImageSettingsManager) VerifyImageTarget(ctx context.Context, scope imaging.Scope, expectedRevision uint64, targetID string) (imaging.ImageSettings, error) {
-	if err := checkImageScope(scope); err != nil { return imaging.ImageSettings{}, err }
+	if err := checkImageScope(scope); err != nil {
+		return imaging.ImageSettings{}, err
+	}
 	return imaging.ImageSettings{}, imageError(imaging.CodeUnsupportedOperation)
 }
 

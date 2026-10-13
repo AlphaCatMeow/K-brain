@@ -111,7 +111,7 @@ func TestContractVisualSignatureDeterminism(t *testing.T) {
 	now := time.Date(2026, 10, 11, 12, 34, 56, 0, time.UTC)
 	canonical := signVisual(req, body, "fixture-ak", "fixture-sk", "", now)
 	// Self-built vector from the documented algorithm; NOT an official CV vector.
-	expected := string(fixture(t, "visual-canonical.txt"))
+	expected := strings.ReplaceAll(string(fixture(t, "visual-canonical.txt")), "\r\n", "\n")
 	if canonical != strings.TrimSuffix(expected, "\n") {
 		t.Fatalf("canonical mismatch\n%s", canonical)
 	}
