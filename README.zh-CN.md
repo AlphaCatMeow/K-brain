@@ -313,17 +313,19 @@ export K_BRAIN_COMPUTER_PYTHON=/usr/bin/python3
 ```sh
 git clone https://github.com/Stack-Cairn/K-brain.git
 cd K-brain
-go install ./cmd/kn ./cmd/k-brain-computer
+go install -trimpath -ldflags="-s -w" ./cmd/kn ./cmd/k-brain-computer
 ```
 
 确认 Go 的安装目录（通常为 `~/go/bin`）已加入 PATH。也可以在仓库中直接运行或构建：
 
 ```sh
 go run ./cmd/kn
-go build -o kn ./cmd/kn
+go build -trimpath -ldflags="-s -w" -o kn ./cmd/kn
 ```
 
-Windows 使用 `go build -o kn.exe ./cmd/kn`，随后运行 `.\kn.exe`。需要 Computer-use 时另行构建或安装 `cmd/k-brain-computer`。
+Windows 使用 `go build -trimpath -ldflags="-s -w" -o kn.exe ./cmd/kn`，随后运行 `.\kn.exe`。需要 Computer-use 时另行构建或安装 `cmd/k-brain-computer`。
+
+`task build` 和 `task install` 同样启用这些体积优化参数。`-s -w` 去掉符号表和 DWARF 调试信息；需要调试器时请移除这两个参数。正式发布流程已使用这些参数。
 
 ## 文档
 

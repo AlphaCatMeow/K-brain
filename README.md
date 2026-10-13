@@ -313,17 +313,19 @@ Requires Git and **Go 1.27+**. The version requirement is recorded in [`go.mod`]
 ```sh
 git clone https://github.com/Stack-Cairn/K-brain.git
 cd K-brain
-go install ./cmd/kn ./cmd/k-brain-computer
+go install -trimpath -ldflags="-s -w" ./cmd/kn ./cmd/k-brain-computer
 ```
 
 Ensure Go's binary directory, usually `~/go/bin`, is on PATH. To run or build directly from the repository:
 
 ```sh
 go run ./cmd/kn
-go build -o kn ./cmd/kn
+go build -trimpath -ldflags="-s -w" -o kn ./cmd/kn
 ```
 
-On Windows, use `go build -o kn.exe ./cmd/kn`, then `.\kn.exe`. Build or install `cmd/k-brain-computer` separately when using computer-use.
+On Windows, use `go build -trimpath -ldflags="-s -w" -o kn.exe ./cmd/kn`, then `.\kn.exe`. Build or install `cmd/k-brain-computer` separately when using computer-use.
+
+`task build` and `task install` use these size-reduction flags too. `-s -w` omits the symbol table and DWARF debug information; omit those flags when building for a debugger. Published releases already use these flags.
 
 ## Documentation
 

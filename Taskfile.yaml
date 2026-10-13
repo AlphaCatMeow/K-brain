@@ -20,12 +20,12 @@ tasks:
   build:
     desc: Build the kn binary into ./kn (kn.exe on Windows)
     cmds:
-      - go build -ldflags "{{.LDFLAGS}}" -o kn{{.EXE_EXT}} ./cmd/kn
+      - go build -trimpath -ldflags "-s -w {{.LDFLAGS}}" -o kn{{.EXE_EXT}} ./cmd/kn
 
   install:
     desc: Install kn to $GOPATH/bin (~/go/bin)
     cmds:
-      - go install -ldflags "{{.LDFLAGS}}" ./cmd/kn
+      - go install -trimpath -ldflags "-s -w {{.LDFLAGS}}" ./cmd/kn
 
   benchmark:
     desc: "Benchmark startup: binary boot (--version) and full init (-bench: config, routing, key, agent)"
