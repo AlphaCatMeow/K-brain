@@ -14,7 +14,7 @@ import (
 )
 
 func (a *Agent) trackTool(name string, delta int64) {
-	if name == "subagent" {
+	if name == "subagent" || name == "subagent_followup" {
 		a.subagentInflight.Add(delta)
 	} else {
 		a.otherInflight.Add(delta)

@@ -248,6 +248,9 @@ func taskSteerTool(parent *Agent) tools.Tool {
 			if err := json.Unmarshal(args, &a); err != nil {
 				return "", err
 			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			if err := parent.SteerTask(a.ID, a.Message); err != nil {
 
 				return "Error: " + err.Error(), nil
@@ -258,8 +261,13 @@ func taskSteerTool(parent *Agent) tools.Tool {
 }
 
 func (a *Agent) SteerTask(id, text string) error {
+	if err := validateSubagentMessage(text); err != nil {
+		return err
+	}
 	r := a.Tasks()
-	t, ok := r.Get(id)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.tasks[id]
 	if !ok {
 		return fmt.Errorf("unknown subagent %q", id)
 	}
@@ -269,7 +277,15 @@ func (a *Agent) SteerTask(id, text string) error {
 	if t.sub == nil {
 		return fmt.Errorf("subagent %s is not live", id)
 	}
-	t.sub.Steer(text)
+	if !t.FollowingUp && t.ctx != nil && t.ctx.Err() != nil {
+		return fmt.Errorf("subagent %s is cancelling", id)
+	}
+	t.sub.mu.Lock()
+	defer t.sub.mu.Unlock()
+	if len(t.sub.pending) >= maxPendingSubagentMessages {
+		return fmt.Errorf("subagent pending message limit reached (%d)", maxPendingSubagentMessages)
+	}
+	t.sub.pending = append(t.sub.pending, pendingSteer{text: text})
 	return nil
 }
 
@@ -277,8 +293,8 @@ func (a *Agent) FollowupTask(ctx context.Context, id, text string, ev Events) (s
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(text) == "" {
-		return "", errors.New("subagent follow-up message is required")
+	if err := validateSubagentMessage(text); err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -300,6 +316,18 @@ func (a *Agent) FollowupTask(ctx context.Context, id, text string, ev Events) (s
 	if t.sub == nil {
 		r.mu.Unlock()
 		return "", fmt.Errorf("subagent %s is not live (restored from a previous session)", id)
+	}
+	if t.Done != nil {
+		select {
+		case <-t.Done:
+		default:
+			r.mu.Unlock()
+			return "", fmt.Errorf("subagent %s is still finalizing", id)
+		}
+	}
+	ctx = withRequestTask(ctx, id)
+	if t.sub.SandboxPolicy != nil {
+		ctx = sandbox.WithPolicy(ctx, t.sub.SandboxPolicy)
 	}
 	t.FollowingUp = true
 	t.followCancel = cancel

@@ -36,6 +36,7 @@ type BackgroundTask struct {
 
 	Restored    bool
 	FollowingUp bool
+	finalizing  bool
 
 	Done chan struct{}
 
@@ -154,6 +155,9 @@ func (r *taskRegistry) ClearSettled(keep ...string) int {
 	n := 0
 	for id, t := range r.tasks {
 		if !slices.Contains(keep, id) && t.Status != TaskRunning && !t.FollowingUp {
+			if t.finalizing {
+				continue
+			}
 			delete(r.tasks, id)
 			delete(r.subs, id)
 			delete(r.journals, id)
@@ -190,16 +194,21 @@ func (r *taskRegistry) settle(id string, status TaskStatus, report string) {
 		return
 	}
 	t.Status, t.Report, t.EndedAt = status, report, time.Now()
+	t.finalizing = true
+	snapshot := *t
 	delete(r.subs, id)
 	r.mu.Unlock()
 
 	if r.OnChange != nil {
-		r.OnChange(t)
+		r.OnChange(&snapshot)
 	}
 	if r.OnRecord != nil {
-		r.OnRecord(r.recordSession(), t)
+		r.OnRecord(r.recordSession(), &snapshot)
 	}
+	r.mu.Lock()
+	t.finalizing = false
 	close(t.Done)
+	r.mu.Unlock()
 }
 
 var taskIDCounter atomic.Int64
@@ -332,7 +341,7 @@ func (a *Agent) launchBackground(t *BackgroundTask) {
 		a.bg.mu.Unlock()
 		a.bg.settle(id, status, text)
 
-		a.Steer(fmt.Sprintf("[subagent %s %s] %s\n\n%s", id, status, description, text))
+		a.Steer(fmt.Sprintf("[subagent %s %s] %s\n\n%s", id, status, description, capReport(text)))
 	}()
 }
 

@@ -376,6 +376,7 @@ func New(client ai.Client, model string, maxTokens int, systemPrompt string, opt
 		}
 	}
 	sessionTools := []tools.Tool{tools.QuestionTool(), taskTool(a), taskSteerTool(a)}
+	sessionTools = append(sessionTools, taskControlTools(a)...)
 	sessionTools = append(sessionTools, newContextTool(a))
 	if a.experimentalEnabled(FeatureWorkflows) {
 		sessionTools = append(sessionTools, workflowTool(a))

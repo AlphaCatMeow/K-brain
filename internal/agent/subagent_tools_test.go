@@ -75,7 +75,7 @@ func TestSubagentExcludesParentSessionTools(t *testing.T) {
 	sub := parent.newSub(SubModel{})
 	for _, tool := range sub.AllTools() {
 		switch tool.Def.Function.Name {
-		case "question", "subagent", "subagent_steer", "workflow", "todowrite", "wait", "remember", "forget":
+		case "question", "subagent", "subagent_steer", "subagent_status", "subagent_cancel", "subagent_followup", "workflow", "todowrite", "wait", "remember", "forget":
 			t.Errorf("inherited parent session tool: %s", tool.Def.Function.Name)
 		}
 	}
