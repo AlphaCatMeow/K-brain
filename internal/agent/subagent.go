@@ -328,6 +328,13 @@ func (a *Agent) FollowupTask(ctx context.Context, id, text string, ev Events) (s
 		}
 	}
 	ctx = withRequestTask(ctx, id)
+	if t.worktreePath != "" {
+		parentDir := a.WorkingDir
+		if parentDir == "" {
+			parentDir, _ = os.Getwd()
+		}
+		ctx = tools.WithWorktreeWorkspaceRoots(ctx, parentDir, t.worktreePath)
+	}
 	if t.sub.SandboxPolicy != nil {
 		ctx = sandbox.WithPolicy(ctx, t.sub.SandboxPolicy)
 	}
