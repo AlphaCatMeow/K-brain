@@ -84,7 +84,7 @@ func TestSubagentWorktreeContext(t *testing.T) {
 	parent.SandboxPolicy = sandbox.New("strict", "auto", parent.WorkingDir, false, []string{"cache"}, nil)
 	sub := parent.newSub(SubModel{})
 	dir := t.TempDir()
-	sub.setWorktree(dir)
+	sub.setWorktree(context.Background(), dir)
 	if sub.WorkingDir != dir || !strings.Contains(sub.Messages[0].Content, dir) {
 		t.Fatal("worktree not reflected in execution context and system prompt")
 	}
@@ -190,7 +190,7 @@ func TestSubagentWorktreesAreDistinct(t *testing.T) {
 		tool := echoTool()
 		run := tool.Run
 		tool.Run = func(ctx context.Context, args json.RawMessage) (string, error) {
-			out := tools.Execute(ctx, tools.All(), "write", json.RawMessage(`{"path":"marker.txt","content":"isolated"}`))
+			out := tools.Execute(ctx, tools.LiveAgentCatalog(), "Write", json.RawMessage(`{"path":"marker.txt","content":"isolated"}`))
 			if strings.HasPrefix(out, "Error:") {
 				t.Error(out)
 			}
@@ -204,7 +204,8 @@ func TestSubagentWorktreesAreDistinct(t *testing.T) {
 			parent.WorktreeSubagents = true
 			parent.StartBackground("direct task", "go", SubModel{})
 		} else {
-			out, err = taskTool(parent).Run(context.Background(), args)
+			ctx := tools.WithWorkspaceRoots(context.Background(), []tools.WorkspaceRoot{{Path: repo, Access: "write"}})
+			out, err = taskTool(parent).Run(ctx, args)
 		}
 		if err != nil {
 			t.Fatal(err)

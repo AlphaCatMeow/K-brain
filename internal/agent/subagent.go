@@ -31,10 +31,11 @@ type SubModel struct {
 	Vision       bool
 }
 
-func (a *Agent) setWorktree(path string) {
+func (a *Agent) setWorktree(ctx context.Context, path string) context.Context {
 	if path == "" {
-		return
+		return ctx
 	}
+	ctx = tools.WithWorktreeWorkspaceRoots(ctx, a.WorkingDir, path)
 	a.WorkingDir = path
 	a.SandboxPolicy = a.SandboxPolicy.ForRoot(path)
 	a.msgsMu.Lock()
@@ -46,6 +47,7 @@ func (a *Agent) setWorktree(path string) {
 			a.Messages[0].Content = content[:i] + marker + path
 		}
 	}
+	return ctx
 }
 
 func (a *Agent) newSub(o SubModel) *Agent {
@@ -204,7 +206,7 @@ func taskTool(parent *Agent) tools.Tool {
 					return "", fmt.Errorf("create subagent worktree: %w", werr)
 				}
 				sub := parent.newSubContext(ctx, o)
-				sub.setWorktree(wtPath)
+				ctx = sub.setWorktree(ctx, wtPath)
 				ctx = sandbox.WithPolicy(ctx, sub.SandboxPolicy)
 				report, runErr := sub.observedChildTurn(ctx, prompt)
 				if runErr != nil {
@@ -326,6 +328,13 @@ func (a *Agent) FollowupTask(ctx context.Context, id, text string, ev Events) (s
 		}
 	}
 	ctx = withRequestTask(ctx, id)
+	if t.worktreePath != "" {
+		parentDir := a.WorkingDir
+		if parentDir == "" {
+			parentDir, _ = os.Getwd()
+		}
+		ctx = tools.WithWorktreeWorkspaceRoots(ctx, parentDir, t.worktreePath)
+	}
 	if t.sub.SandboxPolicy != nil {
 		ctx = sandbox.WithPolicy(ctx, t.sub.SandboxPolicy)
 	}
