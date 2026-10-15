@@ -28,3 +28,9 @@
 ## 原生 Shell 复测结果
 
 显式 K_BRAIN_SHELL=powershell.exe 后，cmd/kn、config、backend、storage 完整包通过。仍失败的用例为 tools/bashrun 的 TestOnUpdateThrottle，planning 的 TestPersistenceCASIdempotencyAndRollback，tui 的 TestLinkifyNativeUnicodePaths，以及 tools 的 TestBashToolOnUpdateCtx、TestLiveAgentManagedProcessWaitCursorAndStop。此轮没有宣称这些失败已全部完成基线归因；它们继续作为 Draft 的验证缺口，不将“独立客户端无影响”表述为无条件保证。
+
+## 上游源码复现
+
+随后使用 Go 的 -overlay，将相对 ac3cbe6 修改的 94 个 Go 源文件映射为上游版本，新增文件设为不可见，在同一工作区和相同 PowerShell 环境定向运行上述五个失败用例。没有切换分支或使用额外 worktree，也没有修改当前源码。
+
+五个失败用例全部在上游源码覆盖运行中复现：TestOnUpdateThrottle、TestPersistenceCASIdempotencyAndRollback、TestLinkifyNativeUnicodePaths、TestBashToolOnUpdateCtx、TestLiveAgentManagedProcessWaitCursorAndStop。因此，这五项失败并非本分支生图代码新增。该证据只覆盖这五个用例，不代表上游全仓测试已运行或通过，也不能替代独立 TUI 人工验收。
