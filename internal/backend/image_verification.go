@@ -334,7 +334,16 @@ func (s *Server) imageVerification(w http.ResponseWriter, r *http.Request, auth 
 		if !imageMethod(w, r, http.MethodGet) {
 			return
 		}
-		receipt, err := s.image.Verification.Get(r.Context(), auth.Scope, parts[1], parts[3])
+		id := parts[3]
+		if id == "by-key" {
+			keys := r.Header.Values("X-Idempotency-Key")
+			if len(keys) != 1 || strings.TrimSpace(keys[0]) == "" || len(keys[0]) > 256 {
+				imageHTTPError(w, r, imageError(imaging.CodeInvalidInput))
+				return
+			}
+			id = verificationID(auth.Scope, keys[0])
+		}
+		receipt, err := s.image.Verification.Get(r.Context(), auth.Scope, parts[1], id)
 		if err != nil {
 			imageHTTPError(w, r, err)
 			return

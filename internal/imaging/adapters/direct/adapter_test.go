@@ -156,6 +156,9 @@ func TestContractGenerate(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 				}
+				if id == VolcengineID && body["output_format"] != "png" {
+					t.Error("single-image PNG verification profile must explicitly request PNG")
+				}
 				var expected map[string]any
 				name := map[string]string{OpenAIID: "openai-generate.json", GoogleID: "google-generate.json", VolcengineID: "ark-generate.json"}[id]
 				fixture, err := os.ReadFile("testdata/" + name)
@@ -565,5 +568,108 @@ func TestContractFixtures(t *testing.T) {
 		if json.Unmarshal(raw, &v) != nil {
 			t.Fatal("bad fixture")
 		}
+	}
+}
+
+func TestContractRollDekExplicitBase64Profile(t *testing.T) {
+	raw := syntheticPNG(t, 16, 30, false)
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.String() != "https://rolldek.com/v1/images/generations" {
+			t.Error("wrong provider endpoint")
+		}
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body["response_format"] != "b64_json" || body["n"] != float64(1) {
+			t.Error("RollDek must explicitly request single base64 output")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responseJSON(OpenAIID, raw))), Header: http.Header{}}, nil
+	})}
+	o := options(client, "https://rolldek.com/v1")
+	o.Profile = "rolldek"
+	a, err := NewOpenAI(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := a.Submit(context.Background(), request(OpenAIID))
+	if err != nil || len(res.Outputs) != 1 {
+		t.Fatalf("result %v", err)
+	}
+	changed := request(OpenAIID)
+	changed.Request.Parameters = map[string]any{"quality": "high"}
+	if _, err := a.Submit(context.Background(), changed); err == nil {
+		t.Fatal("ignored provider parameter accepted")
+	}
+	if calls != 1 {
+		t.Fatal("unsupported input reached upstream")
+	}
+	o.BaseURL = "https://api.openai.com/v1"
+	if _, err := NewOpenAI(o); err == nil {
+		t.Fatal("RollDek profile accepted on unrelated provider")
+	}
+}
+
+func TestContractRollDekHTTPSAlias(t *testing.T) {
+	raw := syntheticPNG(t, 16, 30, false)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://api-cn.rolldek.com/v1/images/generations" {
+			t.Fatal("wrong endpoint")
+		}
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		if b["model"] != "gpt-image-2.5" || b["response_format"] != "b64_json" || b["n"] != float64(1) {
+			t.Fatal("wrong alias or format")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responseJSON(OpenAIID, raw))), Header: http.Header{}}, nil
+	})}
+	o := options(client, "https://api-cn.rolldek.com/v1")
+	o.Profile = "rolldek"
+	a, err := NewOpenAI(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := request(OpenAIID)
+	r.Target.Adapter = "rolldek-images"
+	r.Target.RemoteID = "gpt-image-2.5"
+	if _, err := a.Submit(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	o.BaseURL = "http://api-cn.rolldek.com/v1"
+	if _, err := NewOpenAI(o); err == nil {
+		t.Fatal("RollDek authenticated requests must use HTTPS")
+	}
+	o.Profile = "rolldek"
+	o.BaseURL = "http://other.example/v1"
+	if _, err := NewOpenAI(o); err == nil {
+		t.Fatal("HTTP exception leaked to another host")
+	}
+	official := adapter(t, OpenAIID, options(client, "https://api.openai.com/v1"))
+	r.Target.Adapter = OpenAIID
+	if _, err := official.Submit(context.Background(), r); err == nil {
+		t.Fatal("RollDek alias leaked to official models")
+	}
+}
+
+func TestContractRollDekURLResultDoesNotChangeOfficialOpenAI(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"data":[{"url":"https://cdn.example.com/result.png"}]}`))}, nil
+	})}
+	o := options(client, "https://api-cn.rolldek.com/v1")
+	o.Profile = "rolldek"
+	a, err := NewOpenAI(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := request(OpenAIID)
+	r.Target.Adapter = "rolldek-images"
+	r.Target.RemoteID = "gpt-image-2.5"
+	result, err := a.Submit(context.Background(), r)
+	if err != nil || len(result.Outputs) != 1 || result.Outputs[0].Kind != "url" {
+		t.Fatalf("RollDek URL rejected: %v", err)
+	}
+	official := adapter(t, OpenAIID, options(client, "https://api.openai.com/v1"))
+	result, err = official.Submit(context.Background(), request(OpenAIID))
+	if err == nil || result.State != "unknown" {
+		t.Fatal("RollDek URL behavior leaked into official OpenAI profile")
 	}
 }

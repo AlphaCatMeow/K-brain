@@ -16,8 +16,17 @@ func ValidateVerificationProfile(t TargetSnapshot) error {
 	if t.Adapter == "volcengine-ark-image" && t.RemoteID != "doubao-seedream-5-0-pro-260628" {
 		return ErrUnsupported
 	}
+	if t.Adapter == "google-generate-content-image" && t.RemoteID != "gemini-nano-banana-2.1" {
+		return ErrUnsupported
+	}
+	if t.Adapter == "rolldek-images" && t.RemoteID != "gpt-image-2.5" && t.RemoteID != "gpt-image-2" {
+		return ErrUnsupported
+	}
+	if t.Adapter == "runninghub-model" && t.RemoteID != "rhart-image-n-g31-flash-lite-official" {
+		return ErrUnsupported
+	}
 	c := t.Capabilities
-	if (t.Adapter != "openai-images" && t.Adapter != "volcengine-ark-image") || t.AdapterVersion != "1" || t.Kind != "model" || t.WorkflowMapping != nil || len(t.Parameters) != 0 || len(c.Operations) != 1 || c.Operations[0] != OperationGenerate || c.MaxCount != 1 || c.MaxInputs != 0 || c.SupportsCancel || c.SupportsReconcile || c.SupportsContinuation || c.SupportsPreview || len(c.OutputFormats) != 1 || c.OutputFormats[0] != "png" {
+	if (t.Adapter != "runninghub-model" && t.Adapter != "rolldek-images" && t.Adapter != "openai-images" && t.Adapter != "volcengine-ark-image" && t.Adapter != "google-generate-content-image") || t.AdapterVersion != "1" || t.Kind != "model" || t.WorkflowMapping != nil || len(t.Parameters) != 0 || len(c.Operations) != 1 || c.Operations[0] != OperationGenerate || c.MaxCount != 1 || c.MaxInputs != 0 || c.SupportsCancel || c.SupportsReconcile || c.SupportsContinuation || c.SupportsPreview || len(c.OutputFormats) != 1 || c.OutputFormats[0] != "png" {
 		return ErrUnsupported
 	}
 	return nil

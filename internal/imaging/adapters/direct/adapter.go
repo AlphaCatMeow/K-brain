@@ -37,6 +37,7 @@ type Options struct {
 	// Authentication, HTTP controls, forwarding and idempotency are reserved.
 	CustomHeaders map[string]string
 	Limits        Limits
+	Profile       string
 }
 
 // Limits may tighten, but never enlarge, the local hard ceilings. Zero uses
@@ -50,6 +51,7 @@ type Limits struct {
 
 type Adapter struct {
 	id        string
+	profile   string
 	client    http.Client
 	base      string
 	secrets   imaging.SecretResolver
@@ -74,6 +76,9 @@ func newAdapter(id string, o Options) (*Adapter, error) {
 		return nil, failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent)
 	}
 	if o.HTTPClient == nil || o.SecretResolver == nil || strings.TrimSpace(o.SecretRef) == "" {
+		return nil, failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent)
+	}
+	if o.Profile != "" && (o.Profile != "rolldek" || id != OpenAIID || (u.Hostname() != "rolldek.com" && u.Hostname() != "api-cn.rolldek.com") || u.Scheme != "https" || u.Port() != "") {
 		return nil, failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent)
 	}
 	l := o.Limits
@@ -101,7 +106,7 @@ func newAdapter(id string, o Options) (*Adapter, error) {
 	c := *o.HTTPClient
 	c.Jar = nil
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Adapter{id: id, client: c, base: strings.TrimRight(u.String(), "/"), secrets: o.SecretResolver, scope: o.Scope, secretRef: o.SecretRef, headers: headers, limits: l}, nil
+	return &Adapter{id: id, profile: o.Profile, client: c, base: strings.TrimRight(u.String(), "/"), secrets: o.SecretResolver, scope: o.Scope, secretRef: o.SecretRef, headers: headers, limits: l}, nil
 }
 
 func (a *Adapter) Poll(context.Context, string) (imaging.RemoteResult, error) {

@@ -135,12 +135,27 @@ func resolveImageAdapter(ctx context.Context, manager *backend.ImageSettingsMana
 	o := direct.Options{HTTPClient: connection.HTTPClient, BaseURL: connection.BaseURL, SecretResolver: connection.SecretResolver, Scope: scope, SecretRef: connection.SecretRefs["apiKey"], CustomHeaders: connection.CustomHeaders}
 	var adapter imaging.Adapter
 	switch target.Adapter {
+	case "rolldek-images":
+		if connection.BaseURL != "https://api-cn.rolldek.com/v1" && connection.BaseURL != "https://rolldek.com/v1" {
+			return nil, imaging.ErrUnsupported
+		}
+		o.Profile = "rolldek"
+		adapter, err = direct.NewOpenAI(o)
 	case direct.OpenAIID:
+		if connection.BaseURL == "https://rolldek.com/v1" || connection.BaseURL == "https://api-cn.rolldek.com/v1" {
+			o.Profile = "rolldek"
+		}
 		adapter, err = direct.NewOpenAI(o)
 	case direct.GoogleID:
 		adapter, err = direct.NewGoogle(o)
 	case direct.VolcengineID:
 		adapter, err = direct.NewVolcengine(o)
+	case asyncadapter.RunningHubModelID:
+		if connection.BaseURL != "https://www.runninghub.cn" {
+			connection.HTTPClient.CloseIdleConnections()
+			return nil, imaging.ErrUnsupported
+		}
+		adapter, err = asyncadapter.NewRunningHubModel(asyncadapter.Options{Connection: connection.ResolvedConnection, Scope: scope, BaseURL: connection.BaseURL, SecretRef: connection.SecretRefs["apiKey"]})
 	case asyncadapter.JimengID:
 		adapter, err = asyncadapter.NewJimeng(asyncadapter.Options{
 			Connection: connection.ResolvedConnection, Scope: scope, BaseURL: connection.BaseURL,

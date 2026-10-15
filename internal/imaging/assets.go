@@ -67,10 +67,16 @@ func (s *AssetStore) SaveOutput(ctx context.Context, scope Scope, source OutputS
 	if scope.OwnerID == "" || scope.BackendID == "" {
 		return ImageAsset{}, &ImageError{Code: CodeForbidden}
 	}
-	if source.Kind != "bytes" {
+	var content ImageContent
+	var err error
+	switch source.Kind {
+	case "bytes":
+		content, err = DecodeImageContent(ctx, bytes.NewReader(source.Data), source.MIME, OutputImageLimits)
+	case "url":
+		content, err = downloadImageOutput(ctx, source)
+	default:
 		return ImageAsset{}, ErrUnsupported
 	}
-	content, err := DecodeImageContent(ctx, bytes.NewReader(source.Data), source.MIME, OutputImageLimits)
 	if err != nil {
 		return ImageAsset{}, err
 	}

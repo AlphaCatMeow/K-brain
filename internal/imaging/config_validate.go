@@ -11,7 +11,7 @@ import (
 // KnownAdapter identifies a protocol, not an implementation or proof of verification.
 func KnownAdapter(id string) bool {
 	switch id {
-	case "openai-images", "google-generate-content-image", "google-interactions-image", "volcengine-ark-image", "jimeng-image", "runninghub-workflow":
+	case "runninghub-model", "rolldek-images", "openai-images", "google-generate-content-image", "google-interactions-image", "volcengine-ark-image", "jimeng-image", "runninghub-workflow":
 		return true
 	}
 	return false
@@ -128,8 +128,11 @@ func validateSettings(s ImageSettings, providerExists func(string) bool) error {
 			return err
 		}
 		if t.Enabled {
-			if t.Adapter == "google-generate-content-image" || t.Adapter == "google-interactions-image" || t.Adapter == "runninghub-workflow" || t.Adapter == "jimeng-image" {
+			if t.Adapter == "google-interactions-image" || t.Adapter == "runninghub-workflow" || t.Adapter == "jimeng-image" {
 				return invalid("adapter contract or signing verification is incomplete")
+			}
+			if (t.Adapter == "google-generate-content-image" || t.Adapter == "runninghub-model") && (t.Verification.BindingDigest == "" || t.Verification.JobID == "") {
+				return invalid("target requires durable verification-job evidence")
 			}
 			if t.Verification.BindingDigest != "" {
 				if err := ValidateVerificationProfile(SnapshotTarget(t)); err != nil {

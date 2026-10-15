@@ -198,7 +198,7 @@ func TestSchedulerQueryFailureBudgetAndHandle(t *testing.T) {
 }
 func TestSchedulerRealOutputAncestryAndUnsupportedURL(t *testing.T) {
 	for _, remote := range []bool{false, true} {
-		t.Run(map[bool]string{false: "bytes", true: "unsupported-url"}[remote], func(t *testing.T) {
+		t.Run(map[bool]string{false: "bytes", true: "private-url-rejected"}[remote], func(t *testing.T) {
 			s, q, a, scope, r := engineFixture(t)
 			assets, err := NewAssetStore(s.store, t.TempDir())
 			if err != nil {
@@ -224,7 +224,7 @@ func TestSchedulerRealOutputAncestryAndUnsupportedURL(t *testing.T) {
 				}
 				output := OutputSource{Kind: "bytes", Data: raw, MIME: "image/png"}
 				if remote {
-					output = OutputSource{Kind: "url", URL: "https://example.invalid/image.png"}
+					output = OutputSource{Kind: "url", URL: "https://127.0.0.1/image.png"}
 				}
 				return RemoteResult{State: "completed", Outputs: []OutputSource{output}}, nil
 			}
@@ -235,7 +235,7 @@ func TestSchedulerRealOutputAncestryAndUnsupportedURL(t *testing.T) {
 			q.Start(context.Background())
 			if remote {
 				j = awaitEngine(t, s, scope, j.ID, JobFailed)
-				if j.Error.Code != CodeUnsupportedOperation {
+				if j.Error.Code != CodeForbidden {
 					t.Fatal(j.Error)
 				}
 				return

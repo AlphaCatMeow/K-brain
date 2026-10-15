@@ -19,16 +19,17 @@ type imageRef struct {
 	URL string `json:"image_url"`
 }
 type openAIRequest struct {
-	Model       string     `json:"model"`
-	Prompt      string     `json:"prompt"`
-	N           int        `json:"n"`
-	Size        string     `json:"size,omitempty"`
-	Quality     string     `json:"quality,omitempty"`
-	Format      string     `json:"output_format,omitempty"`
-	Compression *int       `json:"output_compression,omitempty"`
-	Background  string     `json:"background,omitempty"`
-	Images      []imageRef `json:"images,omitempty"`
-	Mask        *imageRef  `json:"mask,omitempty"`
+	ResponseFormat string     `json:"response_format,omitempty"`
+	Model          string     `json:"model"`
+	Prompt         string     `json:"prompt"`
+	N              int        `json:"n"`
+	Size           string     `json:"size,omitempty"`
+	Quality        string     `json:"quality,omitempty"`
+	Format         string     `json:"output_format,omitempty"`
+	Compression    *int       `json:"output_compression,omitempty"`
+	Background     string     `json:"background,omitempty"`
+	Images         []imageRef `json:"images,omitempty"`
+	Mask           *imageRef  `json:"mask,omitempty"`
 }
 type inlineData struct {
 	MIME string `json:"mimeType"`
@@ -69,12 +70,12 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 	if r.Request.Count != 1 || !utf8.ValidString(r.Request.Prompt) || strings.TrimSpace(r.Request.Prompt) == "" || utf8.RuneCountInString(r.Request.Prompt) > 32000 || len(r.Continuation) != 0 {
 		return "", nil, badInput()
 	}
-	if r.Target.Adapter != a.id || r.Target.AdapterVersion != Version || r.Target.Kind != "model" || r.Target.WorkflowMapping != nil {
+	if (r.Target.Adapter != a.id && !(a.profile == "rolldek" && r.Target.Adapter == "rolldek-images")) || r.Target.AdapterVersion != Version || r.Target.Kind != "model" || r.Target.WorkflowMapping != nil {
 		return "", nil, unsupported()
 	}
 	switch a.id {
 	case OpenAIID:
-		if r.Target.RemoteID != "gpt-image-2" && r.Target.RemoteID != "gpt-image-2-2026-04-21" {
+		if r.Target.RemoteID != "gpt-image-2" && r.Target.RemoteID != "gpt-image-2-2026-04-21" && !(a.profile == "rolldek" && r.Target.RemoteID == "gpt-image-2.5") {
 			return "", nil, unsupported()
 		}
 	case GoogleID:
@@ -95,6 +96,12 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 	switch a.id {
 	case OpenAIID:
 		b := openAIRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, N: 1}
+		if a.profile == "rolldek" {
+			if r.Request.Operation != imaging.OperationGenerate || len(r.Request.Parameters) != 0 {
+				return "", nil, unsupported()
+			}
+			b.ResponseFormat = "b64_json"
+		}
 		for k, v := range r.Request.Parameters {
 			switch k {
 			case "size":
@@ -143,7 +150,9 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 		b.Config.Modalities = []string{"TEXT", "IMAGE"}
 		return "/models/" + r.Target.RemoteID + ":generateContent", b, nil
 	case VolcengineID:
-		b := arkRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, ResponseFormat: "b64_json"}
+		// Ark defaults to JPEG. Freeze the local default to PNG so the
+		// minimal verification profile receives the format it certifies.
+		b := arkRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, ResponseFormat: "b64_json", Format: "png"}
 		for k, v := range r.Request.Parameters {
 			switch k {
 			case "size":

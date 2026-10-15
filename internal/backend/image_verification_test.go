@@ -43,6 +43,8 @@ func newVerificationFixture(t *testing.T, adapter, result string) *verificationF
 	model := "gpt-image-2"
 	if adapter == direct.VolcengineID {
 		model = "doubao-seedream-5-0-pro-260628"
+	} else if adapter == direct.GoogleID {
+		model = "gemini-nano-banana-2.1"
 	}
 	f := &verificationFixture{t: t, dir: t.TempDir(), adapter: adapter}
 	var pngBytes bytes.Buffer
@@ -52,11 +54,34 @@ func newVerificationFixture(t *testing.T, adapter, result string) *verificationF
 	encoded := base64.StdEncoding.EncodeToString(pngBytes.Bytes())
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
-		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/images/generations") || r.Header.Get("Authorization") != "Bearer fixture-key" {
+		validPath := strings.HasSuffix(r.URL.Path, "/images/generations") && r.Header.Get("Authorization") == "Bearer fixture-key"
+		if adapter == direct.GoogleID {
+			validPath = r.URL.Path == "/v1beta/models/"+model+":generateContent" && r.Header.Get("x-goog-api-key") == "fixture-key" && r.Header.Get("Authorization") == ""
+		}
+		if r.Method != "POST" || !validPath {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		var body map[string]any
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body["model"] != model || body["prompt"] != "fixture prompt" {
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Error("invalid request body")
+		}
+		if adapter == direct.GoogleID {
+			contents, ok := body["contents"].([]any)
+			if !ok || len(contents) != 1 {
+				t.Error("missing native contents")
+			} else {
+				content, _ := contents[0].(map[string]any)
+				parts, _ := content["parts"].([]any)
+				if len(parts) != 1 {
+					t.Error("unexpected parts")
+				} else {
+					part, _ := parts[0].(map[string]any)
+					if part["text"] != "fixture prompt" {
+						t.Error("prompt lost")
+					}
+				}
+			}
+		} else if body["model"] != model || body["prompt"] != "fixture prompt" {
 			t.Error("confirmation was not executed")
 		}
 		switch result {
@@ -71,7 +96,11 @@ func newVerificationFixture(t *testing.T, adapter, result string) *verificationF
 				_ = conn.Close()
 			}
 		default:
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"b64_json": encoded}}})
+			if adapter == direct.GoogleID {
+				_ = json.NewEncoder(w).Encode(map[string]any{"candidates": []any{map[string]any{"finishReason": "STOP", "content": map[string]any{"role": "model", "parts": []any{map[string]any{"inlineData": map[string]any{"mimeType": "image/png", "data": encoded}}}}}}})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"b64_json": encoded}}})
+			}
 		}
 	}))
 	t.Cleanup(f.server.Close)
@@ -80,6 +109,10 @@ func newVerificationFixture(t *testing.T, adapter, result string) *verificationF
 	ctx, scope := context.Background(), imageTestScope()
 	c := imageTestConnection()
 	c.Binding.BaseURL = f.server.URL + "/v1"
+	if adapter == direct.GoogleID {
+		c.Binding.BaseURL = f.server.URL + "/v1beta"
+		c.Binding.AuthKind = "api_key_header"
+	}
 	c.MaxConcurrent = 1
 	target := imageTestTarget()
 	target.Adapter = adapter
@@ -148,6 +181,9 @@ func (f *verificationFixture) open(reload bool) {
 		if target.Adapter == direct.VolcengineID {
 			return direct.NewVolcengine(opts)
 		}
+		if target.Adapter == direct.GoogleID {
+			return direct.NewGoogle(opts)
+		}
 		return direct.NewOpenAI(opts)
 	}})
 	f.verifier = NewImageVerificationManager(f.m, f.service, f.assets)
@@ -212,7 +248,7 @@ func (f *verificationFixture) get(id string) imaging.VerificationReceipt {
 }
 
 func TestImageVerificationDurableLifecycle(t *testing.T) {
-	for _, adapter := range []string{direct.OpenAIID, direct.VolcengineID} {
+	for _, adapter := range []string{direct.OpenAIID, direct.VolcengineID, direct.GoogleID} {
 		t.Run(adapter, func(t *testing.T) {
 			f := newVerificationFixture(t, adapter, "success")
 			// Ordinary creation cannot bypass the disabled target, even with its own key.
@@ -362,7 +398,7 @@ func TestImageVerificationConsentProfilesAndRevision(t *testing.T) {
 	if f.calls.Load() != 0 {
 		t.Fatal("changed queued binding submitted")
 	}
-	for _, adapter := range []string{direct.GoogleID, "runninghub-workflow", "jimeng-image"} {
+	for _, adapter := range []string{"runninghub-workflow", "jimeng-image"} {
 		snapshot := imaging.SnapshotTarget(imageTestTarget())
 		snapshot.Adapter = adapter
 		snapshot.AdapterVersion = "1"
@@ -422,5 +458,92 @@ func TestImageVerificationHTTPAuthorizationAndWire(t *testing.T) {
 	imageAssertError(t, imageHTTPRequest(s, "GET", "/v1/image/targets/it_test/verifications/"+out.Verification.ID, nil), 403, imaging.CodeForbidden)
 	if f.calls.Load() != 1 {
 		t.Fatal("HTTP duplicate submit")
+	}
+}
+
+func TestImageVerificationHTTPReceiptRecoveryByKey(t *testing.T) {
+	f := newVerificationFixture(t, direct.OpenAIID, "success")
+	s := &Server{token: "test-image-token", image: &ImageModule{Settings: f.m, Store: f.store, Assets: f.assets, Jobs: f.service, Verification: f.verifier, AllowLocalImageScope: true}}
+	s.image.ResolveScope = func(*http.Request) (ImageAuthorization, error) {
+		return ImageAuthorization{Scope: imageTestScope(), CanConfigure: true}, nil
+	}
+	receipt := f.start("response-lost")
+	request := httptest.NewRequest("GET", "/v1/image/targets/it_test/verifications/by-key", nil)
+	request.Header.Set("Authorization", "Bearer test-image-token")
+	request.Header.Set("X-Idempotency-Key", "response-lost")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, request)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), receipt.ID) {
+		t.Fatalf("lookup=%d %s", w.Code, w.Body.String())
+	}
+	if f.calls.Load() != 0 {
+		t.Fatal("lookup submitted provider work")
+	}
+	other := imageTestScope()
+	other.OwnerID = "other-owner"
+	s.image.ResolveScope = func(*http.Request) (ImageAuthorization, error) {
+		return ImageAuthorization{Scope: other, CanConfigure: true}, nil
+	}
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, request)
+	// Settings currently authorize only the explicit local owner. Other owners
+	// are rejected before reading any receipt; identity must not be weakened.
+	if w.Code != 403 {
+		t.Fatalf("cross-owner key lookup=%d", w.Code)
+	}
+	s.image.ResolveScope = func(*http.Request) (ImageAuthorization, error) {
+		return ImageAuthorization{Scope: imageTestScope(), CanConfigure: true}, nil
+	}
+	request.Header.Del("X-Idempotency-Key")
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, request)
+	if w.Code != 422 {
+		t.Fatalf("missing key status=%d", w.Code)
+	}
+}
+
+func TestImageGoogleVerificationMinimalScopeAndFailures(t *testing.T) {
+	for _, result := range []string{"empty", "rejected", "unknown"} {
+		t.Run(result, func(t *testing.T) {
+			f := newVerificationFixture(t, direct.GoogleID, result)
+			r := f.start("google-failure")
+			f.run()
+			f.wait(r.JobID)
+			if receipt := f.get(r.ID); receipt.State == "verified" {
+				t.Fatal("failed Google response certified")
+			}
+			f.close()
+			f.open(true)
+			f.run()
+			if again := f.start("google-failure"); again.JobID != r.JobID {
+				t.Fatal("Google restart created another paid job")
+			}
+			f.wait(r.JobID)
+			if f.calls.Load() != 1 {
+				t.Fatalf("Google submits=%d", f.calls.Load())
+			}
+		})
+	}
+	base := imaging.SnapshotTarget(imageTestTarget())
+	base.Adapter = direct.GoogleID
+	base.AdapterVersion = "1"
+	base.RemoteID = "gemini-nano-banana-2.1"
+	for _, mutate := range []func(*imaging.TargetSnapshot){
+		func(s *imaging.TargetSnapshot) { s.RemoteID = "unverified-model" },
+		func(s *imaging.TargetSnapshot) {
+			s.Capabilities.Operations = []imaging.Operation{imaging.OperationEdit}
+		},
+		func(s *imaging.TargetSnapshot) { s.Capabilities.MaxInputs = 1 },
+		func(s *imaging.TargetSnapshot) { s.Capabilities.MaxCount = 2 },
+		func(s *imaging.TargetSnapshot) { s.Capabilities.SupportsContinuation = true },
+		func(s *imaging.TargetSnapshot) {
+			s.Parameters = []imaging.ParameterSpec{{Key: "image_size", Type: "string"}}
+		},
+	} {
+		changed := base
+		mutate(&changed)
+		if imaging.ValidateVerificationProfile(changed) == nil {
+			t.Fatal("Google minimal verification certified extended capabilities")
+		}
 	}
 }

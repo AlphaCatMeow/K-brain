@@ -404,91 +404,48 @@ func TestImageSecretCorruptFileErrorRedaction(t *testing.T) {
 	}
 }
 
-func TestImageTrustedVerificationLifecycle(t *testing.T) {
+func TestImageLegacyVerificationCallbackCannotPublishEvidence(t *testing.T) {
 	ctx, scope := context.Background(), imageTestScope()
 	path := filepath.Join(t.TempDir(), "config.json")
-	var fail bool
-	s := NewSettingsStore(config.Default(), func(c *config.Config) error {
-		if fail {
-			return errors.New("private-verification-sentinel")
-		}
-		return c.SaveFile(path)
+	s := NewSettingsStore(config.Default(), func(c *config.Config) error { return c.SaveFile(path) })
+	calls := 0
+	m, err := NewImageSettingsManager(s, filepath.Join(t.TempDir(), "secrets.json"), ImageSettingsOptions{
+		VerifyTarget: func(context.Context, imaging.Scope, imaging.TargetSnapshot) (imaging.TargetVerification, error) {
+			calls++
+			return imageTestTarget().Verification, nil
+		},
 	})
-	var during func()
-	var calls int
-	m, err := NewImageSettingsManager(s, filepath.Join(t.TempDir(), "secrets.json"), ImageSettingsOptions{VerifyTarget: func(_ context.Context, gotScope imaging.Scope, target imaging.TargetSnapshot) (imaging.TargetVerification, error) {
-		calls++
-		if gotScope != scope || target.ID != "it_test" {
-			t.Fatal("wrong verification scope/target")
-		}
-		if during != nil {
-			during()
-		}
-		return imageTestTarget().Verification, nil
-	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	target := imageTestTarget()
 	target.Verification = imaging.TargetVerification{}
-	if _, err = m.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{Connections: []imaging.ImageConnection{imageTestConnection()}, Targets: []imaging.ImageTarget{target}}); err != nil {
+	if _, err := m.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{
+		Connections: []imaging.ImageConnection{imageTestConnection()},
+		Targets:     []imaging.ImageTarget{target},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.ImageSettings(scope); err != nil || calls != 0 {
-		t.Fatal("GET or PUT ran verifier")
-	}
-	// A failed durable save cannot publish otherwise valid trusted evidence.
-	fail = true
-	if _, err = m.VerifyImageTarget(ctx, scope, 1, target.ID); err == nil || strings.Contains(err.Error(), "sentinel") {
-		t.Fatal("verification save error was not sanitized")
-	}
-	if snap := s.Snapshot(); snap.Image.Revision != 1 || snap.Image.Targets[0].Verification.ContractComplete {
-		t.Fatal("failed save published evidence")
-	}
-	fail = false
-	// Secret changes during live verification invalidate the result, even when
-	// the public image revision did not change. The callback runs outside locks.
-	during = func() {
-		if _, err := m.WriteImageSecret(ctx, scope, imaging.ImageSecretInput{ConnectionID: "ic_test", Purpose: "apiKey", Value: "fake-literal"}); err != nil {
-			t.Fatal(err)
+	// Legacy callbacks cannot certify a target. Production verification must
+	// execute the durable verification-job lifecycle tested separately.
+	for _, revision := range []uint64{1, 999} {
+		_, err := m.VerifyImageTarget(ctx, scope, revision, target.ID)
+		var imageErr *imaging.ImageError
+		if !errors.As(err, &imageErr) || imageErr.Code != imaging.CodeUnsupportedOperation {
+			t.Fatalf("legacy verification did not reject the request: %v", err)
 		}
 	}
-	if _, err = m.VerifyImageTarget(ctx, scope, 1, target.ID); err == nil || !strings.Contains(err.Error(), imaging.CodeRevisionConflict) {
-		t.Fatalf("stale evidence accepted: %v", err)
+	if calls != 0 {
+		t.Fatalf("legacy callback executed %d times", calls)
 	}
-	during = nil
-	got, err := m.VerifyImageTarget(ctx, scope, 1, target.ID)
+	loaded, err := config.LoadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Revision != 2 || got.Targets[0].Enabled || got.Targets[0].Verification.ContractComplete {
-		t.Fatal("verification leaked or auto-enabled target")
-	}
-	loaded, err := config.LoadFile(path)
-	if err != nil || !loaded.Image.Targets[0].Verification.ContractComplete {
-		t.Fatalf("trusted evidence not durable: %v", err)
-	}
-	got.Targets[0].Enabled = true
-	if _, err = m.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{ExpectedRevision: 2, Connections: got.Connections, Targets: got.Targets}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = m.ResolveTarget(ctx, scope, target.ID); err != nil {
-		t.Fatal(err)
-	}
-	// Strict HTTP decoding rejects private evidence; lenient decoding discards
-	// it and UpdateImageSettings also ignores direct Go-supplied evidence.
-	var input imaging.ImageSettingsUpdate
-	d := json.NewDecoder(strings.NewReader(`{"expectedRevision":3,"targets":[{"verification":{"contractComplete":true}}]}`))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&input); err == nil {
-		t.Fatal("HTTP verification evidence accepted")
-	}
-	plain, _, _ := imageTestManager(t, func(*config.Config) error { return nil })
-	if _, err := plain.VerifyImageTarget(ctx, scope, 0, "it_test"); err == nil {
-		t.Fatal("missing trusted verifier accepted")
+	if loaded.Image.Revision != 1 || loaded.Image.Targets[0].Verification.ContractComplete || loaded.Image.Targets[0].Enabled {
+		t.Fatal("legacy callback published verification evidence or enabled the target")
 	}
 }
-
 func TestImageProviderResolvedSnapshotAndRevocation(t *testing.T) {
 	ctx, scope := context.Background(), imageTestScope()
 	cfg := config.Default()

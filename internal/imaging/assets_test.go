@@ -93,8 +93,11 @@ func TestImageAssetOutputNeedsTransactionBeforeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Close()
-	if _, err := assets.SaveOutput(context.Background(), scope, OutputSource{Kind: "url", URL: "https://example.test/result.png"}); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("unimplemented download must be explicit: %v", err)
+	if _, err := assets.SaveOutput(context.Background(), scope, OutputSource{Kind: "url", URL: "https://127.0.0.1/result.png"}); err == nil {
+		t.Fatal("private output destination must be rejected")
+	}
+	if _, err := assets.SaveOutput(context.Background(), scope, OutputSource{Kind: "unknown"}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unknown output kind must be explicit: %v", err)
 	}
 }
 
