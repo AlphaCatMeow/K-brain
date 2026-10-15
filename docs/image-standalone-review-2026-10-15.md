@@ -34,3 +34,11 @@
 随后使用 Go 的 -overlay，将相对 ac3cbe6 修改的 94 个 Go 源文件映射为上游版本，新增文件设为不可见，在同一工作区和相同 PowerShell 环境定向运行上述五个失败用例。没有切换分支或使用额外 worktree，也没有修改当前源码。
 
 五个失败用例全部在上游源码覆盖运行中复现：TestOnUpdateThrottle、TestPersistenceCASIdempotencyAndRollback、TestLinkifyNativeUnicodePaths、TestBashToolOnUpdateCtx、TestLiveAgentManagedProcessWaitCursorAndStop。因此，这五项失败并非本分支生图代码新增。该证据只覆盖这五个用例，不代表上游全仓测试已运行或通过，也不能替代独立 TUI 人工验收。
+
+## 2026-10-15 合并前修订
+
+- 无效 image 子配置隔离为私有原始 JSON，普通配置保存会原样保留该子文档，不会静默删除；图像模块报告不可用，普通 CLI/TUI 配置读取及 backend 服务继续可用。写入新的图像配置仍严格校验。修复原始 config.json 后重启可恢复图像模块。
+- 过期验证目标在内存配置中禁用，既拒绝执行该目标，也不再阻断其他正常目标。
+- direct adapter 的丢失响应测试改用 atomic 计数，完整 imaging race 通过。
+- macOS 全量 Go 测试通过；新增实际 backend 启动、health/会话可用、image 503、原配置保留及两次重启回归。
+- 仍未进行真实付费平台验收；平台能力及最小验证配置限制不变。

@@ -496,9 +496,9 @@ func TestContractLimitsAndTransport(t *testing.T) {
 		}
 	})
 	t.Run("dropped response", func(t *testing.T) {
-		calls := 0
+		var calls atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls++
+			calls.Add(1)
 			io.Copy(io.Discard, r.Body)
 			c, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
@@ -511,7 +511,7 @@ func TestContractLimitsAndTransport(t *testing.T) {
 		a := adapter(t, OpenAIID, options(srv.Client(), srv.URL))
 		res, err := a.Submit(context.Background(), request(OpenAIID))
 		assertError(t, res, err, imaging.CodeResultUnknown, imaging.DeliveryUncertain)
-		if calls != 1 {
+		if calls.Load() != 1 {
 			t.Fatal("replayed paid submit")
 		}
 	})

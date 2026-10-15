@@ -125,6 +125,9 @@ const DefaultCompactModel = "model1"
 const DefaultCompactPct = 50
 
 type Config struct {
+	imageConfigRaw     json.RawMessage
+	imageConfigInvalid bool
+
 	// Image is optional. Public JSON is redacted; marshalConfig uses private disk types.
 	Image           *imaging.ImageSettings `json:"image,omitempty"`
 	Language        string                 `json:"language,omitempty"`
@@ -314,15 +317,19 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 			return err
 		}
 		cfg.Image = nil
+		cfg.imageConfigRaw = nil
+		cfg.imageConfigInvalid = false
 		if len(wire.Image) > 0 && !bytes.Equal(bytes.TrimSpace(wire.Image), []byte("null")) {
-			image, err := imaging.UnmarshalSettingsConfig(wire.Image)
-			if err != nil {
-				return err
+			image, imageErr := imaging.UnmarshalSettingsConfig(wire.Image)
+			if imageErr == nil {
+				imageErr = imaging.ValidateSettingsWithProviders(image, func(id string) bool { _, ok := cfg.Providers[id]; return ok })
 			}
-			if err := imaging.ValidateSettingsWithProviders(image, func(id string) bool { _, ok := cfg.Providers[id]; return ok }); err != nil {
-				return fmt.Errorf("invalid image configuration")
+			if imageErr != nil {
+				cfg.imageConfigRaw = bytes.Clone(wire.Image)
+				cfg.imageConfigInvalid = true
+			} else {
+				cfg.Image = &image
 			}
-			cfg.Image = &image
 		}
 	}
 	for event, hooks := range cfg.Hooks {
@@ -546,7 +553,13 @@ func marshalConfig(c *Config) ([]byte, error) {
 	wire.Models = nil
 	wire.Providers = piProviders(c)
 	var image json.RawMessage
+	if c.imageConfigInvalid && c.Image == nil {
+		image = bytes.Clone(c.imageConfigRaw)
+	}
 	if c.Image != nil {
+		if err := imaging.ValidateSettingsWithProviders(*c.Image, func(id string) bool { _, ok := c.Providers[id]; return ok }); err != nil {
+			return nil, fmt.Errorf("invalid image configuration")
+		}
 		var err error
 		image, err = imaging.MarshalSettingsConfig(*c.Image)
 		if err != nil {
@@ -691,8 +704,15 @@ func (c *Config) resolveFromCatalog(model, provider string) (Model, string, erro
 	return m, h.prov, nil
 }
 
+// ImageConfigUnavailable reports an isolated optional configuration failure.
+// The original image document is retained privately for subsequent saves.
+func (c *Config) ImageConfigUnavailable() bool {
+	return c.imageConfigInvalid && c.Image == nil
+}
+
 func (c *Config) Snapshot() *Config {
 	snap := *c
+	snap.imageConfigRaw = bytes.Clone(c.imageConfigRaw)
 	if c.Image != nil {
 		image := imaging.CloneSettings(*c.Image)
 		snap.Image = &image

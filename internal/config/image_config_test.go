@@ -50,10 +50,10 @@ func TestImageConfigOldEmptyAndUnknownFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, raw := range []string{`{"providers":{},"surprise":true}`, `{"providers":{},"image":{"surprise":true}}`, `{"providers":{},"image":{"connections":[{"binding":{"secretLiteral":"fake-sentinel"}}]}}`, `{"providers":{},"image":{"targets":[{"verification":{"unexpected":true}}]}}`} {
+	for _, raw := range []string{`{"providers":{},"image":{"surprise":true}}`, `{"providers":{},"image":{"connections":[{"binding":{"secretLiteral":"fake-sentinel"}}]}}`, `{"providers":{},"image":{"targets":[{"verification":{"unexpected":true}}]}}`} {
 		var cfg Config
-		if err := parseConfigJSONC([]byte(raw), &cfg); err == nil {
-			t.Fatalf("accepted unknown field: %s", raw)
+		if err := parseConfigJSONC([]byte(raw), &cfg); err != nil || !cfg.ImageConfigUnavailable() {
+			t.Fatalf("invalid optional image configuration was not isolated: %s, %v", raw, err)
 		}
 	}
 	cfg := Default()
@@ -102,5 +102,51 @@ func TestImageConfigAtomicSaveFailure(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) {
 		t.Fatal("failed save changed existing file")
+	}
+}
+
+func TestInvalidImageConfigurationPreservedAcrossOrdinarySave(t *testing.T) {
+	for _, raw := range []string{`{"connections":[{"id":"ic_missing","maxConcurrent":1,"binding":{"kind":"provider_ref","providerId":"removed"}}]}`, `{"unknown":"private-marker"}`, `{"targets":"invalid-type"}`} {
+		var cfg Config
+		if err := parseConfigJSONC([]byte(`{"providers":{},"image":`+raw+`}`), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.ImageConfigUnavailable() || cfg.Image != nil {
+			t.Fatal("image config was not disabled")
+		}
+		public, _ := json.Marshal(cfg.Snapshot())
+		if bytes.Contains(public, []byte("private-marker")) {
+			t.Fatal("invalid raw image config leaked")
+		}
+		snap := cfg.Snapshot()
+		snap.Theme = "light"
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := snap.SaveFile(path); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var before, after any
+		json.Unmarshal([]byte(raw), &before)
+		json.Unmarshal(loaded.imageConfigRaw, &after)
+		b, _ := json.Marshal(before)
+		a, _ := json.Marshal(after)
+		if !bytes.Equal(a, b) || !loaded.ImageConfigUnavailable() {
+			t.Fatal("ordinary save discarded quarantined image data")
+		}
+		loaded.Image = &imaging.ImageSettings{}
+		if err := loaded.SaveFile(path); err != nil {
+			t.Fatal(err)
+		}
+		repaired, err := LoadFile(path)
+		if err != nil || repaired.ImageConfigUnavailable() {
+			t.Fatalf("valid repair failed: %v", err)
+		}
+	}
+	var cfg Config
+	if err := parseConfigJSONC([]byte(`{"providers":{},"surprise":true}`), &cfg); err == nil {
+		t.Fatal("ordinary unknown config field accepted")
 	}
 }

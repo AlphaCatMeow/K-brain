@@ -38,6 +38,9 @@ func localImageListener(address string) bool {
 }
 
 func openImageRuntime(ctx context.Context, root string, settings *backend.SettingsStore, allowLocal bool) (_ *imageRuntime, err error) {
+	if settings.Snapshot().ImageConfigUnavailable() {
+		return nil, errors.New("invalid image configuration; original data preserved")
+	}
 	store, err := imaging.OpenStore(filepath.Join(root, "imaging"))
 	if err != nil {
 		return nil, err

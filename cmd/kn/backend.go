@@ -152,7 +152,11 @@ func backendCLI(args []string) error {
 	images, imageErr := openImageRuntime(context.Background(), data.Root, settings, localImageListener(*listen))
 	var imageModule *backend.ImageModule
 	if imageErr != nil {
-		fmt.Fprintln(os.Stderr, "image workspace unavailable: unable to initialize image storage")
+		if cfg.ImageConfigUnavailable() {
+			fmt.Fprintln(os.Stderr, "image workspace unavailable: invalid image configuration; original configuration preserved, ordinary chat remains available")
+		} else {
+			fmt.Fprintln(os.Stderr, "image workspace unavailable: unable to initialize image storage")
+		}
 	} else {
 		imageModule = images.module
 		defer func() {

@@ -123,6 +123,7 @@ func (m *ImageSettingsManager) currentLocked() imaging.ImageSettings {
 			digest, err := m.imageBindingDigestLocked(context.Background(), s, *t)
 			if err != nil || digest != t.Verification.BindingDigest {
 				t.Verification = imaging.TargetVerification{}
+				t.Enabled = false
 				t.VerificationState = &imaging.VerificationSummary{State: "stale", Reason: "binding_changed"}
 			}
 		}
