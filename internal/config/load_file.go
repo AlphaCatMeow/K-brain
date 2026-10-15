@@ -16,20 +16,26 @@ func (c *Config) SaveFile(filename string) error {
 	if err != nil {
 		return err
 	}
+	return replaceConfigFile(f, filename, data)
+}
+
+// replaceConfigFile syncs the complete staging file before publishing it.
+// Both Save and SaveFile retain their staging conventions and failure semantics.
+func replaceConfigFile(f *os.File, filename string, data []byte) error {
+	defer os.Remove(f.Name())
 	if err := f.Chmod(0o600); err != nil {
 		f.Close()
 		return err
 	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err != nil {
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
-	if err = f.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}
-	if err = f.Close(); err != nil {
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(f.Name(), filename)

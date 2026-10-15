@@ -1,0 +1,1 @@
+HMAC-SHA256 Credential=fixture-ak/20261011/cn-north-1/cv/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=5ce7cde3c9eccdd7e213832830284bdedfb5e50f347f0b98c8707737ac0066ba

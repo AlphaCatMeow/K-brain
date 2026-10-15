@@ -149,7 +149,26 @@ func backendCLI(args []string) error {
 	if organizerInterval <= 0 {
 		organizerInterval = 24 * time.Hour
 	}
+	images, imageErr := openImageRuntime(context.Background(), data.Root, settings, localImageListener(*listen))
+	var imageModule *backend.ImageModule
+	if imageErr != nil {
+		if cfg.ImageConfigUnavailable() {
+			fmt.Fprintln(os.Stderr, "image workspace unavailable: invalid image configuration; original configuration preserved, ordinary chat remains available")
+		} else {
+			fmt.Fprintln(os.Stderr, "image workspace unavailable: unable to initialize image storage")
+		}
+	} else {
+		imageModule = images.module
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := images.Close(closeCtx); err != nil {
+				fmt.Fprintln(os.Stderr, "image workspace shutdown did not complete")
+			}
+		}()
+	}
 	server, err := backend.New(backend.Options{
+		Image:                   imageModule,
 		Store:                   store,
 		MemoryStore:             memoryStore,
 		Factory:                 factory,

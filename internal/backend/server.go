@@ -40,6 +40,7 @@ type Factory func(context.Context, string, protocol.ModelRef) (*agent.Agent, err
 type MemoryRuntimeFactory func(context.Context, string, protocol.ModelRef) (*memoryruntime.Runtime, error)
 
 type Options struct {
+	Image                   *ImageModule
 	Store                   *session.Store
 	Factory                 Factory
 	EventDir                string
@@ -58,6 +59,7 @@ type Options struct {
 }
 
 type Server struct {
+	image                *ImageModule
 	store                *session.Store
 	factory              Factory
 	token                string
@@ -170,6 +172,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
+		image: opts.Image,
 		store: opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
 		settings: opts.Settings, usage: NewProviderUsageService(opts.Settings), prompts: opts.Prompts,
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
@@ -266,6 +269,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cors(w, r)
+	if r.URL.Path == "/v1/image" || strings.HasPrefix(r.URL.Path, "/v1/image/") {
+		r = imageRequest(r)
+		w.Header().Set("X-Image-Version", imageWireVersion())
+		w.Header().Set("X-Request-ID", r.Context().Value(imageRequestIDKey{}).(string))
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !s.authorized(r) {
+			imageUnauthorized(w, r)
+			return
+		}
+		s.handleImage(w, r)
+		return
+	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -279,7 +297,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok"})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -503,8 +521,9 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Add("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Cache-Control")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Cache-Control, Idempotency-Key, X-Idempotency-Key, Last-Event-ID")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Image-Version, X-Request-ID, Content-Length, Content-Type")
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {

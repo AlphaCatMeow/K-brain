@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/datapath"
+	"github.com/Stack-Cairn/K-brain/internal/imaging"
 	"github.com/Stack-Cairn/K-brain/internal/sandbox"
 )
 
@@ -124,20 +125,25 @@ const DefaultCompactModel = "model1"
 const DefaultCompactPct = 50
 
 type Config struct {
-	Language        string `json:"language,omitempty"`
-	DefaultModel    string `json:"defaultModel"`
-	DefaultProvider string `json:"defaultProvider,omitempty"`
-	DefaultEffort   string `json:"defaultEffort,omitempty"`
-	CompactModel    string `json:"compactModel,omitempty"`
-	CompactProvider string `json:"compactProvider,omitempty"`
-	CompactPct      int    `json:"compactPct,omitempty"`
-	TaskModel       string `json:"taskModel,omitempty"`
-	TaskProvider    string `json:"taskProvider,omitempty"`
-	Theme           string `json:"theme,omitempty"`
-	Mouse           *bool  `json:"mouse,omitempty"`
-	Thinking        *bool  `json:"thinking,omitempty"`
-	CollapsePaste   *bool  `json:"collapsePaste,omitempty"`
-	GoalMaxRounds   int    `json:"goalMaxRounds,omitempty"`
+	imageConfigRaw     json.RawMessage
+	imageConfigInvalid bool
+
+	// Image is optional. Public JSON is redacted; marshalConfig uses private disk types.
+	Image           *imaging.ImageSettings `json:"image,omitempty"`
+	Language        string                 `json:"language,omitempty"`
+	DefaultModel    string                 `json:"defaultModel"`
+	DefaultProvider string                 `json:"defaultProvider,omitempty"`
+	DefaultEffort   string                 `json:"defaultEffort,omitempty"`
+	CompactModel    string                 `json:"compactModel,omitempty"`
+	CompactProvider string                 `json:"compactProvider,omitempty"`
+	CompactPct      int                    `json:"compactPct,omitempty"`
+	TaskModel       string                 `json:"taskModel,omitempty"`
+	TaskProvider    string                 `json:"taskProvider,omitempty"`
+	Theme           string                 `json:"theme,omitempty"`
+	Mouse           *bool                  `json:"mouse,omitempty"`
+	Thinking        *bool                  `json:"thinking,omitempty"`
+	CollapsePaste   *bool                  `json:"collapsePaste,omitempty"`
+	GoalMaxRounds   int                    `json:"goalMaxRounds,omitempty"`
 
 	WorktreeSubagents *bool `json:"worktreeSubagents,omitempty"`
 	MaxRetries        int   `json:"maxRetries,omitempty"`
@@ -302,8 +308,28 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 		if _, legacy := root["models"]; legacy {
 			return fmt.Errorf("top-level models is not supported; put models arrays inside providers")
 		}
-		if err := decodeConfig(raw, cfg); err != nil {
+		type configFields Config
+		wire := struct {
+			*configFields
+			Image json.RawMessage `json:"image,omitempty"`
+		}{configFields: (*configFields)(cfg)}
+		if err := decodeConfig(raw, &wire); err != nil {
 			return err
+		}
+		cfg.Image = nil
+		cfg.imageConfigRaw = nil
+		cfg.imageConfigInvalid = false
+		if len(wire.Image) > 0 && !bytes.Equal(bytes.TrimSpace(wire.Image), []byte("null")) {
+			image, imageErr := imaging.UnmarshalSettingsConfig(wire.Image)
+			if imageErr == nil {
+				imageErr = imaging.ValidateSettingsWithProviders(image, func(id string) bool { _, ok := cfg.Providers[id]; return ok })
+			}
+			if imageErr != nil {
+				cfg.imageConfigRaw = bytes.Clone(wire.Image)
+				cfg.imageConfigInvalid = true
+			} else {
+				cfg.Image = &image
+			}
 		}
 	}
 	for event, hooks := range cfg.Hooks {
@@ -505,14 +531,13 @@ func (c *Config) Save() error {
 	} else {
 		logf("config.save", "first write (%s)", c.fingerprint())
 	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	staging, err := os.OpenFile(p+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		logf("config.save", "write tmp failed: %v", err)
 		return err
 	}
-	if err := os.Rename(tmp, p); err != nil {
-		_ = os.Remove(tmp)
-		logf("config.save", "rename failed: %v", err)
+	if err := replaceConfigFile(staging, p, data); err != nil {
+		logf("config.save", "atomic save failed: %v", err)
 		return err
 	}
 	if c.allowEmptySave {
@@ -527,7 +552,24 @@ func marshalConfig(c *Config) ([]byte, error) {
 	wire := *c
 	wire.Models = nil
 	wire.Providers = piProviders(c)
-	body, err := json.MarshalIndent(&wire, "", "  ")
+	var image json.RawMessage
+	if c.imageConfigInvalid && c.Image == nil {
+		image = bytes.Clone(c.imageConfigRaw)
+	}
+	if c.Image != nil {
+		if err := imaging.ValidateSettingsWithProviders(*c.Image, func(id string) bool { _, ok := c.Providers[id]; return ok }); err != nil {
+			return nil, fmt.Errorf("invalid image configuration")
+		}
+		var err error
+		image, err = imaging.MarshalSettingsConfig(*c.Image)
+		if err != nil {
+			return nil, err
+		}
+	}
+	body, err := json.MarshalIndent(struct {
+		*Config
+		Image json.RawMessage `json:"image,omitempty"`
+	}{Config: &wire, Image: image}, "", "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -662,8 +704,19 @@ func (c *Config) resolveFromCatalog(model, provider string) (Model, string, erro
 	return m, h.prov, nil
 }
 
+// ImageConfigUnavailable reports an isolated optional configuration failure.
+// The original image document is retained privately for subsequent saves.
+func (c *Config) ImageConfigUnavailable() bool {
+	return c.imageConfigInvalid && c.Image == nil
+}
+
 func (c *Config) Snapshot() *Config {
 	snap := *c
+	snap.imageConfigRaw = bytes.Clone(c.imageConfigRaw)
+	if c.Image != nil {
+		image := imaging.CloneSettings(*c.Image)
+		snap.Image = &image
+	}
 	snap.Providers = make(map[string]Provider, len(c.Providers))
 	for id, provider := range c.Providers {
 		data, _ := json.Marshal(provider)
