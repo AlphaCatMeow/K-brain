@@ -37,6 +37,13 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Content) == 0 {
 		return fail(400, "prompt or content is required")
 	}
+	if in.PromptCommand {
+		expanded, err := s.expandPromptCommand(in.Prompt, rt.workingDir())
+		if err != nil {
+			return fail(422, err.Error())
+		}
+		in.Snapshot = expanded
+	}
 	user := protocol.Message{Role: protocol.RoleUser}
 	if in.Prompt != "" {
 		user.Content = append(user.Content, protocol.ContentBlock{Type: protocol.ContentText, Text: in.Prompt})
@@ -140,6 +147,8 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 		defer rt.runWorkers.Done()
 		defer s.releaseRuntime(rt)
 		s.executeRun(rt, runCtx, runID, in, options)
+		// The next goal round starts only after executeRun has marked this run done.
+		s.continueGoal(rt, runID, in)
 	}()
 	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: runID, AcceptedSeq: acceptedSeq}, http.StatusAccepted, nil
 }

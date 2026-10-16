@@ -573,6 +573,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	}
 	userMessage := ai.Message{ID: messageID, Role: "user", Content: input, Parts: parts, Authored: authored,
 		PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
+	if snapshot, ok := turnSnapshot(ctx); ok {
+		userMessage.PromptSnapshots = append(userMessage.PromptSnapshots, snapshot)
+	}
 	if resumeID != "" {
 		userMessage.ID = resumeID
 	}

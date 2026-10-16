@@ -55,6 +55,7 @@ const (
 	EventRunFailed           = "run.failed"
 	EventRunCancelled        = "run.cancelled"
 	EventHookWarning         = "hook.warning"
+	EventGoalUpdated         = "goal.updated"
 )
 
 type ModelRef struct {
@@ -390,6 +391,55 @@ type PromptRequest struct {
 	HookPolicy      string         `json:"hook_policy,omitempty"`
 	HookScopeID     string         `json:"hook_scope_id,omitempty"`
 	StopRequested   bool           `json:"stop_requested,omitempty"`
+	// PromptCommand marks Prompt as "/name args" naming a prompt command. The backend
+	// expands it for the model while history keeps the text the user typed.
+	PromptCommand bool `json:"prompt_command,omitempty"`
+	// Snapshot is request-only text resolved at acceptance; it is never part of the wire.
+	Snapshot string `json:"-"`
+}
+
+// GoalRequest manages the session goal. Set and resume start a run with Run's request
+// identity, model and options; later rounds reuse that run's options. Pause stops the
+// running round and keeps the goal; update replaces the goal text without starting a
+// run; clear drops the goal.
+type GoalRequest struct {
+	Action string         `json:"action"`
+	Goal   string         `json:"goal,omitempty"`
+	Run    *PromptRequest `json:"run,omitempty"`
+}
+
+// GoalState is the session goal snapshot returned by the goal route and carried by
+// goal.updated events. Status is none, active, continuing, met, paused or cleared.
+// A continuing event names the request id of the round the backend starts next.
+type GoalState struct {
+	Version             string `json:"version"`
+	ConversationID      string `json:"conversation_id"`
+	Goal                string `json:"goal"`
+	Status              string `json:"status"`
+	Round               int    `json:"round"`
+	MaxRounds           int    `json:"max_rounds"`
+	Reason              string `json:"reason,omitempty"`
+	NextClientRequestID string `json:"next_client_request_id,omitempty"`
+	NextPrompt          string `json:"next_prompt,omitempty"`
+	// StartedAt is when the current goal was set or last resumed (RFC 3339); the
+	// desktop goal bar shows the elapsed time from it.
+	StartedAt string       `json:"started_at,omitempty"`
+	Run       *RunAccepted `json:"run,omitempty"`
+}
+
+// SlashCommand is one entry of the desktop slash command catalog. Kind "action" is
+// handled by the client by name; kind "prompt" is sent as a run with prompt_command.
+type SlashCommand struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	ArgumentHint string `json:"argument_hint,omitempty"`
+	Kind         string `json:"kind"`
+	Source       string `json:"source"`
+}
+
+type SlashCommandList struct {
+	Version  string         `json:"version"`
+	Commands []SlashCommand `json:"commands"`
 }
 
 type CompactRequest struct {
