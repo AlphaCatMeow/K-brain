@@ -138,7 +138,13 @@ func (s *Server) expandPromptCommand(prompt, workdir string) (string, error) {
 	if found == nil {
 		return "", fmt.Errorf("prompt command not found: /%s", name)
 	}
-	expanded, err := found.Expand(args)
+	// Quoting groups arguments, but a lone apostrophe ("don't") is ordinary prose: fall
+	// back to whitespace splitting instead of rejecting the command.
+	parts, err := templates.SplitArgs(args)
+	if err != nil {
+		parts = strings.Fields(args)
+	}
+	expanded, err := found.ExpandArgs(parts)
 	if err != nil {
 		return "", err
 	}

@@ -141,3 +141,37 @@ func waitForRunTerminal(t *testing.T, base, id, runID string) {
 	}
 	t.Fatalf("run %s did not finish", runID)
 }
+
+func TestPromptCommandArgumentsToleratePlainApostrophes(t *testing.T) {
+	isolateUserDir(t)
+	s := &Server{}
+	out, err := s.expandPromptCommand("/review main don't touch tests", "")
+	if err != nil || !strings.Contains(out, "against main") || !strings.Contains(out, "don't touch tests") {
+		t.Fatalf("expansion: %v\n%s", err, out)
+	}
+	out, err = s.expandPromptCommand(`/review main "keep it short"`, "")
+	if err != nil || !strings.Contains(out, "\n\nkeep it short\n") {
+		t.Fatalf("balanced quotes still group arguments: %v\n%s", err, out)
+	}
+}
+
+func TestPromptCommandRetryReplaysAfterTemplateRemoval(t *testing.T) {
+	client := &replyQueue{replies: []string{"done"}}
+	_, base := newGoalServer(t, client)
+	root, _ := config.Dir()
+	dir := filepath.Join(root, "prompts")
+	writePromptTemplate(t, dir, "deploy", "Deploy to $1.")
+	sess := createTestSession(t, base)
+	in := protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "cmd-r", Prompt: "/deploy staging", PromptCommand: true}
+	var first protocol.RunAccepted
+	postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/runs", in, &first)
+	waitForRunTerminal(t, base, sess.ID, first.RunID)
+	if err := os.Remove(filepath.Join(dir, "deploy.md")); err != nil {
+		t.Fatal(err)
+	}
+	var retry protocol.RunAccepted
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/runs", in, &retry)
+	if resp.StatusCode != http.StatusOK || retry.RunID != first.RunID {
+		t.Fatalf("retry must replay the accepted run: %d %+v", resp.StatusCode, retry)
+	}
+}

@@ -48,14 +48,15 @@ func (s *Server) handleCommandNote(w http.ResponseWriter, r *http.Request, id st
 	}
 	defer s.releaseRuntime(rt)
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if rt.agent == nil || rt.recorder == nil {
-		writeJSONError(w, http.StatusConflict, "session runtime is unavailable")
+	// A running turn or child task owns the message list; the client shows the result
+	// locally instead.
+	if !s.mutationAllowed(w, rt) {
+		rt.mu.Unlock()
 		return
 	}
-	// A running turn owns the message list; the client shows the result locally instead.
-	if rt.activeLocked() {
-		writeJSONError(w, http.StatusConflict, "session already has a running turn")
+	if rt.agent == nil || rt.recorder == nil {
+		rt.mu.Unlock()
+		writeJSONError(w, http.StatusConflict, "session runtime is unavailable")
 		return
 	}
 	now := time.Now()
@@ -67,8 +68,16 @@ func (s *Server) handleCommandNote(w http.ResponseWriter, r *http.Request, id st
 	rt.agent.RestoreMessages(messages)
 	if err := rt.recorder.Save(); err != nil {
 		rt.agent.RestoreMessages(previous)
+		rt.mu.Unlock()
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	rt.mu.Unlock()
+	// Other views of the conversation reload history, as after a rewind.
+	payload := map[string]any{"reason": "command_note"}
+	if snap, err := s.store.HistorySnapshot(id); err == nil {
+		payload["revision"] = snap.Revision
+	}
+	_, _ = s.publish(rt, protocol.EventHistoryUpdated, payload, "")
 	writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "ok": true})
 }

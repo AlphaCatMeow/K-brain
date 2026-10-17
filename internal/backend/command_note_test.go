@@ -1,8 +1,11 @@
 package backend
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
@@ -34,4 +37,27 @@ func TestCommandNoteAppendsExchangeToHistory(t *testing.T) {
 			t.Fatalf("%+v: status %d", bad, resp.StatusCode)
 		}
 	}
+}
+
+func TestCommandNotePublishesHistoryUpdate(t *testing.T) {
+	_, base := newGoalServer(t, &replyQueue{})
+	sess := createTestSession(t, base)
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/command-notes", commandNoteInput{Command: "/loop list", Result: "No loops."}, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("note status %d", resp.StatusCode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/sessions/"+sess.ID+"/events", nil)
+	events, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range readSSEUntil(ctx, events) {
+		if event.Type == protocol.EventHistoryUpdated && strings.Contains(string(event.Payload), `"revision"`) {
+			return
+		}
+	}
+	t.Fatal("command note must publish history.updated with the new revision")
 }
