@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +16,8 @@ import (
 )
 
 const maxGoalBytes = 16 * 1024
+
+var errGoalRoundStale = errors.New("goal changed before the round was accepted")
 
 // goalRuntime is the in-memory goal loop of one session. The goal text is durable in
 // session metadata; status and round are not, so a reloaded goal comes back paused and
@@ -284,14 +287,7 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 			writeJSONError(w, http.StatusConflict, "no goal to resume")
 			return
 		}
-	} else if err := s.store.SetGoal(rt.id, goal); err != nil {
-		rt.mu.Unlock()
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
 	}
-	previous := rt.goal
-	rt.goal = goalRuntime{loaded: true, text: goal, status: "active", nonce: newGoalNonce(), roundRequestID: run.ClientRequestID, started: time.Now()}
-	state := s.goalStateLocked(rt)
 	rt.mu.Unlock()
 
 	// History keeps what the user typed; the model gets the goal itself (first round, as
@@ -301,20 +297,43 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 	} else {
 		run.Snapshot = goalloop.ContinuePrompt(goal)
 	}
-	// Publish before the run starts so this event precedes the decision of its first round.
-	_, _ = s.publish(rt, protocol.EventGoalUpdated, state, "")
-	accepted, status, err := s.startCanonicalRun(context.Background(), rt, run)
-	if err != nil {
-		rt.mu.Lock()
-		if in.Action == "set" {
-			_ = s.store.SetGoal(rt.id, previous.text)
+	// The goal changes inside run acceptance, under the same lock, so of concurrent
+	// requests only the accepted one ever touches it and a rejected one has nothing to
+	// restore. The event is published there too, ahead of the run's first decision.
+	var state protocol.GoalState
+	admit := func() (func(), int, error) {
+		if in.Action == "resume" && rt.goal.text != goal {
+			return nil, http.StatusConflict, errors.New("goal changed before resume was accepted")
 		}
-		rt.goal = previous
-		reverted := s.goalStateLocked(rt)
-		rt.mu.Unlock()
-		_, _ = s.publish(rt, protocol.EventGoalUpdated, reverted, "")
+		if in.Action == "set" {
+			if err := s.store.SetGoal(rt.id, goal); err != nil {
+				return nil, http.StatusInternalServerError, err
+			}
+		}
+		previous := rt.goal
+		rt.goal = goalRuntime{loaded: true, text: goal, status: "active", nonce: newGoalNonce(), roundRequestID: run.ClientRequestID, started: time.Now()}
+		state = s.goalStateLocked(rt)
+		if rt.runID == "" {
+			rt.runID = "recovery"
+		}
+		_ = rt.publishEventLocked(rt.runID, protocol.EventGoalUpdated, state)
+		return func() {
+			if in.Action == "set" {
+				_ = s.store.SetGoal(rt.id, previous.text)
+			}
+			rt.goal = previous
+		}, 0, nil
+	}
+	accepted, status, err := s.startCanonicalRunWith(context.Background(), rt, run, admit)
+	if err != nil {
 		writeJSONError(w, status, err.Error())
 		return
+	}
+	if status != http.StatusAccepted {
+		// A concurrent retry of this request won acceptance first; report the goal as is.
+		rt.mu.Lock()
+		state = s.goalStateLocked(rt)
+		rt.mu.Unlock()
 	}
 	state.Run = &accepted
 	writeJSON(w, http.StatusOK, state)
@@ -397,17 +416,38 @@ func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protoco
 			rt.mu.Unlock()
 			return
 		}
-		goal := rt.goal.text
-		rt.goal.runRevision, rt.goal.roundRequestID = rt.goal.revision, next.clientRequestID
+		goal, revision := rt.goal.text, rt.goal.revision
 		rt.mu.Unlock()
 		run := protocol.PromptRequest{
 			ConversationID: rt.id, ClientRequestID: next.clientRequestID, Prompt: next.prompt,
 			Options: previous.Options, HookPolicy: previous.HookPolicy, HookScopeID: previous.HookScopeID,
 			Snapshot: goalloop.ContinuePrompt(goal),
 		}
-		_, status, err := s.startCanonicalRun(context.Background(), rt, run)
+		// The round claims the goal only when it is accepted, and only if no pause, clear,
+		// new goal or update landed since the snapshot above was built.
+		stale := false
+		admit := func() (func(), int, error) {
+			if rt.goal.status != "active" || rt.goal.nonce != nonce || rt.goal.round != round || rt.goal.revision != revision {
+				stale = true
+				return nil, http.StatusConflict, errGoalRoundStale
+			}
+			prevRevision, prevRequest := rt.goal.runRevision, rt.goal.roundRequestID
+			rt.goal.runRevision, rt.goal.roundRequestID = revision, next.clientRequestID
+			return func() { rt.goal.runRevision, rt.goal.roundRequestID = prevRevision, prevRequest }, 0, nil
+		}
+		_, status, err := s.startCanonicalRunWith(context.Background(), rt, run, admit)
 		if err == nil && status == http.StatusAccepted {
 			return
+		}
+		if stale {
+			rt.mu.Lock()
+			moved := rt.goal.status != "active" || rt.goal.nonce != nonce || rt.goal.round != round
+			rt.mu.Unlock()
+			if moved {
+				return
+			}
+			// Only the text changed: rebuild the round prompt from the new text.
+			continue
 		}
 		// A replayed (200) request id means no new round started.
 		if err != nil && status == http.StatusConflict && err.Error() == errSessionBusy {

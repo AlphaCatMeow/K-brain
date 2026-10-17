@@ -38,6 +38,16 @@ func (s *Server) replayRunLocked(rt *runtimeSession, in protocol.PromptRequest) 
 // startCanonicalRun serializes acceptance and starts the shared session executor.
 // ctx owns the run lifetime; HTTP callers deliberately detach from the connection.
 func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest) (protocol.RunAccepted, int, error) {
+	return s.startCanonicalRunWith(ctx, rt, in, nil)
+}
+
+// runAdmit runs under rt.mu once a new run has passed every check and is about to be
+// accepted, so state tied to the run changes atomically with its acceptance. An error
+// rejects the run; the returned rollback, if any, undoes the change when persisting the
+// acceptance fails afterwards.
+type runAdmit func() (rollback func(), status int, err error)
+
+func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest, admit runAdmit) (protocol.RunAccepted, int, error) {
 	fail := func(status int, message string) (protocol.RunAccepted, int, error) {
 		return protocol.RunAccepted{}, status, errors.New(message)
 	}
@@ -136,12 +146,23 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	if in.TurnID != "" {
 		user.ID = in.TurnID
 	}
+	rollback := func() {}
+	if admit != nil {
+		undo, status, err := admit()
+		if err != nil {
+			return fail(status, err.Error())
+		}
+		if undo != nil {
+			rollback = undo
+		}
+	}
 	runID := newRunID()
 	runCtx, cancel := context.WithCancel(ctx)
 	rt.runID, rt.runDone, rt.cancel = runID, false, cancel
 	rt.checkpoint = newCheckpointCapture(s.eventDir, rt.id, runID, in.TurnID)
 	abort := func(err error) (protocol.RunAccepted, int, error) {
 		cancel()
+		rollback()
 		rt.cancel, rt.checkpoint, rt.runDone = nil, nil, true
 		rt.runtimeErr = fmt.Errorf("persist run acceptance: %w", err)
 		return protocol.RunAccepted{}, 500, rt.runtimeErr
