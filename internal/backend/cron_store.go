@@ -235,6 +235,9 @@ func applyCronOperation(ts []*CronTask, op CronOperation) ([]*CronTask, error) {
 		if t.SessionID != "" {
 			return nil, errors.New("cron sessionId is backend-owned")
 		}
+		if t.Loop != nil {
+			return nil, errors.New("loop schedule is backend-owned")
+		}
 		if strings.HasPrefix(t.ID, loopIDPrefix) {
 			return nil, errors.New("cron task ids starting with " + loopIDPrefix + " are reserved for conversation loops")
 		}
@@ -248,11 +251,21 @@ func applyCronOperation(ts []*CronTask, op CronOperation) ([]*CronTask, error) {
 		}
 		return append(ts, t), nil
 	case "update":
+		if _, supplied := op.Patch["loop"]; supplied {
+			return nil, errors.New("loop schedule is backend-owned")
+		}
 		if _, supplied := op.Patch["sessionId"]; supplied {
 			return nil, errors.New("cron sessionId is backend-owned")
 		}
 		for i, x := range ts {
 			if x.ID == op.ID {
+				if x.Loop != nil {
+					for _, field := range []string{"cron", "type", "workdir"} {
+						if _, supplied := op.Patch[field]; supplied {
+							return nil, errors.New("change a loop's schedule by cancelling and recreating it")
+						}
+					}
+				}
 				b, _ := json.Marshal(x)
 				m := map[string]any{}
 				_ = json.Unmarshal(b, &m)
@@ -349,6 +362,20 @@ func (c *cronStore) reserve(id string, counted bool) (*CronTask, CronRunRecord, 
 		}
 	}
 	old := cloneCronDisk(c.disk)
+	if t.Loop != nil {
+		now := time.Now().UnixMilli()
+		if now >= t.Loop.ExpiresAt {
+			return nil, CronRunRecord{}, errors.New("loop has expired")
+		}
+		if counted && now < t.Loop.NextFireAt {
+			return nil, CronRunRecord{}, errors.New("loop is not due")
+		}
+		if counted {
+			t.Loop.NextFireAt = now + t.Loop.IntervalSeconds*1000
+		}
+		t.Loop.Iterations++
+		c.disk.Revision++
+	}
 	r := CronRunRecord{ID: newRunID(), TaskID: id, State: "leased", StartedAt: time.Now().UnixMilli(), Counted: counted}
 	c.disk.Runs = append(c.disk.Runs, r)
 	if e := c.persistLocked(); e != nil {

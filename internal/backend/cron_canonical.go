@@ -20,6 +20,9 @@ func (s *Server) executeCronPromptCanonical(ctx context.Context, task *CronTask,
 	if selected.Model == "" || strings.TrimSpace(task.Prompt) == "" {
 		return false, "Prompt cron task model and prompt are required."
 	}
+	if task.Loop != nil {
+		return s.executeLoopPrompt(ctx, task, cwd, run)
+	}
 	if strings.TrimSpace(cwd) == "" {
 		cwd = s.defaultCWD
 	}

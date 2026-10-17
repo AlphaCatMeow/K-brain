@@ -24,16 +24,18 @@ import (
 // last user message the model saw, including request-only snapshots.
 type replyQueue struct {
 	scriptedClient
-	mu      sync.Mutex
-	replies []string
-	seen    []string
-	block   chan struct{}
+	mu       sync.Mutex
+	replies  []string
+	seen     []string
+	requests [][]ai.Message
+	block    chan struct{}
 }
 
 func (c *replyQueue) Clone() ai.Client { return c }
 
 func (c *replyQueue) Stream(ctx context.Context, request ai.Request, onText, _ func(string), _ func(string, string, string)) (ai.Message, ai.Usage, error) {
 	c.mu.Lock()
+	c.requests = append(c.requests, append([]ai.Message(nil), request.Messages...))
 	for i := len(request.Messages) - 1; i >= 0; i-- {
 		if request.Messages[i].Role == "user" {
 			c.seen = append(c.seen, request.Messages[i].Content)

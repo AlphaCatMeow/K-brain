@@ -242,8 +242,14 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 			s.mu.Unlock()
 			// Loops bound to the conversation would otherwise fail on every tick.
 			if s.cron != nil {
+				tasks := s.cron.store.snapshot().Tasks
 				if err := s.cron.store.forgetSession(id); err != nil {
 					log.Printf("cron: forget deleted session %s: %v", id, err)
+				}
+				for _, task := range tasks {
+					if isLoopTask(task) && task.SessionID == id {
+						s.cron.cancelRemovedLoop(task.ID)
+					}
 				}
 			}
 		}

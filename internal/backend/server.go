@@ -179,6 +179,7 @@ func New(opts Options) (*Server, error) {
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
 	}
 	cron.promptExecutor = server.executeCronPromptCanonical
+	cron.loopResults = server.deliverLoopResults
 	go cron.loop()
 	if opts.MemoryRuntimeFactory != nil && opts.MemoryOrganizerInterval != 0 {
 		interval := opts.MemoryOrganizerInterval

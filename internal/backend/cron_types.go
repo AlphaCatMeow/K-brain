@@ -3,7 +3,8 @@ package backend
 import "encoding/json"
 
 type CronTask struct {
-	ID string `json:"id"`
+	ID   string        `json:"id"`
+	Loop *loopSchedule `json:"loop,omitempty"`
 	// SessionID binds prompt tasks to one durable canonical conversation.
 	SessionID           string            `json:"sessionId,omitempty"`
 	Name                string            `json:"name"`
@@ -59,6 +60,7 @@ type CronApplyResponse struct {
 }
 
 type CronRunRecord struct {
+	Delivered         bool   `json:"delivered,omitempty"`
 	SessionID         string `json:"sessionId,omitempty"`
 	RunID             string `json:"runId,omitempty"`
 	Counted           bool   `json:"counted"`

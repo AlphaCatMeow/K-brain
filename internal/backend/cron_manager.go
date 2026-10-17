@@ -29,6 +29,7 @@ type cronManager struct {
 	store          *cronStore
 	defaultCWD     string
 	promptExecutor cronPromptExecutor
+	loopResults    func(*CronTask)
 	policy         func(string) *sandbox.Policy
 	mu             sync.Mutex
 	active         map[string]*cronActiveRun
@@ -81,6 +82,10 @@ func (m *cronManager) loop() {
 }
 func (m *cronManager) tick(now time.Time) {
 	for _, task := range m.store.snapshot().Tasks {
+		if task.Loop != nil {
+			m.tickLoop(task, now)
+			continue
+		}
 		if !task.Enabled || task.RemainingExecutions != nil && *task.RemainingExecutions == 0 {
 			continue
 		}

@@ -43,6 +43,9 @@ func validateCronTask(task *CronTask) error {
 	if err := validateCronExpression(task.Cron); err != nil {
 		return err
 	}
+	if task.Loop != nil && (!isLoopTask(task) || task.SessionID == "" || task.Type != "prompt" || task.Loop.IntervalSeconds < 60 || task.Loop.IntervalSeconds > int64(loopLifetime/time.Second) || task.Loop.NextFireAt <= 0 || task.Loop.ExpiresAt <= 0) {
+		return errors.New("invalid backend loop schedule")
+	}
 	if !cronKinds[task.Type] {
 		return fmt.Errorf("unsupported cron task type %q", task.Type)
 	}

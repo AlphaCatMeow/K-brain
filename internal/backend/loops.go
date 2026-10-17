@@ -22,11 +22,13 @@ const (
 // loopEntry is one interval prompt bound to a conversation. Interval is the compact
 // form the composer accepts ("10m", "2h", "1d"); Cron is what the scheduler stores.
 type loopEntry struct {
-	ID       string `json:"id"`
-	Interval string `json:"interval"`
-	Cron     string `json:"cron"`
-	Prompt   string `json:"prompt"`
-	Enabled  bool   `json:"enabled"`
+	ID         string `json:"id"`
+	Interval   string `json:"interval"`
+	Cron       string `json:"cron"`
+	Prompt     string `json:"prompt"`
+	Enabled    bool   `json:"enabled"`
+	NextFireAt int64  `json:"nextFireAt,omitempty"`
+	ExpiresAt  int64  `json:"expiresAt,omitempty"`
 }
 
 type loopCreateInput struct {
@@ -99,7 +101,13 @@ func newLoopID() string {
 }
 
 func loopView(task *CronTask) loopEntry {
-	return loopEntry{ID: task.ID, Interval: loopInterval(task.Cron), Cron: task.Cron, Prompt: task.Prompt, Enabled: task.Enabled}
+	entry := loopEntry{ID: task.ID, Interval: loopInterval(task.Cron), Cron: task.Cron, Prompt: task.Prompt, Enabled: task.Enabled}
+	if task.Loop != nil {
+		entry.Interval = compactLoopInterval(task.Loop.IntervalSeconds)
+		entry.NextFireAt = task.Loop.NextFireAt
+		entry.ExpiresAt = task.Loop.ExpiresAt
+	}
+	return entry
 }
 
 // addSessionLoop appends a prompt task already bound to the conversation. Clients cannot
@@ -115,8 +123,19 @@ func (c *cronStore) addSessionLoop(task *CronTask, sessionID string) error {
 			return errors.New("duplicate cron task id")
 		}
 	}
+	if task.Loop != nil {
+		active := 0
+		for _, existing := range c.disk.Tasks {
+			if isLoopTask(existing) && existing.Enabled && (existing.Loop == nil || existing.Loop.ExpiresAt > time.Now().UnixMilli()) {
+				active++
+			}
+		}
+		if active >= maxSessionLoops {
+			return errors.New("maximum of 50 active loops reached")
+		}
+	}
 	task.SessionID = strings.TrimSpace(sessionID)
-	next := append(cloneCronTasks(c.disk.Tasks), task)
+	next := append(cloneCronTasks(c.disk.Tasks), cloneCronTasks([]*CronTask{task})[0])
 	if err := validateCronTasks(next); err != nil {
 		return err
 	}
@@ -168,7 +187,7 @@ func (s *Server) listSessionLoops(w http.ResponseWriter, id string) {
 	snapshot := s.cron.store.snapshot()
 	loops := make([]loopEntry, 0)
 	for _, task := range snapshot.Tasks {
-		if task != nil && task.SessionID == id && task.Type == "prompt" {
+		if isLoopTask(task) && task.SessionID == id && task.Type == "prompt" {
 			loops = append(loops, loopView(task))
 		}
 	}
@@ -182,9 +201,20 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 	}
 	cron := strings.TrimSpace(in.Cron)
 	interval := strings.TrimSpace(in.Interval)
-	if cron == "" || strings.TrimSpace(in.Prompt) == "" {
-		writeJSONError(w, http.StatusBadRequest, "loop cron and prompt are required")
+	if (cron == "" && interval == "") || strings.TrimSpace(in.Prompt) == "" {
+		writeJSONError(w, http.StatusBadRequest, "loop interval (or legacy cron) and prompt are required")
 		return
+	}
+	var schedule *loopSchedule
+	if interval != "" {
+		seconds, _, err := parseLoopInterval(interval)
+		if err != nil {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		now := time.Now()
+		schedule = &loopSchedule{IntervalSeconds: seconds, NextFireAt: now.UnixMilli(), ExpiresAt: now.Add(loopLifetime).UnixMilli()}
+		cron = "0 * * * * *"
 	}
 	if err := validateLoopCron(cron); err != nil {
 		writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
@@ -209,7 +239,7 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 		name = string([]rune(name)[:60])
 	}
 	task := &CronTask{
-		ID: newLoopID(), Name: name, Description: "loop", Cron: cron, Enabled: true,
+		ID: newLoopID(), Name: name, Description: "loop", Cron: cron, Enabled: true, Loop: schedule,
 		TimeoutSeconds: 600, Type: "prompt", Prompt: strings.TrimSpace(in.Prompt),
 		SelectedModel: &CronModelRef{CustomProviderID: selected.Provider, Model: selected.Model},
 		Reasoning:     reasoning,
@@ -220,9 +250,6 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 	entry := loopView(task)
-	if interval != "" {
-		entry.Interval = interval
-	}
 	writeJSON(w, http.StatusCreated, entry)
 }
 
@@ -236,7 +263,7 @@ func (s *Server) cancelSessionLoop(w http.ResponseWriter, id, loopID string) {
 		snapshot := s.cron.store.snapshot()
 		found := false
 		for _, task := range snapshot.Tasks {
-			if task != nil && task.ID == loopID && task.SessionID == id && task.Type == "prompt" {
+			if isLoopTask(task) && task.ID == loopID && task.SessionID == id && task.Type == "prompt" {
 				found = true
 				break
 			}
@@ -254,11 +281,21 @@ func (s *Server) cancelSessionLoop(w http.ResponseWriter, id, loopID string) {
 			return
 		}
 		if out.Status == "ok" {
+			// Deletion prevents new leases; cancel only this loop's existing worker.
+			s.cron.cancelRemovedLoop(loopID)
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 			return
 		}
 	}
 	writeJSONError(w, http.StatusConflict, "scheduled tasks changed concurrently; retry the cancel")
+}
+
+func (m *cronManager) cancelRemovedLoop(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if active := m.active[id]; active != nil {
+		active.cancel()
+	}
 }
 
 // forgetSession runs after a conversation is deleted: its loops are removed, and other
