@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
@@ -80,13 +81,21 @@ func validateLoopCron(expression string) error {
 	return nil
 }
 
+// loopIDPrefix marks conversation loops; the cron apply route rejects it for other
+// tasks, so the prefix alone identifies a loop even after its fields are edited.
+const loopIDPrefix = "loop-"
+
+func isLoopTask(task *CronTask) bool {
+	return task != nil && strings.HasPrefix(task.ID, loopIDPrefix)
+}
+
 // newLoopID is short enough to type in "/loop cancel <id>".
 func newLoopID() string {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return newRunID()
+		return loopIDPrefix + strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
-	return "loop-" + hex.EncodeToString(b[:])
+	return loopIDPrefix + hex.EncodeToString(b[:])
 }
 
 func loopView(task *CronTask) loopEntry {
@@ -267,7 +276,7 @@ func (c *cronStore) forgetSession(sessionID string) error {
 			continue
 		}
 		changed = true
-		if task.Description == "loop" {
+		if isLoopTask(task) {
 			removed[task.ID] = true
 			continue
 		}

@@ -189,3 +189,42 @@ func TestSessionLoopCancelRetriesCronConflicts(t *testing.T) {
 		t.Fatalf("loop must still exist after a failed cancel: %+v", got)
 	}
 }
+
+func TestForgetSessionIdentifiesLoopsByID(t *testing.T) {
+	server, _, base := newGoalTestServer(t, &replyQueue{})
+	sess := createTestSession(t, base)
+	store := server.cron.store
+	// A user task that happens to be described "loop" is not a conversation loop.
+	created, err := store.apply(CronApplyInput{BaseRevision: store.snapshot().Revision, Ops: []CronOperation{{Op: "create", Item: map[string]any{
+		"id": "user-task", "name": "mine", "description": "loop", "cron": "0 0 * * * *", "type": "prompt", "prompt": "hi",
+		"timeoutSeconds": 60, "selectedModel": map[string]any{"customProviderId": "fixture", "model": "fixture-model"},
+	}}}})
+	if err != nil || created.Status != "ok" {
+		t.Fatalf("create user task: %v %+v", err, created)
+	}
+	if err := store.bindSession(store.task("user-task"), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	var loop loopEntry
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/loops", loopCreateInput{Cron: "0 */10 * * * *", Prompt: "ping"}, &loop)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create loop status %d", resp.StatusCode)
+	}
+	// An edited loop is still a loop.
+	edited, err := store.apply(CronApplyInput{BaseRevision: store.snapshot().Revision, Ops: []CronOperation{{Op: "update", ID: loop.ID, Patch: map[string]any{"description": "renamed"}}}})
+	if err != nil || edited.Status != "ok" {
+		t.Fatalf("edit loop: %v %+v", err, edited)
+	}
+	if err := store.forgetSession(sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	tasks := store.snapshot().Tasks
+	if len(tasks) != 1 || tasks[0].ID != "user-task" || tasks[0].SessionID != "" {
+		t.Fatalf("the user task must be unbound and kept, the loop removed: %+v", tasks)
+	}
+	if _, err := store.apply(CronApplyInput{BaseRevision: store.snapshot().Revision, Ops: []CronOperation{{Op: "create", Item: map[string]any{
+		"id": "loop-abcdef", "name": "spoof", "cron": "0 0 * * * *", "type": "bash", "script": "true",
+	}}}}); err == nil {
+		t.Fatal("loop- ids must be reserved for conversation loops")
+	}
+}
