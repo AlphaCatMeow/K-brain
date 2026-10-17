@@ -15,7 +15,7 @@ func TestContinuePromptCarriesGoalAndToken(t *testing.T) {
 }
 
 func TestMet(t *testing.T) {
-	for _, s := range []string{"GOAL_MET — everything verified", "\n  GOAL_MET done", "Done. GOAL_MET"} {
+	for _, s := range []string{"GOAL_MET — everything verified", "\n  GOAL_MET done", "**GOAL_MET** — shipped", "## GOAL_MET", "> `GOAL_MET`: verified", "GOAL_MET"} {
 		if !Met(s) {
 			t.Fatalf("%q must count as met", s)
 		}
@@ -23,6 +23,15 @@ func TestMet(t *testing.T) {
 	for _, s := range []string{
 		"I am making progress toward GOAL_MET soon",
 		"GOAL_METRIC improved",
+		"Done. GOAL_MET",
+		"Verified: all green.\n\nGOAL_MET — shipped",
+		"Not GOAL_MET yet — tests still fail.",
+		"I cannot say GOAL_MET: the build is red.",
+		"This is not GOAL_MET.",
+		"未达成 GOAL_MET，继续工作",
+		"GOAL_MET-pending",
+		"GOAL_MET_DONE",
+		"goal_met done",
 		"almost done",
 		"",
 		strings.Repeat("x", 250) + " GOAL_MET",

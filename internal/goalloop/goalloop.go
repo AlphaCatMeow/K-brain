@@ -37,29 +37,18 @@ If the goal is FULLY accomplished and you have VERIFIED it with your tools (buil
 Otherwise do not use the token %s at all — keep working toward the goal right now with your tools. If any part is incomplete, unverified, or you are unsure, that means keep working. Do not stop to ask questions; make reasonable assumptions and proceed.`, goal, MetToken, MetToken, MetToken)
 }
 
-// Met reports whether a final reply declares the goal accomplished: the token must
-// appear near the start as a whole word and not be hedged ("working toward GOAL_MET").
+// Met reports whether a final reply declares the goal accomplished. As the continuation
+// prompt demands, the reply must lead with the token: only whitespace and Markdown
+// emphasis, heading, quote or code markers may precede it, and it must end at a word
+// boundary. A mention later in the reply ("not GOAL_MET yet") never counts.
 func Met(final string) bool {
-	const window = 200
-	head := strings.TrimSpace(final)
-	if len(head) > window {
-		head = head[:window]
-	}
-	i := strings.Index(head, MetToken)
-	if i < 0 {
+	head := strings.TrimLeft(final, " \t\r\n*_#>`~")
+	if !strings.HasPrefix(head, MetToken) {
 		return false
 	}
-
-	if i+len(MetToken) < len(head) {
-		c := head[i+len(MetToken)]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
-			return false
-		}
-	}
-
-	prefix := strings.ToLower(head[:i])
-	for _, hedge := range []string{"toward", "until", "before", "to reach", "approaching"} {
-		if strings.HasSuffix(strings.TrimSpace(prefix), hedge) {
+	if rest := head[len(MetToken):]; rest != "" {
+		c := rest[0]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
 			return false
 		}
 	}
