@@ -10,6 +10,31 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
 
+const errSessionBusy = "session already has a running turn"
+
+// replayRunLocked answers a request whose client_request_id was already accepted: the
+// original run when the request matches it, an error when it does not. found is false
+// for a new request id.
+func (s *Server) replayRunLocked(rt *runtimeSession, in protocol.PromptRequest) (protocol.RunAccepted, bool, error) {
+	old, ok := rt.runs[in.ClientRequestID]
+	if !ok {
+		return protocol.RunAccepted{}, false, nil
+	}
+	matches := old.Kind != "compact" && old.RequestHash != "" && old.RequestHash == hashPrompt(in)
+	if !matches && old.Kind != "compact" && rt.agent != nil {
+		options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
+		if err == nil {
+			normalized := in
+			normalized.Options = &options
+			matches = old.PromptHash == hashPrompt(normalized)
+		}
+	}
+	if !matches {
+		return protocol.RunAccepted{}, true, errors.New("client_request_id was already used with a different prompt or options")
+	}
+	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: old.RunID, AcceptedSeq: old.AcceptedSeq}, true, nil
+}
+
 // startCanonicalRun serializes acceptance and starts the shared session executor.
 // ctx owns the run lifetime; HTTP callers deliberately detach from the connection.
 func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest) (protocol.RunAccepted, int, error) {
@@ -37,13 +62,6 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Content) == 0 {
 		return fail(400, "prompt or content is required")
 	}
-	if in.PromptCommand {
-		expanded, err := s.expandPromptCommand(in.Prompt, rt.workingDir())
-		if err != nil {
-			return fail(422, err.Error())
-		}
-		in.Snapshot = expanded
-	}
 	user := protocol.Message{Role: protocol.RoleUser}
 	if in.Prompt != "" {
 		user.Content = append(user.Content, protocol.ContentBlock{Type: protocol.ContentText, Text: in.Prompt})
@@ -69,23 +87,23 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 		return fail(500, "session runtime is quarantined: "+rt.runtimeErr.Error())
 	}
 	requestHash := hashPrompt(in)
-	if old, ok := rt.runs[in.ClientRequestID]; ok {
-		matches := old.Kind != "compact" && old.RequestHash != "" && old.RequestHash == requestHash
-		if !matches && old.Kind != "compact" {
-			options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
-			if err == nil {
-				normalized := in
-				normalized.Options = &options
-				matches = old.PromptHash == hashPrompt(normalized)
-			}
+	if accepted, found, err := s.replayRunLocked(rt, in); found {
+		if err != nil {
+			return fail(409, err.Error())
 		}
-		if !matches {
-			return fail(409, "client_request_id was already used with a different prompt or options")
-		}
-		return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: old.RunID, AcceptedSeq: old.AcceptedSeq}, http.StatusOK, nil
+		return accepted, http.StatusOK, nil
 	}
 	if rt.activeLocked() {
-		return fail(409, "session already has a running turn")
+		return fail(409, errSessionBusy)
+	}
+	// Expand after the idempotency check so a retried request replays even if its
+	// template changed or disappeared in between.
+	if in.PromptCommand {
+		expanded, err := s.expandPromptCommand(in.Prompt, rt.workingDir())
+		if err != nil {
+			return fail(422, err.Error())
+		}
+		in.Snapshot = expanded
 	}
 	if in.Model != nil && (in.Model.Model != "" || in.Model.Provider != "") {
 		if err := s.switchModelLocked(rt, *in.Model); err != nil {

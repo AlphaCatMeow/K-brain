@@ -86,13 +86,21 @@ func newGoalServer(t *testing.T, client ai.Client) (*session.Store, string) {
 
 func newGoalServerWithStore(t *testing.T, store *session.Store, client ai.Client) string {
 	t.Helper()
+	_, url := newGoalBackend(t, store, client, t.TempDir(), t.TempDir())
+	return url
+}
+
+// newGoalBackend also returns the server; backends sharing eventDir and store model a
+// restart of the same installation.
+func newGoalBackend(t *testing.T, store *session.Store, client ai.Client, eventDir, defaultCWD string) (*Server, string) {
+	t.Helper()
 	factory := func(_ context.Context, cwd string, selected protocol.ModelRef) (*agent.Agent, error) {
 		ag := agent.New(client, selected.Model, 1024, "system")
 		ag.ModelName, ag.Provider, ag.WorkingDir = selected.Model, selected.Provider, cwd
 		return ag, nil
 	}
 	backendServer, err := New(Options{
-		Store: store, Factory: factory, EventDir: t.TempDir(), DefaultCWD: t.TempDir(),
+		Store: store, Factory: factory, EventDir: eventDir, DefaultCWD: defaultCWD,
 		Models: []protocol.ModelRef{{Provider: "fixture", Model: "fixture-model"}},
 	})
 	if err != nil {
@@ -103,7 +111,30 @@ func newGoalServerWithStore(t *testing.T, store *session.Store, client ai.Client
 		httpServer.Close()
 		_ = backendServer.Close()
 	})
-	return httpServer.URL
+	return backendServer, httpServer.URL
+}
+
+func newGoalTestServer(t *testing.T, client ai.Client) (*Server, *session.Store, string) {
+	t.Helper()
+	isolateUserDir(t)
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	server, base := newGoalBackend(t, store, client, t.TempDir(), t.TempDir())
+	return server, store, base
+}
+
+func waitTurns(t *testing.T, client *replyQueue, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(client.userTurns()) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("model saw %d turns, want %d", len(client.userTurns()), n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // readSSEUntil collects events from a live stream until ctx ends it.
@@ -428,5 +459,152 @@ func TestGoalClearStopsRunningRound(t *testing.T) {
 			t.Fatalf("clear must stop the running round; last status %d", resp.StatusCode)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestGoalSetRetryReplaysWithoutTouchingGoal(t *testing.T) {
+	client := &replyQueue{block: make(chan struct{}), replies: []string{"GOAL_MET done"}}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	req := protocol.GoalRequest{Action: "set", Goal: "ship", Run: &protocol.PromptRequest{ClientRequestID: "dup-1"}}
+	_, first := postGoal(t, base, sess.ID, req)
+	// A retry while the round runs replays it instead of conflicting.
+	status, running := postGoal(t, base, sess.ID, req)
+	if status != http.StatusOK || running.Run == nil || running.Run.RunID != first.Run.RunID || running.Status != "active" {
+		t.Fatalf("retry while running: %d %+v", status, running)
+	}
+	close(client.block)
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+	before := len(goalEvents(t, base, sess.ID))
+
+	status, retry := postGoal(t, base, sess.ID, req)
+	if status != http.StatusOK || retry.Run == nil || retry.Run.RunID != first.Run.RunID || retry.Status != "met" || retry.Goal != "" {
+		t.Fatalf("retry after met: %d %+v", status, retry)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := getGoal(t, base, sess.ID); got.Status != "met" || got.Goal != "" {
+		t.Fatalf("retry must not resurrect the goal: %+v", got)
+	}
+	if meta, _, _ := store.Load(sess.ID); meta.Goal != "" {
+		t.Fatalf("retry must not rewrite the durable goal: %q", meta.Goal)
+	}
+	if n := len(client.userTurns()); n != 1 {
+		t.Fatalf("retry must not start a run, model saw %d turns", n)
+	}
+	if after := len(goalEvents(t, base, sess.ID)); after != before {
+		t.Fatalf("retry must not publish goal events: %d -> %d", before, after)
+	}
+	if status, _ := postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "other", Run: &protocol.PromptRequest{ClientRequestID: "dup-1"}}); status != http.StatusConflict {
+		t.Fatalf("reused id with another goal: %d", status)
+	}
+}
+
+func TestGoalUpdateDuringRoundDoesNotCompleteNewGoal(t *testing.T) {
+	client := &replyQueue{block: make(chan struct{}), replies: []string{"GOAL_MET A is done", "GOAL_MET B is done"}}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "goal A", Run: &protocol.PromptRequest{ClientRequestID: "u-1"}})
+	waitTurns(t, client, 1)
+	if status, st := postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "update", Goal: "goal B"}); status != http.StatusOK || st.Goal != "goal B" {
+		t.Fatalf("update: %d %+v", status, st)
+	}
+	client.mu.Lock()
+	close(client.block)
+	client.block = nil
+	client.mu.Unlock()
+	final := waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+	turns := client.userTurns()
+	if len(turns) != 2 || !strings.Contains(turns[1], "goal B") || !strings.Contains(turns[1], "[goal check]") {
+		t.Fatalf("the stale reply must lead to a check of the new goal: %q", turns)
+	}
+	if final.Round != 1 {
+		t.Fatalf("met on the round for goal B: %+v", final)
+	}
+	if meta, _, _ := store.Load(sess.ID); meta.Goal != "" {
+		t.Fatalf("durable goal after met: %q", meta.Goal)
+	}
+}
+
+func TestGoalRoundIDsDoNotCollideAfterReload(t *testing.T) {
+	isolateUserDir(t)
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	eventDir, cwd := t.TempDir(), t.TempDir()
+	client := &replyQueue{}
+	_, base := newGoalBackend(t, store, client, eventDir, cwd)
+	sess := createTestSession(t, base)
+	if err := config.SetProjectGoalMaxRounds(sess.CWD, 2); err != nil {
+		t.Fatal(err)
+	}
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "never done", Run: &protocol.PromptRequest{ClientRequestID: "r-1"}})
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" })
+
+	// A new backend over the same store and event log keeps the old run records.
+	_, restarted := newGoalBackend(t, store, client, eventDir, cwd)
+	if status, _ := postGoal(t, restarted, sess.ID, protocol.GoalRequest{Action: "resume", Run: &protocol.PromptRequest{ClientRequestID: "r-2"}}); status != http.StatusOK {
+		t.Fatalf("resume status %d", status)
+	}
+	paused := waitGoal(t, restarted, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" })
+	if paused.Reason != "max_rounds" || paused.Round != 2 {
+		t.Fatalf("resumed goal must run its rounds again: %+v", paused)
+	}
+	if n := len(client.userTurns()); n != 6 {
+		t.Fatalf("goal + 2 checks per start expected, got %d turns", n)
+	}
+}
+
+func TestGoalPauseLeavesPlainRunsAlone(t *testing.T) {
+	client := &replyQueue{block: make(chan struct{})}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	if err := store.SetGoal(sess.ID, "old paused goal"); err != nil {
+		t.Fatal(err)
+	}
+	var accepted protocol.RunAccepted
+	postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "plain-1", Prompt: "hello"}, &accepted)
+	waitTurns(t, client, 1)
+	if status, _ := postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "pause"}); status != http.StatusConflict {
+		t.Fatalf("pause without a running goal: %d", status)
+	}
+	if got := getGoal(t, base, sess.ID); got.Status != "paused" || got.Reason != "restored" {
+		t.Fatalf("goal must stay as it was: %+v", got)
+	}
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/runs/"+accepted.RunID+"/cancel", map[string]any{}, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the plain run must still be active after pause, cancel status %d", resp.StatusCode)
+	}
+}
+
+func TestGoalRoundWaitsForBusySessionThenPauses(t *testing.T) {
+	retries, delay := goalBusyRetries, goalBusyDelay
+	goalBusyRetries, goalBusyDelay = 3, 20*time.Millisecond
+	t.Cleanup(func() { goalBusyRetries, goalBusyDelay = retries, delay })
+	client := &replyQueue{block: make(chan struct{})}
+	server, _, base := newGoalTestServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "long task", Run: &protocol.PromptRequest{ClientRequestID: "b-1"}})
+	waitTurns(t, client, 1)
+	// A background subagent keeps the session busy after the round ends.
+	rt, err := server.loadRuntimeByID(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.mu.Lock()
+	ag := rt.agent
+	rt.mu.Unlock()
+	task := ag.RegisterBackground("busy", "work", agent.SubModel{})
+	server.releaseRuntime(rt)
+	t.Cleanup(func() { ag.Tasks().Cancel(task.ID) })
+	close(client.block)
+	paused := waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" })
+	if paused.Reason != "busy" {
+		t.Fatalf("busy session must pause with a fixed reason: %+v", paused)
+	}
+	if n := len(client.userTurns()); n != 1 {
+		t.Fatalf("no round may start while busy, got %d turns", n)
 	}
 }

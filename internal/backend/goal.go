@@ -2,6 +2,8 @@ package backend
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,8 +24,16 @@ type goalRuntime struct {
 	text   string
 	status string
 	round  int
-	epoch  int
 	reason string
+	// nonce is drawn on every set and resume and names its continuation rounds, so their
+	// request ids never collide with run records persisted before a reload.
+	nonce string
+	// revision counts goal text updates; runRevision is the revision the current goal
+	// round was started for, so a reply to an older text cannot complete a newer one.
+	revision, runRevision int
+	// roundRequestID is the client request id of the latest goal round; only the run it
+	// accepted belongs to the goal, so pause and clear never stop an unrelated run.
+	roundRequestID string
 	// started is when the goal was set or last resumed.
 	started time.Time
 	// next is the round decided for the run that just completed; the run worker starts
@@ -35,6 +45,30 @@ type goalContinuation struct {
 	afterRunID      string
 	clientRequestID string
 	prompt          string
+}
+
+// goalBusyRetries and goalBusyDelay bound how long the next goal round waits for a
+// session kept busy by background work, such as a background subagent.
+var (
+	goalBusyRetries = 20
+	goalBusyDelay   = 250 * time.Millisecond
+)
+
+func newGoalNonce() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// goalOwnsRunLocked reports whether the session's running turn is a goal round.
+func (rt *runtimeSession) goalOwnsRunLocked() bool {
+	if rt.cancel == nil || rt.runDone || rt.goal.roundRequestID == "" {
+		return false
+	}
+	record, ok := rt.runs[rt.goal.roundRequestID]
+	return ok && record.RunID == rt.runID
 }
 
 func (s *Server) goalMaxRoundsLocked(rt *runtimeSession) int {
@@ -126,15 +160,16 @@ func (s *Server) handleGoal(w http.ResponseWriter, r *http.Request, id string) {
 func (s *Server) pauseGoal(w http.ResponseWriter, rt *runtimeSession) {
 	rt.mu.Lock()
 	s.ensureGoalLoadedLocked(rt)
-	if rt.goal.text == "" {
+	if rt.goal.text == "" || rt.goal.status != "active" {
 		rt.mu.Unlock()
-		writeJSONError(w, http.StatusConflict, "no goal to pause")
+		writeJSONError(w, http.StatusConflict, "no running goal to pause")
 		return
 	}
-	// Mark paused first so the cancelled round's evaluation does not continue it.
+	// Mark paused first so the cancelled round's evaluation does not continue it. Only a
+	// running goal round is stopped; any other run of the session is left alone.
 	rt.goal.status, rt.goal.reason, rt.goal.next = "paused", "user", nil
 	var cancel context.CancelFunc
-	if rt.cancel != nil && !rt.runDone {
+	if rt.goalOwnsRunLocked() {
 		cancel = rt.cancel
 	}
 	state := s.goalStateLocked(rt)
@@ -167,6 +202,7 @@ func (s *Server) updateGoal(w http.ResponseWriter, rt *runtimeSession, raw strin
 		return
 	}
 	rt.goal.text = goal
+	rt.goal.revision++
 	state := s.goalStateLocked(rt)
 	rt.mu.Unlock()
 	_, _ = s.publish(rt, protocol.EventGoalUpdated, state, "")
@@ -183,10 +219,10 @@ func (s *Server) clearGoal(w http.ResponseWriter, rt *runtimeSession) {
 	}
 	// A goal round still running is stopped too; a plain user run is left alone.
 	var cancel context.CancelFunc
-	if (rt.goal.status == "active" || rt.goal.next != nil) && rt.cancel != nil && !rt.runDone {
+	if rt.goal.status == "active" && rt.goalOwnsRunLocked() {
 		cancel = rt.cancel
 	}
-	rt.goal = goalRuntime{loaded: true, status: "cleared", epoch: rt.goal.epoch + 1}
+	rt.goal = goalRuntime{loaded: true, status: "cleared"}
 	state := s.goalStateLocked(rt)
 	rt.goal.status = "none"
 	rt.mu.Unlock()
@@ -210,11 +246,30 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 		writeJSONError(w, http.StatusBadRequest, "goal is too long")
 		return
 	}
+	run := *in.Run
+	run.ConversationID, run.PromptCommand, run.Content = rt.id, false, nil
+	run.Prompt = "/goal resume"
+	if in.Action == "set" {
+		run.Prompt = "/goal " + goal
+	}
 	rt.mu.Lock()
 	s.ensureGoalLoadedLocked(rt)
+	// A retried request replays its original run and leaves the goal untouched, even
+	// after that run finished or while it is still running.
+	if accepted, found, err := s.replayRunLocked(rt, run); found {
+		state := s.goalStateLocked(rt)
+		rt.mu.Unlock()
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		state.Run = &accepted
+		writeJSON(w, http.StatusOK, state)
+		return
+	}
 	if rt.activeLocked() {
 		rt.mu.Unlock()
-		writeJSONError(w, http.StatusConflict, "session already has a running turn")
+		writeJSONError(w, http.StatusConflict, errSessionBusy)
 		return
 	}
 	if in.Action == "resume" {
@@ -230,19 +285,16 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 		return
 	}
 	previous := rt.goal
-	rt.goal = goalRuntime{loaded: true, text: goal, status: "active", epoch: previous.epoch + 1, started: time.Now()}
+	rt.goal = goalRuntime{loaded: true, text: goal, status: "active", nonce: newGoalNonce(), roundRequestID: run.ClientRequestID, started: time.Now()}
 	state := s.goalStateLocked(rt)
 	rt.mu.Unlock()
 
-	run := *in.Run
-	run.ConversationID, run.PromptCommand, run.Content = rt.id, false, nil
 	// History keeps what the user typed; the model gets the goal itself (first round, as
 	// in the TUI) or the goal check (resume) as request-only text.
 	if in.Action == "set" {
-		run.Prompt = "/goal " + goal
 		run.Snapshot = "The user set this session goal with /goal. Work toward it now:\n" + goal
 	} else {
-		run.Prompt, run.Snapshot = "/goal resume", goalloop.ContinuePrompt(goal)
+		run.Snapshot = goalloop.ContinuePrompt(goal)
 	}
 	// Publish before the run starts so this event precedes the decision of its first round.
 	_, _ = s.publish(rt, protocol.EventGoalUpdated, state, "")
@@ -253,7 +305,6 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 			_ = s.store.SetGoal(rt.id, previous.text)
 		}
 		rt.goal = previous
-		rt.goal.epoch++
 		reverted := s.goalStateLocked(rt)
 		rt.mu.Unlock()
 		_, _ = s.publish(rt, protocol.EventGoalUpdated, reverted, "")
@@ -273,11 +324,14 @@ func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 		rt.mu.Unlock()
 		return
 	}
+	// A reply written for an older goal text cannot complete the updated goal; the
+	// next round checks the new text instead.
+	current := rt.goal.runRevision == rt.goal.revision
 	switch {
 	case outcome != "completed":
 		// A stopped or failed round pauses the goal; only an explicit resume restarts it.
 		rt.goal.status, rt.goal.reason = "paused", outcome
-	case goalMetBy(rt):
+	case current && goalMetBy(rt):
 		_ = s.store.SetGoal(rt.id, "")
 		rt.goal.status, rt.goal.reason = "met", ""
 	case rt.goal.round >= s.goalMaxRoundsLocked(rt):
@@ -286,7 +340,7 @@ func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 		rt.goal.round++
 		rt.goal.next = &goalContinuation{
 			afterRunID:      runID,
-			clientRequestID: fmt.Sprintf("goal-%s-%d-%d", rt.id, rt.goal.epoch, rt.goal.round),
+			clientRequestID: fmt.Sprintf("goal-%s-%s-%d", rt.id, rt.goal.nonce, rt.goal.round),
 			prompt:          goalRoundPrompt(rt.goal.text, rt.goal.round, s.goalMaxRoundsLocked(rt)),
 		}
 	}
@@ -314,8 +368,9 @@ func goalMetBy(rt *runtimeSession) bool {
 }
 
 // continueGoal starts the round decided by evaluateGoal once the finished run has
-// released the session. A clear or a new goal in between drops it; a failed start
-// pauses the goal.
+// released the session. A clear, pause or new goal in between drops it. A session kept
+// busy by background work is retried briefly; a round that still cannot start pauses
+// the goal.
 func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protocol.PromptRequest) {
 	rt.mu.Lock()
 	next := rt.goal.next
@@ -324,25 +379,45 @@ func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protoco
 		return
 	}
 	rt.goal.next = nil
-	if rt.goal.status != "active" {
+	nonce, round := rt.goal.nonce, rt.goal.round
+	rt.mu.Unlock()
+
+	reason := "start_failed"
+	for attempt := 0; ; attempt++ {
+		rt.mu.Lock()
+		if rt.goal.status != "active" || rt.goal.nonce != nonce || rt.goal.round != round {
+			rt.mu.Unlock()
+			return
+		}
+		goal := rt.goal.text
+		rt.goal.runRevision, rt.goal.roundRequestID = rt.goal.revision, next.clientRequestID
+		rt.mu.Unlock()
+		run := protocol.PromptRequest{
+			ConversationID: rt.id, ClientRequestID: next.clientRequestID, Prompt: next.prompt,
+			Options: previous.Options, HookPolicy: previous.HookPolicy, HookScopeID: previous.HookScopeID,
+			Snapshot: goalloop.ContinuePrompt(goal),
+		}
+		_, status, err := s.startCanonicalRun(context.Background(), rt, run)
+		if err == nil && status == http.StatusAccepted {
+			return
+		}
+		// A replayed (200) request id means no new round started.
+		if err != nil && status == http.StatusConflict && err.Error() == errSessionBusy {
+			reason = "busy"
+			if attempt < goalBusyRetries {
+				time.Sleep(goalBusyDelay)
+				continue
+			}
+		}
+		break
+	}
+	rt.mu.Lock()
+	if rt.goal.status != "active" || rt.goal.nonce != nonce || rt.goal.round != round {
 		rt.mu.Unlock()
 		return
 	}
-	goal := rt.goal.text
+	rt.goal.status, rt.goal.reason = "paused", reason
+	state := s.goalStateLocked(rt)
 	rt.mu.Unlock()
-
-	run := protocol.PromptRequest{
-		ConversationID: rt.id, ClientRequestID: next.clientRequestID, Prompt: next.prompt,
-		Options: previous.Options, HookPolicy: previous.HookPolicy, HookScopeID: previous.HookScopeID,
-		Snapshot: goalloop.ContinuePrompt(goal),
-	}
-	if _, _, err := s.startCanonicalRun(context.Background(), rt, run); err != nil {
-		rt.mu.Lock()
-		if rt.goal.status == "active" {
-			rt.goal.status, rt.goal.reason = "paused", err.Error()
-		}
-		state := s.goalStateLocked(rt)
-		rt.mu.Unlock()
-		_, _ = s.publish(rt, protocol.EventGoalUpdated, state, "")
-	}
+	_, _ = s.publish(rt, protocol.EventGoalUpdated, state, "")
 }
