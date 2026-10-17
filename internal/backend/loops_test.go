@@ -106,3 +106,86 @@ func TestLoopIntervalReadsBackGeneratedSchedules(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionLoopRejectsSubMinuteSchedules(t *testing.T) {
+	_, base := newGoalServer(t, &replyQueue{})
+	sess := createTestSession(t, base)
+	for _, cron := range []string{"* * * * * *", "*/5 * * * * *", "0,30 * * * * *", "0-59 * * * * *"} {
+		resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/loops", loopCreateInput{Cron: cron, Prompt: "ping"}, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("%q: status %d", cron, resp.StatusCode)
+		}
+	}
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/loops", loopCreateInput{Cron: "30 * * * * *", Prompt: "ping"}, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("once a minute: status %d", resp.StatusCode)
+	}
+}
+
+func TestDeletingSessionRemovesItsLoops(t *testing.T) {
+	server, _, base := newGoalTestServer(t, &replyQueue{})
+	doomed := createTestSession(t, base)
+	kept := createTestSession(t, base)
+	for _, id := range []string{doomed.ID, kept.ID} {
+		resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+id+"/loops", loopCreateInput{Cron: "0 */10 * * * *", Prompt: "ping"}, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create status %d", resp.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodDelete, base+"/v1/sessions/"+doomed.ID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status %d", resp.StatusCode)
+	}
+	tasks := server.cron.store.snapshot().Tasks
+	if len(tasks) != 1 || tasks[0].SessionID != kept.ID {
+		t.Fatalf("only the surviving conversation's loop may remain: %+v", tasks)
+	}
+}
+
+func TestSessionLoopCancelRetriesCronConflicts(t *testing.T) {
+	_, base := newGoalServer(t, &replyQueue{})
+	sess := createTestSession(t, base)
+	other := createTestSession(t, base)
+	create := func(id string) loopEntry {
+		var out loopEntry
+		resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+id+"/loops", loopCreateInput{Cron: "0 */10 * * * *", Prompt: "ping"}, &out)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create status %d", resp.StatusCode)
+		}
+		return out
+	}
+	cancel := func(id string) int {
+		resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/loops/"+id+"/cancel", map[string]any{}, nil)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// Another writer changes the store between snapshot and apply.
+	bumps := 0
+	t.Cleanup(func() { loopCancelBeforeApply = nil })
+	loopCancelBeforeApply = func() {
+		if bumps < 1 {
+			bumps++
+			create(other.ID)
+		}
+	}
+	first := create(sess.ID)
+	if status := cancel(first.ID); status != http.StatusOK || len(listLoops(t, base, sess.ID)) != 0 {
+		t.Fatalf("one conflict must be retried: status %d", status)
+	}
+	loopCancelBeforeApply = func() { create(other.ID) }
+	second := create(sess.ID)
+	if status := cancel(second.ID); status != http.StatusConflict {
+		t.Fatalf("persistent conflicts must not report success: status %d", status)
+	}
+	if got := listLoops(t, base, sess.ID); len(got) != 1 || got[0].ID != second.ID {
+		t.Fatalf("loop must still exist after a failed cancel: %+v", got)
+	}
+}

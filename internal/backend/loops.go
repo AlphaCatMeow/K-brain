@@ -68,6 +68,18 @@ func loopInterval(expression string) string {
 	return expression
 }
 
+// validateLoopCron keeps conversation loops at most once a minute: the seconds field
+// must be one fixed second, so a loop cannot fire every second.
+func validateLoopCron(expression string) error {
+	if err := validateCronExpression(expression); err != nil {
+		return err
+	}
+	if n, err := strconv.Atoi(strings.Fields(expression)[0]); err != nil || n < 0 || n > 59 {
+		return errors.New("loop interval must be at least one minute: the seconds field must be a single fixed second")
+	}
+	return nil
+}
+
 // newLoopID is short enough to type in "/loop cancel <id>".
 func newLoopID() string {
 	var b [3]byte
@@ -165,6 +177,10 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 		writeJSONError(w, http.StatusBadRequest, "loop cron and prompt are required")
 		return
 	}
+	if err := validateLoopCron(cron); err != nil {
+		writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	// A loop runs with the conversation's current model and workspace.
 	rt.mu.Lock()
 	selected, workdir := protocol.ModelRef{}, strings.TrimSpace(in.Workdir)
@@ -201,22 +217,73 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 	writeJSON(w, http.StatusCreated, entry)
 }
 
+// loopCancelBeforeApply lets tests change the cron store between snapshot and apply.
+var loopCancelBeforeApply func()
+
 func (s *Server) cancelSessionLoop(w http.ResponseWriter, id, loopID string) {
-	snapshot := s.cron.store.snapshot()
-	found := false
-	for _, task := range snapshot.Tasks {
-		if task != nil && task.ID == loopID && task.SessionID == id && task.Type == "prompt" {
-			found = true
-			break
+	// apply rejects a stale revision with a "conflict" status instead of an error, so a
+	// concurrent cron change is retried against a fresh snapshot.
+	for attempt := 0; attempt < 3; attempt++ {
+		snapshot := s.cron.store.snapshot()
+		found := false
+		for _, task := range snapshot.Tasks {
+			if task != nil && task.ID == loopID && task.SessionID == id && task.Type == "prompt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeJSONError(w, http.StatusNotFound, "loop not found")
+			return
+		}
+		if loopCancelBeforeApply != nil {
+			loopCancelBeforeApply()
+		}
+		out, err := s.cron.store.apply(CronApplyInput{BaseRevision: snapshot.Revision, Ops: []CronOperation{{Op: "delete", ID: loopID}}})
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if out.Status == "ok" {
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+			return
 		}
 	}
-	if !found {
-		writeJSONError(w, http.StatusNotFound, "loop not found")
-		return
+	writeJSONError(w, http.StatusConflict, "scheduled tasks changed concurrently; retry the cancel")
+}
+
+// forgetSession runs after a conversation is deleted: its loops are removed, and other
+// prompt tasks bound to it are unbound so their next run opens a fresh conversation.
+func (c *cronStore) forgetSession(sessionID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	old := cloneCronDisk(c.disk)
+	changed := false
+	tasks := make([]*CronTask, 0, len(c.disk.Tasks))
+	removed := map[string]bool{}
+	for _, task := range c.disk.Tasks {
+		if task == nil || task.SessionID != sessionID {
+			tasks = append(tasks, task)
+			continue
+		}
+		changed = true
+		if task.Description == "loop" {
+			removed[task.ID] = true
+			continue
+		}
+		task.SessionID = ""
+		tasks = append(tasks, task)
 	}
-	if _, err := s.cron.store.apply(CronApplyInput{BaseRevision: snapshot.Revision, Ops: []CronOperation{{Op: "delete", ID: loopID}}}); err != nil {
-		writeJSONError(w, http.StatusConflict, err.Error())
-		return
+	if !changed {
+		return nil
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	runs := make([]CronRunRecord, 0, len(c.disk.Runs))
+	for _, run := range c.disk.Runs {
+		if !removed[run.TaskID] {
+			runs = append(runs, run)
+		}
+	}
+	c.disk.Tasks, c.disk.Runs = tasks, runs
+	c.disk.Revision++
+	return c.commitLocked(old)
 }
