@@ -576,6 +576,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if snapshot, ok := turnSnapshot(ctx); ok {
 		userMessage.PromptSnapshots = append(userMessage.PromptSnapshots, snapshot)
 	}
+	// The snapshot belongs to this turn only; subagents, workflow agents and background
+	// tasks started by its tools inherit ctx and must not receive it.
+	ctx = withoutTurnSnapshot(ctx)
 	if resumeID != "" {
 		userMessage.ID = resumeID
 	}

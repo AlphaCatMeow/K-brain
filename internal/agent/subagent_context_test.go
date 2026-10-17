@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -258,5 +259,68 @@ func TestBackgroundRegistrationInheritsCancellation(t *testing.T) {
 	}
 	if task.Status != TaskRunning {
 		t.Fatalf("registration should not settle before launch: %s", task.Status)
+	}
+}
+
+// recordingClient asks for one subagent on its first request, answers every other
+// request, and keeps the messages it was sent.
+type recordingClient struct {
+	mu    sync.Mutex
+	calls int
+	seen  [][]ai.Message
+}
+
+func (c *recordingClient) Models(context.Context) ([]ai.ModelInfo, error) { return nil, nil }
+func (c *recordingClient) Complete(context.Context, ai.Request) (string, ai.Usage, error) {
+	return "", ai.Usage{}, nil
+}
+func (c *recordingClient) Clone() ai.Client   { return c }
+func (c *recordingClient) SetCacheKey(string) {}
+func (c *recordingClient) Endpoint() string   { return "http://fixture.invalid" }
+func (c *recordingClient) Stream(_ context.Context, r ai.Request, _ func(string), _ func(string), _ func(string, string, string)) (ai.Message, ai.Usage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	c.seen = append(c.seen, append([]ai.Message(nil), r.Messages...))
+	if c.calls == 1 {
+		call := ai.ToolCall{ID: "call-1", Type: "function"}
+		call.Function.Name = "subagent"
+		call.Function.Arguments = `{"description":"list","prompt":"list files","worktree":false}`
+		return ai.Message{Role: "assistant", ToolCalls: []ai.ToolCall{call}, StopReason: ai.StopReasonToolUse}, ai.Usage{}, nil
+	}
+	return ai.Message{Role: "assistant", Content: "done", StopReason: ai.StopReasonStop}, ai.Usage{}, nil
+}
+
+func TestTurnSnapshotDoesNotReachSubagents(t *testing.T) {
+	client := &recordingClient{}
+	parent := New(client, "m", 100, "sys")
+	parent.WorkingDir = t.TempDir()
+	const marker = "TURN-ONLY-SNAPSHOT"
+	ctx := WithTurnSnapshot(context.Background(), ai.PromptSnapshot{Source: "turn-command", Text: "\n\n" + marker})
+	if _, err := parent.Turn(ctx, "go", Events{}); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	parentSaw, subagentRan := false, false
+	for _, request := range client.seen {
+		for _, m := range request {
+			if m.Role != "user" {
+				continue
+			}
+			text := m.Content + promptContextText(m)
+			if strings.HasPrefix(m.Content, "go") && strings.Contains(text, marker) {
+				parentSaw = true
+			}
+			if strings.HasPrefix(m.Content, "list files") {
+				subagentRan = true
+				if strings.Contains(text, marker) {
+					t.Fatalf("subagent received the parent turn snapshot: %q", text)
+				}
+			}
+		}
+	}
+	if !parentSaw || !subagentRan {
+		t.Fatalf("parent saw snapshot=%v, subagent ran=%v, requests=%d", parentSaw, subagentRan, len(client.seen))
 	}
 }

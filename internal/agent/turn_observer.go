@@ -18,6 +18,13 @@ func WithTurnSnapshot(ctx context.Context, snapshot ai.PromptSnapshot) context.C
 	return context.WithValue(ctx, turnSnapshotKey{}, snapshot)
 }
 
+func withoutTurnSnapshot(ctx context.Context) context.Context {
+	if _, ok := turnSnapshot(ctx); !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, turnSnapshotKey{}, ai.PromptSnapshot{})
+}
+
 func turnSnapshot(ctx context.Context) (ai.PromptSnapshot, bool) {
 	snapshot, ok := ctx.Value(turnSnapshotKey{}).(ai.PromptSnapshot)
 	return snapshot, ok && snapshot.Text != ""
