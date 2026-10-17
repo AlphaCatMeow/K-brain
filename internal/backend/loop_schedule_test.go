@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
 
@@ -100,6 +101,17 @@ func TestLoopImmediateDetachedExecutionAndDelivery(t *testing.T) {
 	}
 	if reloaded.snapshot().Tasks[0].Loop.NextFireAt != listed[0].NextFireAt {
 		t.Fatal("restart lost next fire")
+	}
+	workerID := runs[0].SessionID
+	if err := store.RecordCompaction(workerID, 1, "PRIVATE_WORKER_SUMMARY", "fixture-model", ai.Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.cron.start(entry.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	waitCronRuns(t, base, entry.ID, func(r []CronRunRecord) bool { return len(r) == 2 && r[0].FinishedAt != nil })
+	if len(store.Compactions(workerID)) != 0 {
+		t.Fatal("previous occurrence's compaction survived worker reset")
 	}
 }
 

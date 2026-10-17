@@ -16,6 +16,9 @@ func (s *Server) executeLoopPrompt(ctx context.Context, task *CronTask, cwd stri
 	if err != nil {
 		return false, err.Error()
 	}
+	if err := s.store.ReplaceFrom(workerID, 0, nil, task.SelectedModel.Model, task.SelectedModel.CustomProviderID); err != nil {
+		return false, err.Error()
+	}
 	if err := s.store.SetCWD(workerID, cwd); err != nil {
 		return false, err.Error()
 	}
