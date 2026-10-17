@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -239,6 +240,12 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 				delete(s.sessions, id)
 			}
 			s.mu.Unlock()
+			// Loops bound to the conversation would otherwise fail on every tick.
+			if s.cron != nil {
+				if err := s.cron.store.forgetSession(id); err != nil {
+					log.Printf("cron: forget deleted session %s: %v", id, err)
+				}
+			}
 		}
 	}()
 	rt.mu.Lock()

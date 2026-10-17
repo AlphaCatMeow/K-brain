@@ -8,6 +8,27 @@ import (
 
 type userMessageObserverKey struct{}
 type userMessageIDKey struct{}
+type turnSnapshotKey struct{}
+
+// WithTurnSnapshot attaches request-only text to the user message of the next turn.
+// The model sees it after the user's words; history and transcripts keep only what the
+// user typed. Desktop slash commands use it to send an expanded prompt template while
+// the conversation still shows "/name args".
+func WithTurnSnapshot(ctx context.Context, snapshot ai.PromptSnapshot) context.Context {
+	return context.WithValue(ctx, turnSnapshotKey{}, snapshot)
+}
+
+func withoutTurnSnapshot(ctx context.Context) context.Context {
+	if _, ok := turnSnapshot(ctx); !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, turnSnapshotKey{}, ai.PromptSnapshot{})
+}
+
+func turnSnapshot(ctx context.Context) (ai.PromptSnapshot, bool) {
+	snapshot, ok := ctx.Value(turnSnapshotKey{}).(ai.PromptSnapshot)
+	return snapshot, ok && snapshot.Text != ""
+}
 
 func WithUserMessageID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, userMessageIDKey{}, id)

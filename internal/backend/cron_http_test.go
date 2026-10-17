@@ -78,7 +78,7 @@ func TestCronProductionHTTPBashRunNowAndCancel(t *testing.T) {
 	defer backend.Close()
 	server := httptest.NewServer(backend)
 	defer server.Close()
-	create := map[string]any{"baseRevision": 0, "ops": []any{map[string]any{"op": "create", "item": map[string]any{"id": "bash", "name": "bash", "cron": "0 0 0 1 1 0", "enabled": true, "type": "bash", "script": "printf cron-ok", "workdir": root, "timeoutSeconds": 5}}}}
+	create := map[string]any{"baseRevision": 0, "ops": []any{map[string]any{"op": "create", "item": map[string]any{"id": "bash", "name": "bash", "cron": "0 0 0 1 1 0", "enabled": true, "type": "bash", "script": "echo cron-ok", "workdir": root, "timeoutSeconds": 5}}}}
 	if status := doCronJSON(t, server.URL+"/v1/cron", http.MethodPut, create, nil); status != http.StatusOK {
 		t.Fatalf("create status = %d", status)
 	}
@@ -284,7 +284,7 @@ func TestCronProductionScheduledBashPromptAndSharedTool(t *testing.T) {
 		t.Fatal("missing cron tool")
 	}
 	for _, input := range []string{
-		`{"action":"create","name":"scheduled bash","cron":"* * * * * *","type":"bash","script":"printf scheduled-ok","remaining_executions":1}`,
+		`{"action":"create","name":"scheduled bash","cron":"* * * * * *","type":"bash","script":"echo scheduled-ok","remaining_executions":1}`,
 		`{"action":"create","name":"scheduled prompt","cron":"* * * * * *","type":"prompt","prompt":"Reply done","remaining_executions":1}`,
 	} {
 		if _, err := tool.Run(context.Background(), json.RawMessage(input)); err != nil {

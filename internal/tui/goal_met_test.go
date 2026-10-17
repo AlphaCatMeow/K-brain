@@ -15,8 +15,11 @@ func TestGoalMet(t *testing.T) {
 	}{
 		{"prefix exact", "GOAL_MET — done", true},
 		{"prefix with leading space", "  GOAL_MET — done", true},
-		{"token after one-line preamble (the observed loop bug)", "Verified: all green.\n\nGOAL_MET — shipped", true},
-		{"token mid-paragraph", "The work is done. GOAL_MET. Summary follows.", true},
+		{"token after markdown emphasis", "**GOAL_MET** — shipped", true},
+		{"token after one-line preamble", "Verified: all green.\n\nGOAL_MET — shipped", false},
+		{"token mid-paragraph", "The work is done. GOAL_MET. Summary follows.", false},
+		{"negated mention", "Not GOAL_MET yet — tests fail.", false},
+		{"hyphenated token", "GOAL_MET-pending", false},
 		{"aspirational mention stays false", "I am making progress toward GOAL_MET soon", false},
 		{"token as substring of word", "GOAL_METRICS look good", false},
 		{"no token", "still working on it", false},
@@ -31,10 +34,10 @@ func TestGoalMet(t *testing.T) {
 	}
 }
 
-func TestGoalLoopEndsOnMidMessageToken(t *testing.T) {
+func TestGoalLoopEndsOnLeadingToken(t *testing.T) {
 	m := &model{goal: "ship the thing", goalRounds: 1}
 	m.cfg = nil
-	tm, cmd := m.Update(turnDoneMsg{final: "Verified: all checks pass.\n\nGOAL_MET — shipped and verified."})
+	tm, cmd := m.Update(turnDoneMsg{final: "**GOAL_MET** — shipped and verified.\n\nAll checks pass."})
 	mm := tm.(*model)
 	if mm.goal != "" {
 		t.Fatalf("goal must clear on GOAL_MET, still %q", mm.goal)

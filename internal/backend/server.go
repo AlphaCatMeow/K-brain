@@ -138,6 +138,7 @@ type runtimeSession struct {
 	mcpActivation    *mcp.ToolActivation
 	memoryRuntime    agent.MemoryRuntime
 	runtimeErr       error
+	goal             goalRuntime
 }
 
 func New(opts Options) (*Server, error) {
@@ -348,6 +349,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handlePrompts(w, r)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/commands" {
+		s.handleSlashCommands(w, r)
+		return
+	}
 	if r.URL.Path == "/v1/settings" {
 		s.handleSettings(w, r)
 		return
@@ -419,6 +424,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.deleteSession(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "command-notes" {
+		s.handleCommandNote(w, r, id)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "loops" {
+		s.handleSessionLoops(w, r, id, parts[2:])
+		return
+	}
 	if len(parts) == 2 {
 		switch parts[1] {
 		case "checkpoints":
@@ -429,6 +442,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "compact":
 			if r.Method == http.MethodPost {
 				s.compactSession(w, r, id)
+				return
+			}
+		case "goal":
+			if r.Method == http.MethodGet || r.Method == http.MethodPost {
+				s.handleGoal(w, r, id)
 				return
 			}
 		case "history":
@@ -1311,6 +1329,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		})
 	}
 	ctx = agent.WithRequestObserver(ctx, &trajectoryObserver{rt: rt, runID: runID})
+	if in.Snapshot != "" {
+		ctx = agent.WithTurnSnapshot(ctx, ai.PromptSnapshot{Source: "turn-command", Text: "\n\n" + in.Snapshot})
+	}
 	hookEvents := s.hookRunner.Scope(ctx, rt.id, runID, rt.agent.WorkingDir, func(hook BackendHook, event string, err error) {
 		_, _ = rt.publish(protocol.EventHookWarning, map[string]any{"hookName": hook.Name, "hookType": hook.Type, "event": event, "message": err.Error()}, "")
 	})
@@ -1410,11 +1431,13 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		s.evaluateGoal(rt, runID, "cancelled")
 		finish(protocol.EventRunCancelled, protocol.RunTerminal{State: "cancelled"})
 	} else if err != nil {
 		if failedAssistant != nil {
 			_, _ = rt.publish(protocol.EventAssistantMessage, *failedAssistant, "")
 		}
+		s.evaluateGoal(rt, runID, "failed")
 		finish(protocol.EventRunFailed, protocol.RunTerminal{State: "failed", Error: err.Error()})
 	} else {
 		messages := rt.agent.MessagesSnapshot()
@@ -1427,6 +1450,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			}
 			break
 		}
+		s.evaluateGoal(rt, runID, "completed")
 		finish(protocol.EventRunCompleted, protocol.RunTerminal{State: "completed"})
 	}
 }

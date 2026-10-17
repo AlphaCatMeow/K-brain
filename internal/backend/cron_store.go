@@ -235,6 +235,9 @@ func applyCronOperation(ts []*CronTask, op CronOperation) ([]*CronTask, error) {
 		if t.SessionID != "" {
 			return nil, errors.New("cron sessionId is backend-owned")
 		}
+		if strings.HasPrefix(t.ID, loopIDPrefix) {
+			return nil, errors.New("cron task ids starting with " + loopIDPrefix + " are reserved for conversation loops")
+		}
 		if t.ID == "" {
 			t.ID = newRunID()
 		}

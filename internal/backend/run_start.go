@@ -10,9 +10,44 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
 
+const errSessionBusy = "session already has a running turn"
+
+// replayRunLocked answers a request whose client_request_id was already accepted: the
+// original run when the request matches it, an error when it does not. found is false
+// for a new request id.
+func (s *Server) replayRunLocked(rt *runtimeSession, in protocol.PromptRequest) (protocol.RunAccepted, bool, error) {
+	old, ok := rt.runs[in.ClientRequestID]
+	if !ok {
+		return protocol.RunAccepted{}, false, nil
+	}
+	matches := old.Kind != "compact" && old.RequestHash != "" && old.RequestHash == hashPrompt(in)
+	if !matches && old.Kind != "compact" && rt.agent != nil {
+		options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
+		if err == nil {
+			normalized := in
+			normalized.Options = &options
+			matches = old.PromptHash == hashPrompt(normalized)
+		}
+	}
+	if !matches {
+		return protocol.RunAccepted{}, true, errors.New("client_request_id was already used with a different prompt or options")
+	}
+	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: old.RunID, AcceptedSeq: old.AcceptedSeq}, true, nil
+}
+
 // startCanonicalRun serializes acceptance and starts the shared session executor.
 // ctx owns the run lifetime; HTTP callers deliberately detach from the connection.
 func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest) (protocol.RunAccepted, int, error) {
+	return s.startCanonicalRunWith(ctx, rt, in, nil)
+}
+
+// runAdmit runs under rt.mu once a new run has passed every check and is about to be
+// accepted, so state tied to the run changes atomically with its acceptance. An error
+// rejects the run; the returned rollback, if any, undoes the change when persisting the
+// acceptance fails afterwards.
+type runAdmit func() (rollback func(), status int, err error)
+
+func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest, admit runAdmit) (protocol.RunAccepted, int, error) {
 	fail := func(status int, message string) (protocol.RunAccepted, int, error) {
 		return protocol.RunAccepted{}, status, errors.New(message)
 	}
@@ -62,23 +97,23 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 		return fail(500, "session runtime is quarantined: "+rt.runtimeErr.Error())
 	}
 	requestHash := hashPrompt(in)
-	if old, ok := rt.runs[in.ClientRequestID]; ok {
-		matches := old.Kind != "compact" && old.RequestHash != "" && old.RequestHash == requestHash
-		if !matches && old.Kind != "compact" {
-			options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
-			if err == nil {
-				normalized := in
-				normalized.Options = &options
-				matches = old.PromptHash == hashPrompt(normalized)
-			}
+	if accepted, found, err := s.replayRunLocked(rt, in); found {
+		if err != nil {
+			return fail(409, err.Error())
 		}
-		if !matches {
-			return fail(409, "client_request_id was already used with a different prompt or options")
-		}
-		return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: old.RunID, AcceptedSeq: old.AcceptedSeq}, http.StatusOK, nil
+		return accepted, http.StatusOK, nil
 	}
 	if rt.activeLocked() {
-		return fail(409, "session already has a running turn")
+		return fail(409, errSessionBusy)
+	}
+	// Expand after the idempotency check so a retried request replays even if its
+	// template changed or disappeared in between.
+	if in.PromptCommand {
+		expanded, err := s.expandPromptCommand(in.Prompt, rt.workingDir())
+		if err != nil {
+			return fail(422, err.Error())
+		}
+		in.Snapshot = expanded
 	}
 	if in.Model != nil && (in.Model.Model != "" || in.Model.Provider != "") {
 		if err := s.switchModelLocked(rt, *in.Model); err != nil {
@@ -111,12 +146,23 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 	if in.TurnID != "" {
 		user.ID = in.TurnID
 	}
+	rollback := func() {}
+	if admit != nil {
+		undo, status, err := admit()
+		if err != nil {
+			return fail(status, err.Error())
+		}
+		if undo != nil {
+			rollback = undo
+		}
+	}
 	runID := newRunID()
 	runCtx, cancel := context.WithCancel(ctx)
 	rt.runID, rt.runDone, rt.cancel = runID, false, cancel
 	rt.checkpoint = newCheckpointCapture(s.eventDir, rt.id, runID, in.TurnID)
 	abort := func(err error) (protocol.RunAccepted, int, error) {
 		cancel()
+		rollback()
 		rt.cancel, rt.checkpoint, rt.runDone = nil, nil, true
 		rt.runtimeErr = fmt.Errorf("persist run acceptance: %w", err)
 		return protocol.RunAccepted{}, 500, rt.runtimeErr
@@ -140,6 +186,8 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 		defer rt.runWorkers.Done()
 		defer s.releaseRuntime(rt)
 		s.executeRun(rt, runCtx, runID, in, options)
+		// The next goal round starts only after executeRun has marked this run done.
+		s.continueGoal(rt, runID, in)
 	}()
 	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: runID, AcceptedSeq: acceptedSeq}, http.StatusAccepted, nil
 }
