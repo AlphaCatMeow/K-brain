@@ -62,13 +62,18 @@ func newGoalNonce() string {
 	return hex.EncodeToString(b[:])
 }
 
-// goalOwnsRunLocked reports whether the session's running turn is a goal round.
-func (rt *runtimeSession) goalOwnsRunLocked() bool {
-	if rt.cancel == nil || rt.runDone || rt.goal.roundRequestID == "" {
+// goalRoundLocked reports whether runID is the run accepted for the latest goal round.
+func (rt *runtimeSession) goalRoundLocked(runID string) bool {
+	if rt.goal.roundRequestID == "" || runID == "" {
 		return false
 	}
 	record, ok := rt.runs[rt.goal.roundRequestID]
-	return ok && record.RunID == rt.runID
+	return ok && record.RunID == runID
+}
+
+// goalOwnsRunLocked reports whether the session's running turn is a goal round.
+func (rt *runtimeSession) goalOwnsRunLocked() bool {
+	return rt.cancel != nil && !rt.runDone && rt.goalRoundLocked(rt.runID)
 }
 
 func (s *Server) goalMaxRoundsLocked(rt *runtimeSession) int {
@@ -320,7 +325,9 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 	rt.mu.Lock()
 	s.ensureGoalLoadedLocked(rt)
-	if rt.goal.status != "active" {
+	// Only the goal's own round decides it; a cron or user run that took the idle
+	// session between rounds is not a goal round.
+	if rt.goal.status != "active" || !rt.goalRoundLocked(runID) {
 		rt.mu.Unlock()
 		return
 	}
@@ -368,7 +375,8 @@ func goalMetBy(rt *runtimeSession) bool {
 }
 
 // continueGoal starts the round decided by evaluateGoal once the finished run has
-// released the session. A clear, pause or new goal in between drops it. A session kept
+// released the session. evaluateGoal only decides rounds for goal runs, so previous is
+// always the goal's own last round and the next round inherits its options. A clear, pause or new goal in between drops it. A session kept
 // busy by background work is retried briefly; a round that still cannot start pauses
 // the goal.
 func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protocol.PromptRequest) {

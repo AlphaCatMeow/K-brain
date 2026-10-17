@@ -608,3 +608,31 @@ func TestGoalRoundWaitsForBusySessionThenPauses(t *testing.T) {
 		t.Fatalf("no round may start while busy, got %d turns", n)
 	}
 }
+
+func TestGoalIgnoresRunsThatAreNotItsRounds(t *testing.T) {
+	client := &replyQueue{block: make(chan struct{}), replies: []string{"GOAL_MET done"}}
+	server, _, base := newGoalTestServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "ship", Run: &protocol.PromptRequest{ClientRequestID: "own-1"}})
+	waitTurns(t, client, 1)
+	rt, err := server.loadRuntimeByID(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.releaseRuntime(rt)
+	// A cron or user run that took the session between rounds finishes.
+	for _, outcome := range []string{"completed", "failed", "cancelled"} {
+		server.evaluateGoal(rt, "run-foreign", outcome)
+		rt.mu.Lock()
+		status, round, next := rt.goal.status, rt.goal.round, rt.goal.next
+		rt.mu.Unlock()
+		if status != "active" || round != 0 || next != nil {
+			t.Fatalf("%s foreign run changed the goal: status=%s round=%d next=%v", outcome, status, round, next)
+		}
+	}
+	client.mu.Lock()
+	close(client.block)
+	client.block = nil
+	client.mu.Unlock()
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+}
