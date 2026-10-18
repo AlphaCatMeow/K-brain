@@ -70,6 +70,7 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | GET | `/v1/sessions/{id}/events?after_seq=N` | 从指定序号之后重放并订阅事件 |
 | POST | `/v1/sessions/{id}/runs/{run}/cancel` | 取消运行 |
 | POST | `/v1/sessions/{id}/runs/{run}/roots` | 给进行中的运行追加授权目录 |
+| POST | `/v1/sessions/{id}/root-requests/{request}` | 答复 `root.requested`（授权或拒绝） |
 | POST | `/v1/sessions/{id}/permissions/{permission}` | 提交审批结果 |
 | POST | `/v1/sessions/{id}/close` | 结束当前会话运行并保存 |
 
@@ -77,7 +78,9 @@ VITE_KBRAIN_TOKEN=<backend-token>
 
 编辑请求为 `{message_ref:{message_id},replacement:<规范 user 消息>,expected_revision}`。分支请求为 `{message_ref:{message_id},expected_revision?,title?}`。过期 revision 返回 409。编辑完成后启动运行时传入 `resume_message_id`，后端验证它指向已持久化的末尾用户消息，避免重复追加。普通发送不使用该字段。
 
-运行中追加授权目录：请求为 `{roots:[{path,access}]}`，`path` 必须是已存在目录的绝对路径，`access` 为 `read` 或 `write`，校验规则与 `options.workspace_roots` 相同。已授权的路径只会升级为 `write`，不会降级。成功返回 `{version,roots}`（追加后的完整列表）；运行不在进行中时返回 409。追加后同一轮后续的工具调用立即生效；子代理工作树在创建时复制授权，不继承之后的追加。`/v1/health` 的 `capabilities.run_roots` 为 `{extend:true,denial_codes:true}` 时表示支持本接口和下面的结构化拒绝信息。
+运行中追加授权目录：请求为 `{roots:[{path,access}]}`，`path` 必须是已存在目录的绝对路径，`access` 为 `read` 或 `write`，校验规则与 `options.workspace_roots` 相同。已授权的路径只会升级为 `write`，不会降级。成功返回 `{version,roots}`（追加后的完整列表）；运行不在进行中时返回 409。追加后同一轮后续的工具调用立即生效；子代理工作树在创建时复制授权，不继承之后的追加。`/v1/health` 的 `capabilities.run_roots` 为 `{extend:true,denial_codes:true,requests:true}` 时表示支持本接口、下面的暂停等待授权和结构化拒绝信息。
+
+暂停等待授权：运行参数带 `root_requests: true` 时，工具路径被拒（不在授权目录内或写入只读目录）不会立即失败，而是发布 `root.requested`（`{request_id,tool_call_id,tool,code,path,access,roots}`）并暂停这次工具调用。客户端调用 `POST /v1/sessions/{id}/root-requests/{request_id}` 答复：`{decision:"grant",roots:[{path,access}]}` 把目录追加到本次运行后重新检查路径并继续执行；`{decision:"deny"}` 让调用照常失败。答复后发布 `root.resolved`。运行取消时等待随之结束；无人值守的运行不会暂停。不处理该事件的客户端不要开启 `root_requests`，否则运行会一直等待。`capabilities.run_roots.requests` 为 true 表示支持。
 
 工具因授权目录被拒时，`tool.result` 的 `output` 文本保持不变，另带 `error:{code,path,access,roots}`。`code` 为 `path_outside_roots`（路径不在任何授权目录内）或 `path_read_only_root`（写入只读目录）；`path` 是解析后的绝对路径，`roots` 是本次检查时生效的授权目录。客户端可据此提示用户授权，再调用上面的接口。
 

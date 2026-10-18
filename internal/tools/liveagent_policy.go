@@ -159,7 +159,42 @@ func WithLiveAgentNamedRoots(ctx context.Context, roots map[string]WorkspaceRoot
 	return context.WithValue(ctx, liveagentNamedRootsKey{}, copy)
 }
 
+// RootRequest asks the client to grant a denied path while the tool call waits.
+type RootRequest struct {
+	Tool   string
+	Code   string
+	Path   string
+	Access string
+	Roots  []WorkspaceRoot
+}
+
+// RootRequester blocks until the client answers and reports whether it granted
+// a root (already added to the run's RunRoots). Only installed for runs whose
+// client opted in, so other runs keep failing fast.
+type RootRequester func(ctx context.Context, req RootRequest) bool
+
+type rootRequesterKey struct{}
+
+func WithRootRequester(ctx context.Context, requester RootRequester) context.Context {
+	return context.WithValue(ctx, rootRequesterKey{}, requester)
+}
+
+// liveagentPath resolves raw against the run's roots. A workspace-root denial
+// is offered to the client once; after a grant the path is checked again.
 func liveagentPath(ctx context.Context, raw string, access string, tool string, allowDirectory bool) (string, error) {
+	path, err := checkLiveagentPath(ctx, raw, access, tool, allowDirectory)
+	var denial *PathPolicyError
+	requester, _ := ctx.Value(rootRequesterKey{}).(RootRequester)
+	if err == nil || requester == nil || !errors.As(err, &denial) {
+		return path, err
+	}
+	if !requester(ctx, RootRequest{Tool: tool, Code: denial.Code, Path: denial.Path, Access: denial.Access, Roots: denial.Roots}) {
+		return path, err
+	}
+	return checkLiveagentPath(ctx, raw, access, tool, allowDirectory)
+}
+
+func checkLiveagentPath(ctx context.Context, raw string, access string, tool string, allowDirectory bool) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", errors.New(tool + ".path is required")
 	}

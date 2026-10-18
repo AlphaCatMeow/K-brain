@@ -132,6 +132,7 @@ type runtimeSession struct {
 	processManager   *tools.ManagedProcessManager
 	terminalContexts map[string]context.Context
 	permissions      map[string]*permissionWaiter
+	rootRequests     map[string]*rootRequestWaiter
 	questions        map[string]*questionWaiter
 	clientTools      map[string]*clientToolWaiter
 	eventDir         string
@@ -299,7 +300,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}, "run_roots": map[string]any{"extend": true, "denial_codes": true}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}, "run_roots": map[string]any{"extend": true, "denial_codes": true, "requests": true}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -510,6 +511,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 4 && parts[1] == "runs" && parts[2] != "" && parts[3] == "roots" && r.Method == http.MethodPost {
 		s.extendRunRoots(w, r, id, parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "root-requests" && parts[2] != "" && r.Method == http.MethodPost {
+		s.resolveRootRequest(w, r, id, parts[2])
 		return
 	}
 	if len(parts) == 3 && parts[1] == "permissions" && parts[2] != "" && r.Method == http.MethodPost {
@@ -1262,7 +1267,16 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	for i, root := range options.WorkspaceRoots {
 		roots[i] = tools.WorkspaceRoot{Path: root.Path, Access: root.Access}
 	}
-	ctx = tools.WithWorkspaceRoots(ctx, roots)
+	runRoots := tools.NewRunRoots(roots)
+	ctx = tools.WithRunRoots(ctx, runRoots)
+	if options.RootRequests {
+		ctx = tools.WithRootRequester(ctx, func(requestCtx context.Context, req tools.RootRequest) bool {
+			if isUnattendedRun(requestCtx) {
+				return false
+			}
+			return s.waitRootRequest(rt, runID, runRoots, req, requestCtx)
+		})
+	}
 	// The system prompt points the model at SKILL.md files by absolute path; grant those
 	// directories read-only so following the prompt is not rejected by the root policy.
 	ctx = tools.WithSkillReadRoots(ctx, skillReadRoots(rt.agent.WorkingDir))

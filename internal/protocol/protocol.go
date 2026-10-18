@@ -43,6 +43,8 @@ const (
 	EventQuestionResolved    = "question.resolved"
 	EventClientToolRequested = "client_tool.requested"
 	EventClientToolResolved  = "client_tool.resolved"
+	EventRootRequested       = "root.requested"
+	EventRootResolved        = "root.resolved"
 	EventSubagentStarted     = "subagent.started"
 	EventSubagentUpdate      = "subagent.updated"
 	EventSubagentCompleted   = "subagent.completed"
@@ -340,6 +342,31 @@ type RunOptions struct {
 	// desktop Browser). They are offered to the model for this run only; a call is published
 	// as client_tool.requested and completes when the client posts the result.
 	ClientTools []ClientTool `json:"client_tools,omitempty"`
+	// RootRequests opts the run into pausing a tool call whose path is outside
+	// (or read-only in) the workspace roots: K-brain publishes root.requested
+	// and waits for POST /v1/sessions/{id}/root-requests/{request_id}. Clients
+	// that do not handle the event must leave it unset, or the run would stall.
+	RootRequests bool `json:"root_requests,omitempty"`
+}
+
+// RootRequest is the payload of root.requested. Code is path_outside_roots or
+// path_read_only_root; Path is the resolved absolute path the tool asked for.
+type RootRequest struct {
+	RequestID  string          `json:"request_id"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Tool       string          `json:"tool"`
+	Code       string          `json:"code"`
+	Path       string          `json:"path"`
+	Access     string          `json:"access"`
+	Roots      []WorkspaceRoot `json:"roots,omitempty"`
+}
+
+// RootResolution answers a root request. Decision "grant" adds Roots to the
+// run before the tool call is re-checked; "deny" fails the call as before.
+type RootResolution struct {
+	RequestID string          `json:"request_id,omitempty"`
+	Decision  string          `json:"decision"`
+	Roots     []WorkspaceRoot `json:"roots,omitempty"`
 }
 
 type ClientTool struct {
