@@ -13,6 +13,8 @@ type Result struct {
 	Parts     []ai.ContentPart
 	Failed    bool
 	Cancelled bool
+	// Denial is set when the call failed on a workspace-root policy check.
+	Denial *PathPolicyError
 }
 
 type attachmentKey struct{}

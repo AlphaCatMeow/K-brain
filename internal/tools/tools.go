@@ -130,7 +130,9 @@ func executeResult(ctx context.Context, ts []Tool, name string, args json.RawMes
 				if out != "" {
 					text += "\n" + out
 				}
-				return Result{Text: text, Failed: true, Cancelled: cancelled}
+				var denial *PathPolicyError
+				errors.As(err, &denial)
+				return Result{Text: text, Failed: true, Cancelled: cancelled, Denial: denial}
 			}
 			if out == "" {
 				out = "(no output)"

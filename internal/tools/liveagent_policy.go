@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // WorkspaceRoot is the backend's authoritative filesystem boundary.
@@ -17,18 +18,78 @@ type WorkspaceRoot struct {
 
 type workspaceRootsKey struct{}
 
+// RunRoots is a run's workspace grant set. It can grow while the run is in
+// flight, so a grant the user approves mid-turn applies to the same turn.
+// Tools run concurrently, so every read takes a snapshot under the lock.
+type RunRoots struct {
+	mu    sync.RWMutex
+	roots []WorkspaceRoot
+}
+
+func NewRunRoots(roots []WorkspaceRoot) *RunRoots {
+	return &RunRoots{roots: append([]WorkspaceRoot(nil), roots...)}
+}
+
+// Snapshot returns a copy of the current grants.
+func (r *RunRoots) Snapshot() []WorkspaceRoot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]WorkspaceRoot(nil), r.roots...)
+}
+
+// Extend adds grants and returns the resulting set. A path that is already
+// granted is upgraded to write when requested and never downgraded, so an
+// extension can only widen access the client explicitly asked for.
+func (r *RunRoots) Extend(add []WorkspaceRoot) []WorkspaceRoot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, grant := range add {
+		grant.Path = filepath.Clean(grant.Path)
+		existing := -1
+		for i, root := range r.roots {
+			if filepath.Clean(root.Path) == grant.Path {
+				existing = i
+				break
+			}
+		}
+		switch {
+		case existing < 0:
+			r.roots = append(r.roots, grant)
+		case grant.Access == "write":
+			r.roots[existing].Access = "write"
+		}
+	}
+	return append([]WorkspaceRoot(nil), r.roots...)
+}
+
 func WithWorkspaceRoots(ctx context.Context, roots []WorkspaceRoot) context.Context {
-	return context.WithValue(ctx, workspaceRootsKey{}, append([]WorkspaceRoot(nil), roots...))
+	return WithRunRoots(ctx, NewRunRoots(roots))
+}
+
+// WithRunRoots shares one grant holder with the run so later Extend calls are
+// visible to every tool call that derives from ctx.
+func WithRunRoots(ctx context.Context, roots *RunRoots) context.Context {
+	return context.WithValue(ctx, workspaceRootsKey{}, roots)
+}
+
+// RunRootsFrom returns the grant holder installed on a run's context.
+func RunRootsFrom(ctx context.Context) (*RunRoots, bool) { return runRoots(ctx) }
+
+func runRoots(ctx context.Context) (*RunRoots, bool) {
+	roots, ok := ctx.Value(workspaceRootsKey{}).(*RunRoots)
+	return roots, ok && roots != nil
 }
 
 // WithWorktreeWorkspaceRoots transfers the parent's workspace grants to an
 // isolated worktree. Preserve access levels and unrelated additional roots;
-// an explicitly empty grant set must remain empty.
+// an explicitly empty grant set must remain empty. The worktree gets its own
+// remapped copy, so grants added to the parent run later are not inherited.
 func WithWorktreeWorkspaceRoots(ctx context.Context, parent, worktree string) context.Context {
-	roots, explicit := ctx.Value(workspaceRootsKey{}).([]WorkspaceRoot)
+	holder, explicit := runRoots(ctx)
 	if !explicit || !filepath.IsAbs(parent) || !filepath.IsAbs(worktree) {
 		return ctx
 	}
+	roots := holder.Snapshot()
 	mapped := make([]WorkspaceRoot, 0, len(roots))
 	for _, root := range roots {
 		grant := root
@@ -47,8 +108,10 @@ func WithWorktreeWorkspaceRoots(ctx context.Context, parent, worktree string) co
 }
 
 func workspaceRoots(ctx context.Context) []WorkspaceRoot {
-	roots, _ := ctx.Value(workspaceRootsKey{}).([]WorkspaceRoot)
-	return roots
+	if holder, ok := runRoots(ctx); ok {
+		return holder.Snapshot()
+	}
+	return nil
 }
 
 type skillReadRootsKey struct{}
@@ -147,7 +210,7 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 		roots = append(roots, grant)
 	}
 	if len(roots) == 0 {
-		if _, explicit := ctx.Value(workspaceRootsKey{}).([]WorkspaceRoot); explicit {
+		if _, explicit := runRoots(ctx); explicit {
 			return "", errors.New("no workspace roots are authorized")
 		}
 		if WorkingDir(ctx) == "" {
@@ -159,7 +222,10 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 	if access == "write" {
 		for _, root := range roots {
 			if root.Access != "write" && safeWorkspacePath(filepath.Clean(root.Path), path) {
-				return "", errors.New("path belongs to a read-only workspace root")
+				return "", &PathPolicyError{
+					Code: PathReadOnlyRoot, Path: path, Access: access, Roots: roots,
+					message: "path belongs to a read-only workspace root",
+				}
 			}
 		}
 	}
@@ -177,12 +243,31 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 			return path, nil
 		}
 	}
+	message := tool + ".path is outside the authorized workspace roots"
 	if driveRootedPath(raw) {
-		return "", errors.New(tool + ".path is outside the authorized workspace roots (resolved to " + path +
-			`; on Windows a path starting with "/" or "\" is relative to the drive root, not the workspace or the system temp directory)`)
+		message += " (resolved to " + path +
+			`; on Windows a path starting with "/" or "\" is relative to the drive root, not the workspace or the system temp directory)`
 	}
-	return "", errors.New(tool + ".path is outside the authorized workspace roots")
+	return "", &PathPolicyError{Code: PathOutsideRoots, Path: path, Access: access, Roots: roots, message: message}
 }
+
+// Structured denial codes carried by PathPolicyError.
+const (
+	PathOutsideRoots = "path_outside_roots"
+	PathReadOnlyRoot = "path_read_only_root"
+)
+
+// PathPolicyError is a workspace-root denial a client can act on, e.g. by
+// offering to grant Path. Error() keeps the historical text the model sees.
+type PathPolicyError struct {
+	Code    string
+	Path    string
+	Access  string
+	Roots   []WorkspaceRoot
+	message string
+}
+
+func (e *PathPolicyError) Error() string { return e.message }
 
 func safeWorkspacePath(root, target string) bool {
 	rootInfo, err := os.Lstat(root)

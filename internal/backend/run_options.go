@@ -18,6 +18,23 @@ import (
 
 var runReasoning = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
+// normalizeWorkspaceRoot cleans r in place and rejects relative paths, unknown
+// access levels and paths that are not existing directories. field prefixes
+// error messages, e.g. "options.workspace_roots[0]".
+func normalizeWorkspaceRoot(r *protocol.WorkspaceRoot, field string) error {
+	r.Path = filepath.Clean(strings.TrimSpace(r.Path))
+	if !filepath.IsAbs(r.Path) || r.Path == "." {
+		return fmt.Errorf("%s.path must be absolute", field)
+	}
+	if r.Access != "read" && r.Access != "write" {
+		return fmt.Errorf("%s.access is invalid", field)
+	}
+	if info, err := os.Stat(r.Path); err != nil || !info.IsDir() {
+		return fmt.Errorf("workspace root %q is unavailable", r.Path)
+	}
+	return nil
+}
+
 func normalizeRunOptions(in *protocol.RunOptions, cwd string, available []tools.Tool) (protocol.RunOptions, error) {
 	out := protocol.RunOptions{Mode: "agent", Search: "disabled", ApprovalPolicy: "ask"}
 	if in != nil {
@@ -66,16 +83,8 @@ func normalizeRunOptions(in *protocol.RunOptions, cwd string, available []tools.
 		out.WorkspaceRoots = []protocol.WorkspaceRoot{{Path: cwd, Access: "write"}}
 	}
 	for i := range out.WorkspaceRoots {
-		r := &out.WorkspaceRoots[i]
-		r.Path = filepath.Clean(strings.TrimSpace(r.Path))
-		if !filepath.IsAbs(r.Path) || r.Path == "." {
-			return protocol.RunOptions{}, fmt.Errorf("options.workspace_roots[%d].path must be absolute", i)
-		}
-		if r.Access != "read" && r.Access != "write" {
-			return protocol.RunOptions{}, fmt.Errorf("options.workspace_roots[%d].access is invalid", i)
-		}
-		if info, err := os.Stat(r.Path); err != nil || !info.IsDir() {
-			return protocol.RunOptions{}, fmt.Errorf("workspace root %q is unavailable", r.Path)
+		if err := normalizeWorkspaceRoot(&out.WorkspaceRoots[i], fmt.Sprintf("options.workspace_roots[%d]", i)); err != nil {
+			return protocol.RunOptions{}, err
 		}
 	}
 	clientTools, err := normalizeClientTools(out.ClientTools, available)

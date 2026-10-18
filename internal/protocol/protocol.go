@@ -141,6 +141,19 @@ type ToolResult struct {
 	Output    string         `json:"output"`
 	Failed    bool           `json:"failed,omitempty"`
 	Cancelled bool           `json:"cancelled,omitempty"`
+	// Error is a machine-readable reason for a failed call, when one is known.
+	// Output keeps the human/model-facing text either way.
+	Error *ToolError `json:"error,omitempty"`
+}
+
+// ToolError codes: "path_outside_roots" and "path_read_only_root" carry the
+// resolved Path, the requested Access and the run's effective Roots so a
+// client can offer to grant the path (see POST .../runs/{run}/roots).
+type ToolError struct {
+	Code   string          `json:"code"`
+	Path   string          `json:"path,omitempty"`
+	Access string          `json:"access,omitempty"`
+	Roots  []WorkspaceRoot `json:"roots,omitempty"`
 }
 
 type Usage struct {

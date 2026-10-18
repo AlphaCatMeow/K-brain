@@ -299,7 +299,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}, "run_roots": map[string]any{"extend": true, "denial_codes": true}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -506,6 +506,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 4 && parts[1] == "runs" && parts[2] != "" && parts[3] == "cancel" && r.Method == http.MethodPost {
 		s.cancelRun(w, r, id, parts[2])
+		return
+	}
+	if len(parts) == 4 && parts[1] == "runs" && parts[2] != "" && parts[3] == "roots" && r.Method == http.MethodPost {
+		s.extendRunRoots(w, r, id, parts[2])
 		return
 	}
 	if len(parts) == 3 && parts[1] == "permissions" && parts[2] != "" && r.Method == http.MethodPost {
@@ -1348,7 +1352,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}, OnToolStart: func(id, name, args string) {
 		_, _ = rt.publish(protocol.EventToolCall, protocol.ToolCallEvent{ToolCall: protocol.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}}, "")
 	}, OnToolResult: func(id, name string, result tools.Result) {
-		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Content: protocol.FromAIMessage(ai.Message{Role: "tool", Parts: result.Parts}).Content, Failed: result.Failed, Cancelled: result.Cancelled}}, "")
+		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Content: protocol.FromAIMessage(ai.Message{Role: "tool", Parts: result.Parts}).Content, Failed: result.Failed, Cancelled: result.Cancelled, Error: toolErrorFromDenial(result.Denial)}}, "")
 	}, OnToolOutput: func(id, output string) {
 		_, _ = rt.publish(protocol.EventToolStatus, protocol.ToolStatus{ToolCallID: id, Status: "running", Message: output}, "")
 	}, OnUsage: func(u ai.Usage) {

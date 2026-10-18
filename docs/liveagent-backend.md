@@ -36,7 +36,7 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | 模型 | Agent model/provider | `{provider, model}` | assistant provider/model |
 | 用户/助手 | `ai.Message` | `Message` | LiveAgent 自有 `Message` 展示类型 |
 | 工具调用 | `ai.ToolCall` | `{id,name,arguments}` | `ToolCall` 与工具轨迹 |
-| 工具结果 | `tools.Result` | `{id,name,output,failed,cancelled}` | `ToolResultMessage` |
+| 工具结果 | `tools.Result` | `{id,name,output,failed,cancelled,error?}` | `ToolResultMessage` |
 | 权限 | `tools.GateRequest` | `permission_id`, `tool`, `command`, `options` | 集中审批栏 |
 | 子代理 | `agent.BackgroundTask` | `Subagent` | 状态与报告工具轨迹 |
 | 流顺序 | durable event journal | 单会话单调递增 `seq` | 去重与续传游标 |
@@ -69,12 +69,17 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | POST | `/v1/sessions/{id}/runs` | 提交提示及可选模型切换 |
 | GET | `/v1/sessions/{id}/events?after_seq=N` | 从指定序号之后重放并订阅事件 |
 | POST | `/v1/sessions/{id}/runs/{run}/cancel` | 取消运行 |
+| POST | `/v1/sessions/{id}/runs/{run}/roots` | 给进行中的运行追加授权目录 |
 | POST | `/v1/sessions/{id}/permissions/{permission}` | 提交审批结果 |
 | POST | `/v1/sessions/{id}/close` | 结束当前会话运行并保存 |
 
 列表支持 `page`、`page_size`、`cwd`、`cwd_empty`、`shared`，返回 `sessions` 和 `total_count`。历史窗口支持 `max_messages`、`before_offset`、`expected_revision`、`include_active`；返回 `session`、`revision`、`oldest_offset`、`has_more_before`、`total_message_count`、与消息数组一一对应的原始 `message_offsets`，以及可选 `active_messages`。原始 offset 可以不连续，客户端应按返回值构造消息引用。
 
 编辑请求为 `{message_ref:{message_id},replacement:<规范 user 消息>,expected_revision}`。分支请求为 `{message_ref:{message_id},expected_revision?,title?}`。过期 revision 返回 409。编辑完成后启动运行时传入 `resume_message_id`，后端验证它指向已持久化的末尾用户消息，避免重复追加。普通发送不使用该字段。
+
+运行中追加授权目录：请求为 `{roots:[{path,access}]}`，`path` 必须是已存在目录的绝对路径，`access` 为 `read` 或 `write`，校验规则与 `options.workspace_roots` 相同。已授权的路径只会升级为 `write`，不会降级。成功返回 `{version,roots}`（追加后的完整列表）；运行不在进行中时返回 409。追加后同一轮后续的工具调用立即生效；子代理工作树在创建时复制授权，不继承之后的追加。`/v1/health` 的 `capabilities.run_roots` 为 `{extend:true,denial_codes:true}` 时表示支持本接口和下面的结构化拒绝信息。
+
+工具因授权目录被拒时，`tool.result` 的 `output` 文本保持不变，另带 `error:{code,path,access,roots}`。`code` 为 `path_outside_roots`（路径不在任何授权目录内）或 `path_read_only_root`（写入只读目录）；`path` 是解析后的绝对路径，`roots` 是本次检查时生效的授权目录。客户端可据此提示用户授权，再调用上面的接口。
 
 分享请求为 `{enabled,redact_tool_content?}`，默认隐藏工具内容；返回 snake_case 分享状态。公开链接不需要后端令牌，撤销后原 token 失效。分享视图排除系统指令、工作目录、运行日志和内部任务信息。
 

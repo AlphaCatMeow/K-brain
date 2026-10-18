@@ -33,7 +33,7 @@ func TestWorktreeWorkspaceRootsPreserveBoundaries(t *testing.T) {
 				t.Fatal("parent grants mutated")
 			}
 			if tc.name == "empty" {
-				if _, explicit := mapped.Value(workspaceRootsKey{}).([]WorkspaceRoot); !explicit {
+				if _, explicit := runRoots(mapped); !explicit {
 					t.Fatal("explicit denial lost")
 				}
 			}
