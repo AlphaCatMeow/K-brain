@@ -150,6 +150,9 @@ type Config struct {
 
 	Experimental []string            `json:"experimental,omitempty"`
 	Providers    map[string]Provider `json:"providers"`
+	// ProviderOrder is the user's display order. It is persisted per provider inside
+	// metadata (see providerOrderMetadataKey); empty means providers sort by ID.
+	ProviderOrder []string `json:"-"`
 
 	allowEmptySave bool
 	Models         map[string]Model `json:"-"`
@@ -360,10 +363,16 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 		return fmt.Errorf("unsupported sandbox.backend %q", cfg.Sandbox.Backend)
 	}
 	cfg.Models = make(map[string]Model)
+	orderIndex := map[string]int{}
+	cfg.ProviderOrder = nil
 	for _, name := range slices.Sorted(maps.Keys(cfg.Providers)) {
 		provider := cfg.Providers[name]
 		if err := provider.CacheCapabilities.Validate(); err != nil {
 			return fmt.Errorf("provider %q: %w", name, err)
+		}
+		if index, ok := takeProviderOrder(&provider); ok {
+			orderIndex[name] = index
+			cfg.ProviderOrder = append(cfg.ProviderOrder, name)
 		}
 		overrides, err := takeModelOverrides(&provider)
 		if err != nil {
@@ -430,6 +439,8 @@ func parseConfigJSONC(data []byte, cfg *Config) error {
 		provider.Models = nil
 		cfg.Providers[name] = provider
 	}
+	// Names were collected in ID order, so a stable sort breaks index ties by ID.
+	slices.SortStableFunc(cfg.ProviderOrder, func(a, b string) int { return orderIndex[a] - orderIndex[b] })
 	return nil
 }
 
@@ -586,7 +597,9 @@ func marshalConfig(c *Config) ([]byte, error) {
 
 func piProviders(c *Config) map[string]Provider {
 	providers := make(map[string]Provider, len(c.Providers))
-	for name, provider := range c.Providers {
+	ordered := len(c.ProviderOrder) > 0
+	for index, name := range c.OrderedProviderIDs() {
+		provider := c.Providers[name]
 		p := provider
 		p.Models = make([]PiModel, 0)
 		var overrides map[string]PiModel
@@ -609,7 +622,7 @@ func piProviders(c *Config) map[string]Provider {
 				overrides[id] = piModelFor(id, model.ForProvider(name))
 			}
 		}
-		p.Metadata = withModelOverrides(provider.Metadata, overrides)
+		p.Metadata = withProviderOrder(withModelOverrides(provider.Metadata, overrides), index, ordered)
 		providers[name] = p
 	}
 	return providers
@@ -724,6 +737,7 @@ func (c *Config) Snapshot() *Config {
 		_ = json.Unmarshal(data, &cloned)
 		snap.Providers[id] = cloned
 	}
+	snap.ProviderOrder = slices.Clone(c.ProviderOrder)
 	snap.Models = make(map[string]Model, len(c.Models))
 	for id, model := range c.Models {
 		data, _ := json.Marshal(model)

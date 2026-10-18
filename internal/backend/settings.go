@@ -164,7 +164,8 @@ func projectSettings(cfg *config.Config) settingsProjection {
 	if out.AIApproval.Mode == "" {
 		out.AIApproval.Mode = "off"
 	}
-	for id, p := range cfg.Providers {
+	for _, id := range cfg.OrderedProviderIDs() {
+		p := cfg.Providers[id]
 		pv := settingsProvider{ID: id, Name: p.Name, Type: p.Type, API: p.API, BaseURL: publicBaseURL(p.BaseURL), IsFullURL: p.IsFullURL, ModelsURL: publicModelsURL(p.ModelsURL), APIKeyConfigured: p.APIKey != "", CustomHeaders: publicHeaders(p.CustomHeaders), ModelOrder: slices.Clone(p.ModelOrder), ActiveModels: slices.Clone(p.ActiveModels), RequestFormat: p.RequestFormat, Reasoning: p.Reasoning, PromptCachingEnabled: p.PromptCachingEnabled, PromptCacheHintMode: p.PromptCacheHintMode, PromptCacheRetention: p.PromptCacheRetention, NativeWebSearchEnabled: p.NativeWebSearchEnabled, UseSystemProxy: p.UseSystemProxy, RetryPolicy: p.RetryPolicy, UsageQuery: publicMetadata(p.UsageQuery), Metadata: publicMetadata(p.Metadata), Models: []settingsModel{}}
 		pv.CacheCapabilities, pv.CacheSessionAffinity, pv.CacheControlFormat = p.CacheCapabilities, p.CacheSessionAffinity, p.CacheControlFormat
 		for modelID, shared := range cfg.Models {
@@ -188,7 +189,6 @@ func projectSettings(cfg *config.Config) settingsProjection {
 		sort.Slice(pv.Models, func(i, j int) bool { return pv.Models[i].ID < pv.Models[j].ID })
 		out.Providers = append(out.Providers, pv)
 	}
-	sort.Slice(out.Providers, func(i, j int) bool { return out.Providers[i].ID < out.Providers[j].ID })
 	sort.Slice(out.Models, func(i, j int) bool {
 		if out.Models[i].Provider == out.Models[j].Provider {
 			return out.Models[i].ID < out.Models[j].ID
@@ -374,6 +374,7 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 		}
 		cfg.Providers[id] = p
 	}
+	cfg.ProviderOrder = nextProviderOrder(cfg, update.Providers)
 	if update.DefaultModel != nil {
 		cfg.DefaultModel = strings.TrimSpace(*update.DefaultModel)
 	}
@@ -396,6 +397,32 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 		}
 	}
 	return nil
+}
+
+// nextProviderOrder applies the display order implied by an update. A provider list that names
+// every configured provider is the client's full ordering; a partial list (such as importing
+// only missing providers) keeps the existing order and appends the new providers after it.
+func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate) []string {
+	ids := make([]string, 0, len(providers))
+	for _, in := range providers {
+		ids = append(ids, strings.TrimSpace(in.ID))
+	}
+	if len(ids) > 0 && len(ids) == len(cfg.Providers) {
+		return ids
+	}
+	if len(cfg.ProviderOrder) == 0 {
+		return nil
+	}
+	order := slices.DeleteFunc(slices.Clone(cfg.ProviderOrder), func(id string) bool {
+		_, ok := cfg.Providers[id]
+		return !ok
+	})
+	for _, id := range ids {
+		if !slices.Contains(order, id) {
+			order = append(order, id)
+		}
+	}
+	return order
 }
 
 // Refresh only at the next idle run boundary; SetModel preserves tasks and history.
