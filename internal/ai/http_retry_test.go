@@ -54,7 +54,7 @@ func TestProtocolsRetryTemporaryHTTPFailures(t *testing.T) {
 						} else if original != string(body) {
 							t.Error("retry changed request payload")
 						}
-						path := map[string]string{"chat": "/chat/completions", "responses": "/responses", "anthropic": "/messages"}[protocol]
+						path := map[string]string{"chat": "/chat/completions", "responses": "/responses", "anthropic": "/v1/messages"}[protocol]
 						if r.URL.Path != path || r.Header.Get("Authorization") != "Bearer key" || r.Header.Get("X-Session-Id") != "session" || (r.Header.Get("Accept") == "text/event-stream") != stream {
 							t.Errorf("request metadata lost: path=%s headers=%v", r.URL.Path, r.Header)
 						}

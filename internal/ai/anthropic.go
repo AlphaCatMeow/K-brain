@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,8 +12,32 @@ import (
 
 type Anthropic struct{ *OpenAI }
 
-func NewAnthropic(baseURL, apiKey string) *Anthropic { return &Anthropic{OpenAI: New(baseURL, apiKey)} }
-func (c *Anthropic) Clone() Client                   { cp := *c.OpenAI; return &Anthropic{OpenAI: &cp} }
+func NewAnthropic(baseURL, apiKey string) *Anthropic {
+	return newAnthropicWithOptions(baseURL, apiKey, false, "", nil)
+}
+
+func newAnthropicWithOptions(baseURL, apiKey string, full bool, modelsURL string, headers map[string]string) *Anthropic {
+	if !full {
+		if u, err := url.Parse(baseURL); err == nil {
+			path := strings.TrimRight(u.EscapedPath(), "/")
+			for _, suffix := range []string{"/messages", "/models"} {
+				if strings.HasSuffix(strings.ToLower(path), suffix) {
+					path = path[:len(path)-len(suffix)]
+					break
+				}
+			}
+			if !modelCatalogVersionSuffix.MatchString(path) {
+				path += "/v1"
+			}
+			u.Path, _ = url.PathUnescape(path)
+			u.RawPath = path
+			baseURL = u.String()
+		}
+	}
+	return &Anthropic{OpenAI: NewWithOptions(baseURL, apiKey, full, modelsURL, headers)}
+}
+
+func (c *Anthropic) Clone() Client { cp := *c.OpenAI; return &Anthropic{OpenAI: &cp} }
 
 func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
 	headers := http.Header{

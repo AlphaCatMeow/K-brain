@@ -41,6 +41,9 @@ func TestCompatibleModelCatalogURLs(t *testing.T) {
 			{name: "full address", base: "/tenant/v1/responses", catalog: "/tenant/v1/models", full: true},
 			{name: "explicit address", catalog: "/catalog?region=cn", override: true},
 		} {
+			if api == APIMessages && (tc.name == "root models" || tc.name == "responses address") {
+				continue
+			}
 			t.Run(api+"/"+tc.name, func(t *testing.T) {
 				var paths []string
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

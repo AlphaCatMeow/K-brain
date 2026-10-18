@@ -146,6 +146,8 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 		{"escaped prefix", ai.APIChatCompletions, "/custom%2Ftenant/v1/chat/completions", "", "/custom%2Ftenant/v1/models", true},
 		{"catalog override", ai.APIChatCompletions, "/chat", "/catalog/?region=cn/", "/catalog/?region=cn/", true},
 		{"messages", ai.APIMessages, "/messages", "", "/v1/models", true},
+		{"messages root", ai.APIMessages, "", "", "/v1/models", false},
+		{"messages prefixed root", ai.APIMessages, "/tenant", "", "/tenant/v1/models", false},
 		{"versioned messages", ai.APIMessages, "/custom/v1/messages", "", "/custom/v1/models", true},
 		{"messages base", ai.APIMessages, "/custom/v1", "", "/custom/v1/models", false},
 		{"messages catalog override", ai.APIMessages, "/messages", "/catalog/?region=cn", "/catalog/?region=cn", true},
@@ -176,6 +178,8 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 				}
 				if tc.api == ai.APIResponses {
 					_, _ = io.WriteString(w, `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`)
+				} else if tc.api == ai.APIMessages {
+					_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}`)
 				} else {
 					_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
 				}
@@ -236,7 +240,7 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 			if len(result.Models) != 1 || result.Models[0].ID != "m" || result.Models[0].Provider != "p" || result.Models[0].ContextWindow != 100 || result.Models[0].MaxOutputTokens != 20 {
 				t.Fatalf("discovered models=%s", body)
 			}
-			if tc.full && (tc.api == ai.APIChatCompletions || tc.api == ai.APIResponses) {
+			if tc.api == ai.APIMessages || tc.full && (tc.api == ai.APIChatCompletions || tc.api == ai.APIResponses) {
 				client, err := routing.ClientForProviderContext(context.Background(), store.Snapshot().Providers["p"], "p", 1)
 				if err != nil {
 					t.Fatal(err)
@@ -246,7 +250,11 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 					t.Fatalf("generation=%q %v", text, err)
 				}
 				got = <-requests
-				if got.Method != http.MethodPost || got.URL.RequestURI() != strings.TrimRight(tc.endpoint, "/") || got.Header.Get("X-Test") != "yes" || got.Header.Get("Authorization") != "Bearer k" {
+				wantEndpoint := strings.TrimRight(tc.endpoint, "/")
+				if !tc.full && tc.api == ai.APIMessages {
+					wantEndpoint = strings.TrimSuffix(tc.catalog, "/models") + "/messages"
+				}
+				if got.Method != http.MethodPost || got.URL.RequestURI() != wantEndpoint || got.Header.Get("X-Test") != "yes" || got.Header.Get("Authorization") != "Bearer k" {
 					t.Fatalf("generation request=%s %s headers=%v", got.Method, got.URL, got.Header)
 				}
 			}

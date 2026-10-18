@@ -37,7 +37,7 @@ func TestUnifiedGatewaySwitchesFourProtocolsWithOneHistory(t *testing.T) {
 			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"unified answer\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"prompt_cache_hit_tokens\":80}}\n\ndata: [DONE]\n\n")
 		case r.URL.Path == "/responses":
 			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"unified answer\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":2,\"input_tokens_details\":{\"cached_tokens\":80}}}}\n\n")
-		case r.URL.Path == "/messages":
+		case r.URL.Path == "/v1/messages":
 			fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":20,\"cache_read_input_tokens\":80}}}\n\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"unified answer\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
 		case strings.Contains(r.URL.Path, ":streamGenerateContent"):
 			fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"unified answer\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":100,\"candidatesTokenCount\":2,\"cachedContentTokenCount\":80}}\n\n")
