@@ -69,8 +69,8 @@ type rootRequestWaiter struct {
 
 // waitRootRequest publishes root.requested for a denied path and blocks the
 // tool call until the client grants or denies it, or the call is cancelled.
-// A grant is added to the run before returning true so the caller can re-check.
-func (s *Server) waitRootRequest(rt *runtimeSession, runID string, roots *tools.RunRoots, req tools.RootRequest, ctx context.Context) bool {
+// A grant is added to the run before returning so the caller can re-check.
+func (s *Server) waitRootRequest(rt *runtimeSession, runID string, roots *tools.RunRoots, req tools.RootRequest, ctx context.Context) tools.RootAnswer {
 	id := newRunID()
 	waiter := &rootRequestWaiter{
 		request: protocol.RootRequest{RequestID: id, ToolCallID: tools.ToolCallID(ctx), Tool: req.Tool, Code: req.Code, Path: req.Path, Access: req.Access, Roots: protocolRoots(req.Roots)},
@@ -91,9 +91,12 @@ func (s *Server) waitRootRequest(rt *runtimeSession, runID string, roots *tools.
 			resolution = protocol.RootResolution{RequestID: id, Decision: "grant", Roots: protocolRoots(roots.Extend(grants))}
 		}
 		s.publish(rt, protocol.EventRootResolved, resolution, "")
-		return grants != nil
+		if grants == nil {
+			return tools.RootDenied
+		}
+		return tools.RootGranted
 	case <-ctx.Done():
-		return false
+		return tools.RootUnanswered
 	}
 }
 

@@ -168,10 +168,25 @@ type RootRequest struct {
 	Roots  []WorkspaceRoot
 }
 
-// RootRequester blocks until the client answers and reports whether it granted
-// a root (already added to the run's RunRoots). Only installed for runs whose
+// RootAnswer is the outcome of a root request.
+type RootAnswer int
+
+const (
+	// RootUnanswered: nobody answered (unattended run, cancelled call).
+	RootUnanswered RootAnswer = iota
+	// RootGranted: a root was added to the run's RunRoots; re-check the path.
+	RootGranted
+	// RootDenied: the user explicitly refused access to the path.
+	RootDenied
+)
+
+// RootRequester blocks until the client answers. Only installed for runs whose
 // client opted in, so other runs keep failing fast.
-type RootRequester func(ctx context.Context, req RootRequest) bool
+type RootRequester func(ctx context.Context, req RootRequest) RootAnswer
+
+// userDeniedHint is appended when the user refused a path, so the model does
+// not route around the decision with shell commands or other tools.
+const userDeniedHint = " (the user denied access to this path; do not try to access it by other means)"
 
 type rootRequesterKey struct{}
 
@@ -188,10 +203,16 @@ func liveagentPath(ctx context.Context, raw string, access string, tool string, 
 	if err == nil || requester == nil || !errors.As(err, &denial) {
 		return path, err
 	}
-	if !requester(ctx, RootRequest{Tool: tool, Code: denial.Code, Path: denial.Path, Access: denial.Access, Roots: denial.Roots}) {
+	switch requester(ctx, RootRequest{Tool: tool, Code: denial.Code, Path: denial.Path, Access: denial.Access, Roots: denial.Roots}) {
+	case RootGranted:
+		return checkLiveagentPath(ctx, raw, access, tool, allowDirectory)
+	case RootDenied:
+		denied := *denial
+		denied.message += userDeniedHint
+		return path, &denied
+	default:
 		return path, err
 	}
-	return checkLiveagentPath(ctx, raw, access, tool, allowDirectory)
 }
 
 func checkLiveagentPath(ctx context.Context, raw string, access string, tool string, allowDirectory bool) (string, error) {

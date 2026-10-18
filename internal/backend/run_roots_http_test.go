@@ -242,7 +242,7 @@ func TestRootRequestsPauseDeniedCallUntilClientAnswers(t *testing.T) {
 				}
 				return
 			}
-			if !result.Failed || result.Error == nil || result.Error.Code != "path_outside_roots" {
+			if !result.Failed || result.Error == nil || result.Error.Code != "path_outside_roots" || !strings.Contains(result.Output, "the user denied access to this path") {
 				t.Fatalf("denied read=%+v", result)
 			}
 		})

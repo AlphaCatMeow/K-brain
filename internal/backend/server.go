@@ -1270,9 +1270,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	runRoots := tools.NewRunRoots(roots)
 	ctx = tools.WithRunRoots(ctx, runRoots)
 	if options.RootRequests {
-		ctx = tools.WithRootRequester(ctx, func(requestCtx context.Context, req tools.RootRequest) bool {
+		ctx = tools.WithRootRequester(ctx, func(requestCtx context.Context, req tools.RootRequest) tools.RootAnswer {
 			if isUnattendedRun(requestCtx) {
-				return false
+				return tools.RootUnanswered
 			}
 			return s.waitRootRequest(rt, runID, runRoots, req, requestCtx)
 		})
