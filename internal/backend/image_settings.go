@@ -175,6 +175,15 @@ func (m *ImageSettingsManager) ImageSettings(scope imaging.Scope) (imaging.Image
 	return m.publicLocked(scope), nil
 }
 func (m *ImageSettingsManager) resolveTargetLocked(id string) (imaging.TargetSnapshot, error) {
+	derived, _ := m.providerImageTargetsLocked()
+	for _, target := range derived {
+		if target.ID == id {
+			if !target.Enabled {
+				return imaging.TargetSnapshot{}, imageError(imaging.CodeInvalidInput)
+			}
+			return imaging.SnapshotTarget(target), nil
+		}
+	}
 	s := m.currentLocked()
 	if err := imaging.ValidateSettingsWithProviders(s, func(id string) bool { _, ok := m.store.cfg.Providers[id]; return ok }); err != nil {
 		return imaging.TargetSnapshot{}, imageError(imaging.CodeInvalidInput)
@@ -239,6 +248,18 @@ func (m *ImageSettingsManager) WithImageTarget(ctx context.Context, scope imagin
 }
 
 func (m *ImageSettingsManager) UpdateImageSettings(ctx context.Context, scope imaging.Scope, update imaging.ImageSettingsUpdate) (imaging.ImageSettings, error) {
+	for _, target := range update.Targets {
+		if target.Source != "" || target.ProviderID != "" || target.ModelID != "" || strings.HasPrefix(target.ID, "it_provider_") {
+			return imaging.ImageSettings{}, imageError(imaging.CodeInvalidInput)
+		}
+	}
+	// Derived connections are resolved after legacy ones; a legacy ID in their
+	// namespace would shadow a provider binding with a different endpoint/key.
+	for _, connection := range update.Connections {
+		if strings.HasPrefix(connection.ID, "ic_provider_") {
+			return imaging.ImageSettings{}, imageError(imaging.CodeInvalidInput)
+		}
+	}
 	if err := checkImageScope(scope); err != nil {
 		return imaging.ImageSettings{}, err
 	}
@@ -495,6 +516,22 @@ func (m *ImageSettingsManager) ResolveImageConnection(ctx context.Context, scope
 			break
 		}
 	}
+	derivedTargets, derivedConnections := m.providerImageTargetsLocked()
+	derivedAdapter := ""
+	if !found {
+		for _, c := range derivedConnections {
+			if c.ID == id {
+				connection, found = c, true
+				break
+			}
+		}
+		for _, target := range derivedTargets {
+			if target.ConnectionID == id && target.Enabled {
+				derivedAdapter = target.Adapter
+				break
+			}
+		}
+	}
 	provider := m.store.cfg.Providers[connection.Binding.ProviderID]
 	_, providerExists := m.store.cfg.Providers[connection.Binding.ProviderID]
 	m.store.mu.RUnlock()
@@ -518,6 +555,17 @@ func (m *ImageSettingsManager) ResolveImageConnection(ctx context.Context, scope
 		if provider.API == "google-generative-ai" {
 			b.AuthKind = "api_key_header"
 		}
+		if derivedAdapter != "" {
+			base, ok := providerImageBaseURL(provider, derivedAdapter)
+			if !ok {
+				return ResolvedImageConnection{}, imageError(imaging.CodeInvalidInput)
+			}
+			b.BaseURL = base
+			b.AuthKind = "bearer"
+			if derivedAdapter == "google-generate-content-image" {
+				b.AuthKind = "api_key_header"
+			}
+		}
 		for _, h := range provider.CustomHeaders {
 			v, err := m.resolveProviderSecret(ctx, h.Value)
 			if err != nil {
@@ -528,7 +576,7 @@ func (m *ImageSettingsManager) ResolveImageConnection(ctx context.Context, scope
 			}
 			b.CustomHeaders[h.Key] = v
 		}
-		resolver = &imageProviderSecretResolver{manager: m, scope: scope, providerID: connection.Binding.ProviderID, expression: provider.APIKey, value: value}
+		resolver = &imageProviderSecretResolver{manager: m, scope: scope, providerID: connection.Binding.ProviderID, expression: provider.APIKey, value: value, provider: provider}
 	} else if b.Kind == "independent" {
 		resolver = &imageOwnedSecretResolver{manager: m, scope: scope, connectionID: id, refs: maps.Clone(b.SecretRefs)}
 		if len(b.SecretRefs) == 0 {
@@ -587,6 +635,8 @@ type imageProviderSecretResolver struct {
 	expression string
 	scope      imaging.Scope
 	value      string
+	provider   config.Provider
+	target     *imaging.TargetSnapshot
 }
 
 func (r *imageProviderSecretResolver) ResolveSecret(ctx context.Context, scope imaging.Scope, ref string) (string, error) {
@@ -596,10 +646,15 @@ func (r *imageProviderSecretResolver) ResolveSecret(ctx context.Context, scope i
 	if ctx.Err() != nil {
 		return "", imageError(imaging.CodeUnavailable)
 	}
+	if r.target != nil {
+		if err := r.manager.CheckProviderImageTarget(ctx, scope, *r.target); err != nil {
+			return "", err
+		}
+	}
 	r.manager.store.mu.RLock()
 	provider, exists := r.manager.store.cfg.Providers[r.providerID]
 	r.manager.store.mu.RUnlock()
-	if !exists || provider.APIKey == "" || provider.APIKey != r.expression {
+	if !exists || provider.APIKey == "" || provider.APIKey != r.expression || !reflect.DeepEqual(providerImageBinding(provider), providerImageBinding(r.provider)) {
 		return "", imageError(imaging.CodeAuthRequired)
 	}
 	if ref != "provider_api_key" || r.value == "" {

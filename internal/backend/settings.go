@@ -71,17 +71,19 @@ type settingsProvider struct {
 	Models                 []settingsModel       `json:"models"`
 }
 type settingsModel struct {
-	Provider        string   `json:"provider"`
-	ID              string   `json:"id"`
-	Name            string   `json:"name,omitempty"`
-	DisplayName     string   `json:"displayName,omitempty"`
-	OwnedBy         string   `json:"ownedBy,omitempty"`
-	LimitsSource    string   `json:"limitsSource,omitempty"`
-	ContextWindow   int      `json:"contextWindow,omitempty"`
-	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
-	MaxOutputToken  int      `json:"maxOutputToken,omitempty"`
-	InputModalities []string `json:"inputModalities,omitempty"`
-	Vision          bool     `json:"vision,omitempty"`
+	Provider         string   `json:"provider"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name,omitempty"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	OwnedBy          string   `json:"ownedBy,omitempty"`
+	LimitsSource     string   `json:"limitsSource,omitempty"`
+	ContextWindow    int      `json:"contextWindow,omitempty"`
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	MaxOutputToken   int      `json:"maxOutputToken,omitempty"`
+	OutputModalities []string `json:"outputModalities,omitempty"`
+	ImageAdapter     string   `json:"imageAdapter,omitempty"`
+	InputModalities  []string `json:"inputModalities,omitempty"`
+	Vision           bool     `json:"vision,omitempty"`
 }
 type settingsProjection struct {
 	AIApproval      config.AIApprovalConfig `json:"aiApproval"`
@@ -94,17 +96,19 @@ type settingsProjection struct {
 	Models          []settingsModel         `json:"models"`
 }
 type settingsModelUpdate struct {
-	Provider        string    `json:"provider,omitempty"`
-	ID              string    `json:"id"`
-	Name            *string   `json:"name,omitempty"`
-	DisplayName     *string   `json:"displayName,omitempty"`
-	OwnedBy         *string   `json:"ownedBy,omitempty"`
-	LimitsSource    *string   `json:"limitsSource,omitempty"`
-	ContextWindow   *int      `json:"contextWindow,omitempty"`
-	MaxOutputTokens *int      `json:"maxOutputTokens,omitempty"`
-	MaxOutputToken  *int      `json:"maxOutputToken,omitempty"`
-	InputModalities *[]string `json:"inputModalities,omitempty"`
-	Vision          *bool     `json:"vision,omitempty"`
+	Provider         string    `json:"provider,omitempty"`
+	ID               string    `json:"id"`
+	Name             *string   `json:"name,omitempty"`
+	DisplayName      *string   `json:"displayName,omitempty"`
+	OwnedBy          *string   `json:"ownedBy,omitempty"`
+	LimitsSource     *string   `json:"limitsSource,omitempty"`
+	ContextWindow    *int      `json:"contextWindow,omitempty"`
+	MaxOutputTokens  *int      `json:"maxOutputTokens,omitempty"`
+	MaxOutputToken   *int      `json:"maxOutputToken,omitempty"`
+	OutputModalities *[]string `json:"outputModalities,omitempty"`
+	ImageAdapter     *string   `json:"imageAdapter,omitempty"`
+	InputModalities  *[]string `json:"inputModalities,omitempty"`
+	Vision           *bool     `json:"vision,omitempty"`
 }
 type settingsProviderUpdate struct {
 	CacheCapabilities      *ai.CacheCapabilities `json:"cacheCapabilities,omitempty"`
@@ -172,7 +176,7 @@ func projectSettings(cfg *config.Config) settingsProjection {
 				continue
 			}
 			m := shared.ForProvider(id)
-			mv := settingsModel{Provider: id, ID: modelID, Name: m.Name, DisplayName: m.DisplayName, OwnedBy: m.OwnedBy, LimitsSource: m.LimitsSource, ContextWindow: m.Context, MaxOutputTokens: m.MaxOut, MaxOutputToken: m.MaxOut, InputModalities: slices.Clone(m.InputModalities), Vision: m.Vision}
+			mv := settingsModel{Provider: id, ID: modelID, Name: m.Name, DisplayName: m.DisplayName, OwnedBy: m.OwnedBy, LimitsSource: m.LimitsSource, ContextWindow: m.Context, MaxOutputTokens: m.MaxOut, MaxOutputToken: m.MaxOut, InputModalities: slices.Clone(m.InputModalities), OutputModalities: slices.Clone(m.OutputModalities), ImageAdapter: m.ImageAdapter, Vision: m.Vision}
 			// Provider settings must expose disabled models so editing and saving a
 			// provider cannot delete them. The top-level catalog remains active-only.
 			pv.Models = append(pv.Models, mv)
@@ -347,6 +351,17 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 						return fmt.Errorf("max output tokens must be non-negative")
 					}
 					m.MaxOut = *mo
+				}
+				if item.OutputModalities != nil {
+					m.OutputModalities = slices.Clone(*item.OutputModalities)
+				}
+				if item.ImageAdapter != nil {
+					switch *item.ImageAdapter {
+					case "", "disabled", "openai-images", "google-generate-content-image":
+						m.ImageAdapter = *item.ImageAdapter
+					default:
+						return fmt.Errorf("unsupported image adapter")
+					}
 				}
 				if item.InputModalities != nil {
 					m.InputModalities = slices.Clone(*item.InputModalities)

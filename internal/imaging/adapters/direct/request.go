@@ -15,21 +15,21 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/imaging"
 )
 
-type imageRef struct {
-	URL string `json:"image_url"`
+type openAIEditRequest struct {
+	Fields openAIRequest
+	Images []imaging.ImageContent
+	Mask   *imaging.ImageContent
 }
 type openAIRequest struct {
-	ResponseFormat string     `json:"response_format,omitempty"`
-	Model          string     `json:"model"`
-	Prompt         string     `json:"prompt"`
-	N              int        `json:"n"`
-	Size           string     `json:"size,omitempty"`
-	Quality        string     `json:"quality,omitempty"`
-	Format         string     `json:"output_format,omitempty"`
-	Compression    *int       `json:"output_compression,omitempty"`
-	Background     string     `json:"background,omitempty"`
-	Images         []imageRef `json:"images,omitempty"`
-	Mask           *imageRef  `json:"mask,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt"`
+	N              int    `json:"n"`
+	Size           string `json:"size,omitempty"`
+	Quality        string `json:"quality,omitempty"`
+	Format         string `json:"output_format,omitempty"`
+	Compression    *int   `json:"output_compression,omitempty"`
+	Background     string `json:"background,omitempty"`
 }
 type inlineData struct {
 	MIME string `json:"mimeType"`
@@ -44,10 +44,15 @@ type googleContent struct {
 	Role  string       `json:"role"`
 	Parts []googlePart `json:"parts"`
 }
+type googleImageConfig struct {
+	AspectRatio string `json:"aspectRatio,omitempty"`
+	ImageSize   string `json:"imageSize,omitempty"`
+}
 type googleRequest struct {
 	Contents []googleContent `json:"contents"`
 	Config   struct {
-		Modalities []string `json:"responseModalities"`
+		Modalities  []string           `json:"responseModalities"`
+		ImageConfig *googleImageConfig `json:"imageConfig,omitempty"`
 	} `json:"generationConfig"`
 }
 type arkRequest struct {
@@ -75,11 +80,11 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 	}
 	switch a.id {
 	case OpenAIID:
-		if r.Target.RemoteID != "gpt-image-2" && r.Target.RemoteID != "gpt-image-2-2026-04-21" && !(a.profile == "rolldek" && r.Target.RemoteID == "gpt-image-2.5") {
+		if ImageModelAdapter(r.Target.RemoteID) != OpenAIID && !(r.Target.Source == "provider" && ValidImageModelID(r.Target.RemoteID)) && !(a.profile == "rolldek" && r.Target.RemoteID == "gpt-image-2.5") {
 			return "", nil, unsupported()
 		}
 	case GoogleID:
-		if r.Target.RemoteID != "gemini-nano-banana-2.1" {
+		if ImageModelAdapter(r.Target.RemoteID) != GoogleID && !(r.Target.Source == "provider" && ValidImageModelID(r.Target.RemoteID)) {
 			return "", nil, unsupported()
 		}
 	case VolcengineID:
@@ -97,9 +102,11 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 	case OpenAIID:
 		b := openAIRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, N: 1}
 		if a.profile == "rolldek" {
-			if r.Request.Operation != imaging.OperationGenerate || len(r.Request.Parameters) != 0 {
+			if r.Request.Operation == imaging.OperationMask || len(r.Request.Parameters) != 0 {
 				return "", nil, unsupported()
 			}
+			// Only the JSON generations body carries response_format; edit results
+			// may arrive as URLs, which the rolldek response path already accepts.
 			b.ResponseFormat = "b64_json"
 		}
 		for k, v := range r.Request.Parameters {
@@ -127,20 +134,24 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 		if b.Background == "transparent" && b.Format != "png" && b.Format != "webp" {
 			return "", nil, badInput()
 		}
-		for _, in := range inputs {
-			b.Images = append(b.Images, imageRef{URL: dataURL(in)})
-		}
-		path := "/images/generations"
 		if len(inputs) > 0 {
-			path = "/images/edits"
+			return "/images/edits", openAIEditRequest{Fields: b, Images: inputs, Mask: mask}, nil
 		}
-		if mask != nil {
-			b.Mask = &imageRef{URL: dataURL(*mask)}
-		}
-		return path, b, nil
+		return "/images/generations", b, nil
 	case GoogleID:
-		if len(r.Request.Parameters) != 0 {
-			return "", nil, badInput()
+		imageConfig := &googleImageConfig{}
+		for key, value := range r.Request.Parameters {
+			switch key {
+			case "aspectRatio":
+				imageConfig.AspectRatio, err = enum(value, googleAspectRatios...)
+			case "imageSize":
+				imageConfig.ImageSize, err = enum(value, googleImageSizes(r.Target.RemoteID)...)
+			default:
+				err = badInput()
+			}
+			if err != nil {
+				return "", nil, err
+			}
 		}
 		parts := []googlePart{{Text: r.Request.Prompt}}
 		for _, in := range inputs {
@@ -148,6 +159,9 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 		}
 		b := googleRequest{Contents: []googleContent{{Role: "user", Parts: parts}}}
 		b.Config.Modalities = []string{"TEXT", "IMAGE"}
+		if len(r.Request.Parameters) > 0 {
+			b.Config.ImageConfig = imageConfig
+		}
 		return "/models/" + r.Target.RemoteID + ":generateContent", b, nil
 	case VolcengineID:
 		// Ark defaults to JPEG. Freeze the local default to PNG so the
@@ -312,16 +326,17 @@ func (a *Adapter) inputs(ctx context.Context, r imaging.ExecuteRequest) ([]imagi
 		}
 		// Check encoded size before opening/allocating. The final JSON size is
 		// checked separately (including text, escapes and structural overhead).
-		budget += int64(base64.StdEncoding.EncodedLen(int(asset.Bytes))) + 64
+		if a.id == OpenAIID {
+			budget += asset.Bytes + 512 // Multipart file bytes plus conservative part overhead.
+		} else {
+			budget += int64(base64.StdEncoding.EncodedLen(int(asset.Bytes))) + 64
+		}
 		if budget > a.limits.MaxRequestBytes {
 			return nil, nil, failure(imaging.CodeTooLarge, imaging.DeliveryNotSent)
 		}
 		in, err := a.readInput(ctx, asset)
 		if err != nil {
 			return nil, nil, err
-		}
-		if a.id == OpenAIID && len(dataURL(in)) > 20971520 {
-			return nil, nil, failure(imaging.CodeTooLarge, imaging.DeliveryNotSent)
 		}
 		if a.id == VolcengineID && (in.Width <= 14 || in.Height <= 14 || int64(in.Width)*int64(in.Height) > 36_000_000 || in.Width > in.Height*16 || in.Height > in.Width*16) {
 			return nil, nil, badInput()

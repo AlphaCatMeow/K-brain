@@ -314,12 +314,12 @@ func (s *Server) imageConfiguration(w http.ResponseWriter, r *http.Request, scop
 		if !imageMethod(w, r, http.MethodGet) {
 			return
 		}
-		settings, err := m.ImageSettings(scope)
+		targets, err := m.ListImageTargets(scope)
 		if err != nil {
 			imageHTTPError(w, r, err)
 			return
 		}
-		imageJSON(w, r, 200, map[string]any{"items": settings.Targets})
+		imageJSON(w, r, 200, map[string]any{"items": targets})
 	case "secrets":
 		if !imageMethod(w, r, http.MethodPost) {
 			return

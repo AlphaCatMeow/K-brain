@@ -369,7 +369,8 @@ type ModelInfo struct {
 	ReasoningEfforts    []string `json:"reasoning_efforts,omitempty"`
 	Pricing             *Pricing `json:"pricing,omitempty"`
 
-	InputModalities []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+	InputModalities  []string `json:"input_modalities,omitempty"`
 }
 
 func (mi ModelInfo) SupportsVision() bool {

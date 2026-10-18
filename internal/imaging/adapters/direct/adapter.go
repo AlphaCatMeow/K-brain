@@ -138,12 +138,9 @@ func (a *Adapter) Submit(ctx context.Context, r imaging.ExecuteRequest) (imaging
 	if err != nil {
 		return failed(err)
 	}
-	raw, err := json.Marshal(body)
+	raw, contentType, err := a.encodeRequest(ctx, body)
 	if err != nil {
-		return failed(failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent))
-	}
-	if int64(len(raw)) > a.limits.MaxRequestBytes {
-		return failed(failure(imaging.CodeTooLarge, imaging.DeliveryNotSent))
+		return failed(err)
 	}
 	secret, err := a.secrets.ResolveSecret(ctx, a.scope, a.secretRef)
 	if err != nil || secret == "" || strings.ContainsAny(secret, "\r\n") {
@@ -160,7 +157,7 @@ func (a *Adapter) Submit(ctx context.Context, r imaging.ExecuteRequest) (imaging
 	// standard transport. There is deliberately no adapter retry loop.
 	req.GetBody = nil
 	req.Header = a.headers.Clone()
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 	if a.id == GoogleID {
 		req.Header.Set("x-goog-api-key", secret)

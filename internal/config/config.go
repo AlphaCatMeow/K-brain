@@ -51,11 +51,14 @@ type CustomHeader struct {
 }
 
 type PiModel struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name,omitempty"`
-	DisplayName     string          `json:"displayName,omitempty"`
-	OwnedBy         string          `json:"ownedBy,omitempty"`
-	LimitsSource    string          `json:"limitsSource,omitempty"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name,omitempty"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	OwnedBy          string   `json:"ownedBy,omitempty"`
+	LimitsSource     string   `json:"limitsSource,omitempty"`
+	OutputModalities []string `json:"outputModalities,omitempty"`
+	// ImageAdapter explicitly selects an image protocol; "disabled" opts out of discovery.
+	ImageAdapter    string          `json:"imageAdapter,omitempty"`
 	InputModalities []string        `json:"inputModalities,omitempty"`
 	API             string          `json:"api,omitempty"`
 	Reasoning       bool            `json:"reasoning,omitempty"`
@@ -90,10 +93,13 @@ func (p Provider) ResolveKeyContext(ctx context.Context) (string, error) {
 }
 
 type Model struct {
-	Name            string   `json:"name,omitempty"`
-	DisplayName     string   `json:"displayName,omitempty"`
-	OwnedBy         string   `json:"ownedBy,omitempty"`
-	LimitsSource    string   `json:"limitsSource,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	OwnedBy          string   `json:"ownedBy,omitempty"`
+	LimitsSource     string   `json:"limitsSource,omitempty"`
+	OutputModalities []string `json:"outputModalities,omitempty"`
+	// ImageAdapter explicitly selects an image protocol; "disabled" opts out of discovery.
+	ImageAdapter    string   `json:"imageAdapter,omitempty"`
 	InputModalities []string `json:"inputModalities,omitempty"`
 	Providers       []string `json:"providers"`
 	ID              string   `json:"id,omitempty"`

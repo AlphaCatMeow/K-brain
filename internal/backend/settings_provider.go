@@ -356,7 +356,7 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settingsModel, 0, len(models))
 	for _, m := range models {
-		out = append(out, settingsModel{Provider: id, ID: m.ID, ContextWindow: m.ContextLength, MaxOutputTokens: m.MaxCompletionTokens, MaxOutputToken: m.MaxCompletionTokens, InputModalities: m.InputModalities, Vision: m.SupportsVision()})
+		out = append(out, settingsModel{Provider: id, ID: m.ID, ContextWindow: m.ContextLength, MaxOutputTokens: m.MaxCompletionTokens, MaxOutputToken: m.MaxCompletionTokens, InputModalities: m.InputModalities, OutputModalities: m.OutputModalities, Vision: m.SupportsVision()})
 	}
 	writeJSON(w, 200, map[string]any{"version": protocol.Version, "provider": id, "models": out})
 }

@@ -189,17 +189,18 @@ func TestContractReferencesPreserveOrder(t *testing.T) {
 			var closed atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var b map[string]json.RawMessage
-				json.NewDecoder(r.Body).Decode(&b)
+				if id != OpenAIID {
+					json.NewDecoder(r.Body).Decode(&b)
+				}
 				var got []string
 				switch id {
 				case OpenAIID:
 					if r.URL.Path != "/images/edits" {
 						t.Error("edit route")
 					}
-					var refs []imageRef
-					json.Unmarshal(b["images"], &refs)
-					for _, ref := range refs {
-						got = append(got, strings.SplitN(ref.URL, ",", 2)[1])
+					parts := parseImageMultipart(t, r)
+					for _, raw := range parts.Files["image[]"] {
+						got = append(got, base64.StdEncoding.EncodeToString(raw))
 					}
 				case GoogleID:
 					var c []googleContent
@@ -239,10 +240,9 @@ func TestContractReferencesPreserveOrder(t *testing.T) {
 func TestContractOpenAIMask(t *testing.T) {
 	src, mask := syntheticPNG(t, 16, 40, false), syntheticPNG(t, 16, 40, true)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var b openAIRequest
-		json.NewDecoder(r.Body).Decode(&b)
-		if r.URL.Path != "/images/edits" || len(b.Images) != 1 || b.Mask == nil || b.Images[0].URL != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(src) || b.Mask.URL != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(mask) {
-			t.Error("mask schema/first source")
+		parts := parseImageMultipart(t, r)
+		if r.URL.Path != "/images/edits" || len(parts.Files["image[]"]) != 1 || len(parts.Files["mask"]) != 1 || !bytes.Equal(parts.Files["image[]"][0], src) || !bytes.Equal(parts.Files["mask"][0], mask) {
+			t.Error("mask multipart schema/first source")
 		}
 		io.WriteString(w, responseJSON(OpenAIID, src))
 	}))
@@ -645,6 +645,7 @@ func TestContractRollDekHTTPSAlias(t *testing.T) {
 	}
 	official := adapter(t, OpenAIID, options(client, "https://api.openai.com/v1"))
 	r.Target.Adapter = OpenAIID
+	r.Target.RemoteID = "gpt-image-2-high"
 	if _, err := official.Submit(context.Background(), r); err == nil {
 		t.Fatal("RollDek alias leaked to official models")
 	}

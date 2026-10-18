@@ -142,3 +142,35 @@ func TestImageJobHTTPAcceptedReplayConflictSnapshotCancel(t *testing.T) {
 	w = imageHTTPPostJob(s, "after-close", body)
 	imageAssertError(t, w, 503, imaging.CodeUnavailable)
 }
+
+func TestImageJobHTTPDeleteRefusesActiveThenTombstones(t *testing.T) {
+	s := imageHTTPFixture(t)
+	j, _ := imageHTTPCreateJob(t, s, "delete-key")
+	w := imageHTTPRequest(s, "DELETE", "/v1/image/jobs/"+j.ID, nil)
+	imageAssertError(t, w, 409, imaging.CodeProjectBusy)
+	if !strings.Contains(w.Body.String(), "Image job is still active") {
+		t.Fatal(w.Body.String())
+	}
+	if w = imageHTTPRequest(s, "POST", "/v1/image/jobs/"+j.ID+"/cancel", nil); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if w = imageHTTPRequest(s, "DELETE", "/v1/image/jobs/"+j.ID, nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"deleted":true`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	w = imageHTTPRequest(s, "GET", "/v1/image/jobs/"+j.ID, nil)
+	imageAssertError(t, w, 404, imaging.CodeNotFound)
+	w = imageHTTPRequest(s, "GET", "/v1/image/jobs?projectId="+j.ProjectID, nil)
+	if w.Code != 200 || strings.Contains(w.Body.String(), j.ID) {
+		t.Fatal(w.Body.String())
+	}
+	// Repeating the delete is idempotent so a retried or concurrent click never errors.
+	if w = imageHTTPRequest(s, "DELETE", "/v1/image/jobs/"+j.ID, nil); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	w = imageHTTPRequest(s, "DELETE", "/v1/image/jobs/ij_missing", nil)
+	imageAssertError(t, w, 404, imaging.CodeNotFound)
+	w = imageHTTPRequest(s, "PATCH", "/v1/image/jobs/"+j.ID, nil)
+	if w.Code != 405 || !strings.Contains(w.Header().Get("Allow"), "DELETE") {
+		t.Fatalf("%d %s", w.Code, w.Header().Get("Allow"))
+	}
+}

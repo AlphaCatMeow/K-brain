@@ -4,8 +4,9 @@ import "github.com/Stack-Cairn/K-brain/internal/imaging"
 
 // Profile is static implementation metadata, never TargetVerification. Registry
 // owners must bind real evidence to the connection/revision; no live timestamps
-// or enabled targets are manufactured here. RemoteIDs is an allowlist, not a
-// model selection/default. Ark additionally accepts explicitly bound ep-* IDs.
+// or enabled targets are manufactured here. RemoteIDs are frozen verification
+// examples; ImageModelAdapter also recognizes ordinary image model families.
+// Explicit provider metadata may bind aliases. Ark additionally accepts bound ep-* IDs.
 type Profile struct {
 	Adapter          string
 	Version          string
@@ -16,10 +17,14 @@ type Profile struct {
 	Parameters       []imaging.ParameterSpec
 }
 
-func (a *Adapter) Profile() Profile {
-	p := Profile{Adapter: a.id, Version: Version, ContractComplete: a.id != GoogleID,
+func (a *Adapter) Profile() Profile { return ProtocolProfile(a.id) }
+
+// ProtocolProfile describes implemented wire capabilities without claiming live
+// verification or provider-specific support. Callers may restrict this profile.
+func ProtocolProfile(adapter string) Profile {
+	p := Profile{Adapter: adapter, Version: Version, ContractComplete: adapter != GoogleID,
 		Capabilities: imaging.TargetCapabilities{Operations: []imaging.Operation{imaging.OperationGenerate, imaging.OperationReference, imaging.OperationEdit}, MaxCount: 1}}
-	switch a.id {
+	switch adapter {
 	case OpenAIID:
 		p.RemoteIDs = []string{"gpt-image-2", "gpt-image-2-2026-04-21"}
 		p.Capabilities.MaxInputs = 16 // Includes mask; locally stricter than 16 images plus a mask.
