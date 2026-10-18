@@ -377,14 +377,47 @@ func (mi ModelInfo) SupportsVision() bool {
 }
 
 func (c *OpenAI) Models(ctx context.Context) ([]ModelInfo, error) {
-	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, c.modelCatalogURL(), nil)
+	return c.modelsWithHeaders(ctx, c.Headers)
+}
+
+func (c *OpenAI) modelsWithHeaders(ctx context.Context, headers http.Header) ([]ModelInfo, error) {
+	endpoints := []string{c.modelCatalogURL()}
+	if c.ModelsURL == "" && !c.IsFullURL {
+		u, err := url.Parse(endpoints[0])
+		if err == nil {
+			root := strings.TrimSuffix(u.EscapedPath(), "/models")
+			if !modelCatalogVersionSuffix.MatchString(root) {
+				path := root + "/v1/models"
+				u.Path, _ = url.PathUnescape(path)
+				u.RawPath = path
+				endpoints = append(endpoints, u.String())
+			}
+		}
+	}
+	for i, endpoint := range endpoints {
+		models, err := c.modelsAtURL(ctx, endpoint, headers)
+		if err == nil || i == len(endpoints)-1 || ctx.Err() != nil {
+			return models, err
+		}
+		// Root relays may expose only /v1/models or serve an HTML landing page.
+		var syntax *json.SyntaxError
+		httpErr, ok := errors.AsType[*HTTPError](err)
+		if !(ok && (httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusMethodNotAllowed)) && !errors.As(err, &syntax) {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func (c *OpenAI) modelsAtURL(ctx context.Context, endpoint string, headers http.Header) ([]ModelInfo, error) {
+	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	for name, values := range c.Headers {
+	for name, values := range headers {
 		hr.Header[name] = append([]string(nil), values...)
 	}
-	if !hasHeader(c.Headers, "Authorization") {
+	if !hasHeader(headers, "Authorization") {
 		hr.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 	resp, err := c.HTTP.Do(hr)
@@ -421,7 +454,21 @@ func (c *OpenAI) modelCatalogURL() string {
 	if c.IsFullURL {
 		return fullURLModelCatalog(c.BaseURL, "v1")
 	}
-	return strings.TrimRight(c.BaseURL, "/") + "/models"
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return strings.TrimRight(c.BaseURL, "/") + "/models"
+	}
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	for _, suffix := range []string{"/chat/completions", "/responses", "/response", "/messages", "/models"} {
+		if strings.HasSuffix(strings.ToLower(path), suffix) {
+			path = path[:len(path)-len(suffix)]
+			break
+		}
+	}
+	path += "/models"
+	u.Path, _ = url.PathUnescape(path)
+	u.RawPath = path
+	return u.String()
 }
 
 var modelCatalogVersionSuffix = regexp.MustCompile(`(?i)/v\d+(?:beta)?$`)

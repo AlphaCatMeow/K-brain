@@ -334,7 +334,7 @@ func assertChainHistory(t *testing.T, view protocol.Session, rounds int) {
 
 func checkProviderRequest(t *testing.T, r *http.Request, body []byte, api string) {
 	t.Helper()
-	path := map[string]string{ai.APIChatCompletions: "/chat/completions", ai.APIResponses: "/responses", ai.APIMessages: "/messages", ai.APIGemini: "/v1beta/models/chain-model:streamGenerateContent"}[api]
+	path := map[string]string{ai.APIChatCompletions: "/chat/completions", ai.APIResponses: "/responses", ai.APIMessages: "/v1/messages", ai.APIGemini: "/v1beta/models/chain-model:streamGenerateContent"}[api]
 	if r.Method != http.MethodPost || r.URL.Path != path {
 		t.Errorf("%s endpoint=%s %s", api, r.Method, r.URL)
 	}

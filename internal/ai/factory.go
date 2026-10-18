@@ -45,7 +45,7 @@ func NewClient(opts ClientOptions) (Client, error) {
 	case APIResponses:
 		client = &Responses{OpenAI: NewWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)}
 	case APIMessages:
-		client = &Anthropic{OpenAI: NewWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)}
+		client = newAnthropicWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)
 	case APIGemini, APIGoogleGemini:
 		client = NewGeminiWithOptions(opts.BaseURL, opts.APIKey, opts.IsFullURL, opts.ModelsURL, opts.Headers)
 	default:
