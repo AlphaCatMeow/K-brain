@@ -137,6 +137,7 @@ func TestStreamDeliversTextBeforeModelCompletion(t *testing.T) {
 	defer resp.Body.Close()
 	scanner := bufio.NewScanner(resp.Body)
 	found := false
+	stages := []string{}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -146,7 +147,19 @@ func TestStreamDeliversTextBeforeModelCompletion(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
 			t.Fatal(err)
 		}
+		if event.Type == protocol.EventRunProgress {
+			var payload struct {
+				Stage string `json:"stage"`
+			}
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			stages = append(stages, payload.Stage)
+		}
 		if event.Type == protocol.EventTextDelta {
+			if strings.Join(stages, ",") != "preparing,waiting_model,responding" {
+				t.Fatalf("missing ordered progress before first text: %v", stages)
+			}
 			found = true
 			break
 		}

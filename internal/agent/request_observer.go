@@ -63,6 +63,9 @@ func (a *Agent) streamObserved(ctx context.Context, request ai.Request, ev Event
 	}
 	clearRetry := a.reportRetries(ev)
 	defer clearRetry()
+	if ev.OnPhase != nil {
+		ev.OnPhase("waiting_model")
+	}
 	message, usage, err := a.Client.Stream(ctx, request, ev.OnText, ev.OnThink, ev.OnToolCall)
 	if observer != nil {
 		observer.End(ctx, message, usage, err)

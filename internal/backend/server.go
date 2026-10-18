@@ -1167,6 +1167,8 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID string, in protocol.PromptRequest, options protocol.RunOptions) {
+	progress := &runProgress{started: time.Now(), publish: rt.publish}
+	progress.phase("preparing")
 	rt.mu.Lock()
 	restoreRunOptions := applyRunOptionsWith(rt.agent, options, s.clientTools(rt, options.ClientTools))
 	rt.mu.Unlock()
@@ -1340,7 +1342,17 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		_, _ = rt.publish(protocol.EventHookWarning, map[string]any{"hookName": hook.Name, "hookType": hook.Type, "event": event, "message": err.Error()}, "")
 	})
 	ctx = agent.WithLifecycleStart(ctx, func() { hookEvents("agent_start") })
-	ev := agent.Events{OnLifecycle: hookEvents, OnText: func(d string) { _, _ = rt.publish(protocol.EventTextDelta, protocol.TextDelta{Text: d}, "") }, OnThink: func(d string) { _, _ = rt.publish(protocol.EventThinkingDelta, protocol.TextDelta{Text: d}, "") }, OnHostedSearch: func(search ai.HostedSearch) {
+	ev := agent.Events{OnPhase: progress.phase, OnCompactStart: func(int, int) { progress.phase("compacting") }, OnLifecycle: hookEvents, OnText: func(d string) {
+		if d != "" {
+			progress.phase("responding")
+		}
+		_, _ = rt.publish(protocol.EventTextDelta, protocol.TextDelta{Text: d}, "")
+	}, OnThink: func(d string) {
+		if d != "" {
+			progress.phase("thinking")
+		}
+		_, _ = rt.publish(protocol.EventThinkingDelta, protocol.TextDelta{Text: d}, "")
+	}, OnHostedSearch: func(search ai.HostedSearch) {
 		_, _ = rt.publish(protocol.EventHostedSearch, protocol.HostedSearch{Type: search.Type, ID: search.ID, Provider: search.Provider, Status: search.Status, Queries: search.Queries, Sources: func() []protocol.HostedSearchSource {
 			out := make([]protocol.HostedSearchSource, len(search.Sources))
 			for i, source := range search.Sources {
@@ -1349,6 +1361,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			return out
 		}(), Error: search.Error}, "")
 	}, OnToolStart: func(id, name, args string) {
+		progress.phase("tool")
 		_, _ = rt.publish(protocol.EventToolCall, protocol.ToolCallEvent{ToolCall: protocol.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}}, "")
 	}, OnToolResult: func(id, name string, result tools.Result) {
 		_, _ = rt.publish(protocol.EventToolResult, protocol.ToolResultEvent{ToolResult: protocol.ToolResult{ID: id, Name: name, Output: result.Text, Content: protocol.FromAIMessage(ai.Message{Role: "tool", Parts: result.Parts}).Content, Failed: result.Failed, Cancelled: result.Cancelled}}, "")
@@ -1370,6 +1383,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	} else {
 		_, err = rt.agent.TurnParts(ctx, converted.Content, converted.Parts, ev)
 	}
+	progress.phase("persisting")
 	var failedAssistant *protocol.Message
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		messages := rt.agent.MessagesSnapshot()
@@ -1491,6 +1505,10 @@ func decisionName(d tools.GateDecision) string {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
+	s.eventsWithHeartbeat(w, r, id, 15*time.Second)
+}
+
+func (s *Server) eventsWithHeartbeat(w http.ResponseWriter, r *http.Request, id string, interval time.Duration) {
 	rt, err := s.loadRuntimeByID(id)
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, err.Error())
@@ -1510,6 +1528,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 	// Flush headers before waiting so clients and proxies establish the live stream.
 	flusher.Flush()
 	firstText, firstThinking := true, true
+	heartbeat := time.NewTicker(interval)
+	defer heartbeat.Stop()
 	for {
 		rt.mu.Lock()
 		if rt.deleted {
@@ -1563,6 +1583,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		select {
 		case <-changed:
+		case <-heartbeat.C:
+			if _, err := io.WriteString(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}

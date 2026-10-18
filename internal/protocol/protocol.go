@@ -29,6 +29,7 @@ const (
 	ContentToolResult = "tool_result"
 
 	EventRunAccepted         = "run.accepted"
+	EventRunProgress         = "run.progress"
 	EventUserMessage         = "user.message.appended"
 	EventAssistantMessage    = "assistant.message.created"
 	EventTextDelta           = "assistant.text.delta"

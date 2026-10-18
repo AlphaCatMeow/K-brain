@@ -31,6 +31,7 @@ func newMessageID() string {
 }
 
 type Events struct {
+	OnPhase        func(stage string)
 	OnLifecycle    func(event string)
 	OnText         func(delta string)
 	OnThink        func(delta string)
@@ -541,6 +542,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	defer lifecycle.close()
 	if start := lifecycleStart(ctx); start != nil {
 		start()
+	}
+	if ev.OnPhase != nil {
+		ev.OnPhase("preparing")
 	}
 	if err := a.StartSession(ctx); err != nil {
 		return "", err

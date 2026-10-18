@@ -7,6 +7,13 @@ import (
 
 func FanIn(evs ...Events) Events {
 	return Events{
+		OnPhase: func(stage string) {
+			for _, e := range evs {
+				if e.OnPhase != nil {
+					e.OnPhase(stage)
+				}
+			}
+		},
 		OnLifecycle: func(event string) {
 			for _, e := range evs {
 				if e.OnLifecycle != nil {
