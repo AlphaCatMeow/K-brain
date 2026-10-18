@@ -103,6 +103,14 @@ func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, 
 		}
 		return accepted, http.StatusOK, nil
 	}
+	if rt.queue != nil && len(rt.queue.Items)+len(rt.queue.Edits) > 0 && ctx.Value(queueDispatchKey{}) != rt {
+		return fail(409, "session has queued work; submit through /queue")
+	}
+	if rt.queue != nil && ctx.Value(queueDispatchKey{}) != rt {
+		if _, exists := rt.queue.Receipts[in.ClientRequestID]; exists {
+			return fail(409, "client_request_id belongs to a queue submission")
+		}
+	}
 	if rt.activeLocked() {
 		return fail(409, errSessionBusy)
 	}
@@ -188,6 +196,11 @@ func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, 
 		s.executeRun(rt, runCtx, runID, in, options)
 		// The next goal round starts only after executeRun has marked this run done.
 		s.continueGoal(rt, runID, in)
+		rt.mu.Lock()
+		if rt.queue != nil {
+			s.startQueueWorkerLocked(rt)
+		}
+		rt.mu.Unlock()
 	}()
 	return protocol.RunAccepted{Version: protocol.Version, ConversationID: rt.id, RunID: runID, AcceptedSeq: acceptedSeq}, http.StatusAccepted, nil
 }

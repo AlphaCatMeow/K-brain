@@ -59,6 +59,10 @@ func (s *Server) mutationAllowed(w http.ResponseWriter, rt *runtimeSession) bool
 		writeJSONError(w, 409, "session has an active turn or child task")
 		return false
 	}
+	if rt.queue != nil && (len(rt.queue.Items) > 0 || len(rt.queue.Edits) > 0 || rt.queueDispatchID != "") {
+		writeJSONError(w, 409, "session has queued work")
+		return false
+	}
 	if tasks, err := s.store.LoadTasks(rt.id); err == nil {
 		for _, task := range tasks {
 			if task.Status == string(agent.TaskRunning) {
@@ -286,7 +290,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 	}
 	close(rt.changed)
 	rt.changed = make(chan struct{})
-	for _, suffix := range []string{".jsonl", ".runs.json"} {
+	for _, suffix := range []string{".jsonl", ".runs.json", ".queue.json"} {
 		if err := os.Remove(filepath.Join(s.eventDir, id+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			mutationError(w, err)
 			return

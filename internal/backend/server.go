@@ -139,6 +139,9 @@ type runtimeSession struct {
 	memoryRuntime    agent.MemoryRuntime
 	runtimeErr       error
 	goal             goalRuntime
+	queue            *queueDocument
+	queueWorker      bool
+	queueDispatchID  string
 }
 
 func New(opts Options) (*Server, error) {
@@ -223,6 +226,9 @@ func (s *Server) Close() error {
 	for _, rt := range runtimes {
 		rt.mu.Lock()
 		rt.closing = true
+		old := rt.changed
+		rt.changed = make(chan struct{})
+		close(old)
 		if rt.cancel != nil {
 			rt.cancel()
 		}
@@ -299,7 +305,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -423,6 +429,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		s.deleteSession(w, r, id)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "queue" && (len(parts) == 2 || (len(parts) == 3 && parts[2] == "actions")) {
+		s.handleQueue(w, r, id, len(parts) == 3)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "command-notes" {
@@ -931,6 +941,9 @@ func (s *Server) loadRuntime(id string, model protocol.ModelRef, cwd string) (*r
 	}
 	rt := &runtimeSession{id: id, agent: ag, memoryRuntime: memoryRuntime, recorder: rec, changed: make(chan struct{}), runs: map[string]runRecord{}, terminalManager: terminalManager, processManager: processManager, permissions: map[string]*permissionWaiter{}, questions: map[string]*questionWaiter{}, eventDir: s.eventDir, mcpActivation: activation}
 	if err := rt.loadJournal(s.eventDir); err != nil {
+		return nil, err
+	}
+	if err := rt.loadQueueLocked(); err != nil {
 		return nil, err
 	}
 	s.wireTasks(rt, ag)
