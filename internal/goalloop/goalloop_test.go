@@ -42,6 +42,44 @@ func TestMet(t *testing.T) {
 	}
 }
 
+func TestNeedsInput(t *testing.T) {
+	for _, s := range []string{"GOAL_NEEDS_INPUT — which title should the file use?", "**GOAL_NEEDS_INPUT** 文件标题用什么？", "\n> GOAL_NEEDS_INPUT"} {
+		if !NeedsInput(s) {
+			t.Fatalf("%q must ask for input", s)
+		}
+		if Met(s) {
+			t.Fatalf("%q must not count as met", s)
+		}
+	}
+	for _, s := range []string{
+		"文件标题用什么？正文写几句话？",
+		"Done. GOAL_NEEDS_INPUT",
+		"I will use GOAL_NEEDS_INPUT only if blocked.",
+		"GOAL_NEEDS_INPUTS later",
+		"GOAL_MET — shipped",
+		"",
+	} {
+		if NeedsInput(s) {
+			t.Fatalf("%q must not ask for input", s)
+		}
+	}
+}
+
+func TestRoundPromptsCarryBothTokens(t *testing.T) {
+	for name, p := range map[string]string{
+		"start":    StartPrompt("ship the feature"),
+		"continue": ContinuePrompt("ship the feature"),
+		"reply":    ReplyPrompt("ship the feature"),
+	} {
+		if !strings.Contains(p, "ship the feature") || !strings.Contains(p, MetToken) || !strings.Contains(p, NeedsInputToken) {
+			t.Fatalf("%s prompt: %q", name, p)
+		}
+	}
+	if !strings.Contains(StartPrompt("x"), "Work toward it now") {
+		t.Fatal("start prompt must keep its instruction")
+	}
+}
+
 func TestMaxRoundsResolution(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

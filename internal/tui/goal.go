@@ -23,6 +23,8 @@ func goalContinuePrompt(goal string) string { return goalloop.ContinuePrompt(goa
 
 func goalMet(final string) bool { return goalloop.Met(final) }
 
+func goalNeedsInput(final string) bool { return goalloop.NeedsInput(final) }
+
 func (m *model) goalRoundsCommand(args []string) {
 	global := false
 	var num string

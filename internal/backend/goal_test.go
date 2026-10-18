@@ -638,3 +638,192 @@ func TestGoalIgnoresRunsThatAreNotItsRounds(t *testing.T) {
 	client.mu.Unlock()
 	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
 }
+
+func postPlainRun(t *testing.T, base, id, requestID, prompt string) protocol.RunAccepted {
+	t.Helper()
+	var accepted protocol.RunAccepted
+	resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+id+"/runs", protocol.PromptRequest{ConversationID: id, ClientRequestID: requestID, Prompt: prompt}, &accepted)
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		t.Fatalf("run %s: status %d", requestID, resp.StatusCode)
+	}
+	return accepted
+}
+
+func userMessages(t *testing.T, store *session.Store, id string) []string {
+	t.Helper()
+	_, msgs, err := store.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, message := range msgs {
+		if message.Role == "user" {
+			out = append(out, message.Content)
+		}
+	}
+	return out
+}
+
+func TestGoalWaitsForInputAndTheUserReplyResumesIt(t *testing.T) {
+	client := &replyQueue{replies: []string{"GOAL_NEEDS_INPUT — 文件标题用什么？", "GOAL_MET — 已写入并核对"}}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "create the file", Run: &protocol.PromptRequest{ClientRequestID: "in-1"}})
+	waiting := waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" })
+	if waiting.Reason != goalReasonAwaitingInput || waiting.Goal != "create the file" || waiting.NextClientRequestID != "" {
+		t.Fatalf("waiting: %+v", waiting)
+	}
+	if n := len(client.userTurns()); n != 1 {
+		t.Fatalf("no round may start while the goal waits, got %d turns", n)
+	}
+
+	first := postPlainRun(t, base, sess.ID, "reply-1", "标题用《测试》")
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+	turns := client.userTurns()
+	if len(turns) != 2 || !strings.HasPrefix(turns[1], "标题用《测试》") || !strings.Contains(turns[1], "just replied") || !strings.Contains(turns[1], "create the file") {
+		t.Fatalf("the reply round must carry the answer and the reply rules: %q", turns)
+	}
+	users := userMessages(t, store, sess.ID)
+	if len(users) != 2 || users[1] != "标题用《测试》" {
+		t.Fatalf("history must keep the reply as typed: %q", users)
+	}
+	var statuses []string
+	for _, event := range goalEvents(t, base, sess.ID) {
+		statuses = append(statuses, event.Status+":"+event.Reason)
+	}
+	if strings.Join(statuses, ",") != "active:,paused:awaiting_input,active:,met:" {
+		t.Fatalf("goal events: %v", statuses)
+	}
+	// A retried reply replays its run instead of admitting another round.
+	if again := postPlainRun(t, base, sess.ID, "reply-1", "标题用《测试》"); again.RunID != first.RunID {
+		t.Fatalf("retry must replay: %s vs %s", again.RunID, first.RunID)
+	}
+	if n := len(client.userTurns()); n != 2 {
+		t.Fatalf("a replayed reply must not run again, got %d turns", n)
+	}
+}
+
+func TestGoalReplyThatStillNeedsInputWaitsAgainAndOtherwiseContinues(t *testing.T) {
+	client := &replyQueue{replies: []string{
+		"GOAL_NEEDS_INPUT — which title?",
+		"GOAL_NEEDS_INPUT — and how many sentences?",
+		"writing the file now",
+		"GOAL_MET — done",
+	}}
+	_, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "create the file", Run: &protocol.PromptRequest{ClientRequestID: "again-1"}})
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Reason == goalReasonAwaitingInput })
+
+	postPlainRun(t, base, sess.ID, "reply-a", "title: Test")
+	waitTurns(t, client, 2)
+	again := waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" })
+	if again.Reason != goalReasonAwaitingInput {
+		t.Fatalf("a reply that asks again must wait again: %+v", again)
+	}
+	if n := len(client.userTurns()); n != 2 {
+		t.Fatalf("no round may start while waiting again, got %d turns", n)
+	}
+
+	postPlainRun(t, base, sess.ID, "reply-b", "two sentences")
+	met := waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+	turns := client.userTurns()
+	if len(turns) != 4 || !strings.HasPrefix(turns[3], "[goal 1/") {
+		t.Fatalf("an unfinished reply round must continue with a goal round: %q", turns)
+	}
+	if met.Goal != "" {
+		t.Fatalf("met goal must be cleared: %+v", met)
+	}
+}
+
+func TestGoalPausedByTheUserIsNotResumedByAPlainRun(t *testing.T) {
+	client := &replyQueue{block: make(chan struct{}), replies: []string{"GOAL_NEEDS_INPUT — which title?"}}
+	_, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "create the file", Run: &protocol.PromptRequest{ClientRequestID: "user-1"}})
+	waitTurns(t, client, 1)
+	if status, _ := postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "pause"}); status != http.StatusOK {
+		t.Fatalf("pause: %d", status)
+	}
+	client.mu.Lock()
+	close(client.block)
+	client.block = nil
+	client.replies = []string{"GOAL_MET — unrelated answer"}
+	client.mu.Unlock()
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "paused" && s.Reason == "user" })
+
+	// The cancelled round may still be finishing; retry until the session is idle.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp := postJSON(t, http.DefaultClient, base+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "plain-after-pause", Prompt: "just a question"}, nil)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusAccepted {
+			break
+		}
+		if resp.StatusCode != http.StatusConflict || time.Now().After(deadline) {
+			t.Fatalf("plain run: status %d", resp.StatusCode)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	waitTurns(t, client, 2)
+	time.Sleep(100 * time.Millisecond)
+	if got := getGoal(t, base, sess.ID); got.Status != "paused" || got.Reason != "user" || got.Goal != "create the file" {
+		t.Fatalf("a user pause needs an explicit resume: %+v", got)
+	}
+	if turns := client.userTurns(); strings.Contains(turns[1], "[goal check]") || !strings.Contains(turns[1], "[goal paused]") || !strings.Contains(turns[1], "create the file") {
+		t.Fatalf("a plain run after a user pause must carry only the paused notice: %q", turns[1])
+	}
+}
+
+func TestGoalRestoredAfterRestartIsNotResumedByAPlainRun(t *testing.T) {
+	client := &replyQueue{replies: []string{"GOAL_MET — unrelated answer"}}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	if err := store.SetGoal(sess.ID, "old goal"); err != nil {
+		t.Fatal(err)
+	}
+	postPlainRun(t, base, sess.ID, "plain-restored", "hello")
+	waitTurns(t, client, 1)
+	time.Sleep(100 * time.Millisecond)
+	if got := getGoal(t, base, sess.ID); got.Status != "paused" || got.Reason != "restored" || got.Goal != "old goal" {
+		t.Fatalf("a restored goal needs an explicit resume: %+v", got)
+	}
+	if turns := client.userTurns(); !strings.Contains(turns[0], "[goal paused]") || !strings.Contains(turns[0], "old goal") {
+		t.Fatalf("a plain run must be told the restored goal is paused: %q", turns[0])
+	}
+}
+
+func TestGoalClearedIsNotPickedUpByAPlainRun(t *testing.T) {
+	client := &replyQueue{replies: []string{"GOAL_NEEDS_INPUT — which title?", "the time is noon"}}
+	store, base := newGoalServer(t, client)
+	sess := createTestSession(t, base)
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "create the file", Run: &protocol.PromptRequest{ClientRequestID: "clr-1"}})
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Reason == goalReasonAwaitingInput })
+	if status, _ := postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "clear"}); status != http.StatusOK {
+		t.Fatalf("clear: %d", status)
+	}
+	postPlainRun(t, base, sess.ID, "after-clear", "what time is it?")
+	waitTurns(t, client, 2)
+	time.Sleep(100 * time.Millisecond)
+	if got := getGoal(t, base, sess.ID); got.Status != "none" || got.Goal != "" {
+		t.Fatalf("a cleared goal must stay cleared: %+v", got)
+	}
+	turn := client.userTurns()[1]
+	if !strings.HasPrefix(turn, "what time is it?") || !strings.Contains(turn, "[goal cleared]") || strings.Contains(turn, "[goal check]") {
+		t.Fatalf("a plain run after clear must carry only the cleared notice: %q", turn)
+	}
+	if users := userMessages(t, store, sess.ID); users[len(users)-1] != "what time is it?" {
+		t.Fatalf("the notice must stay out of history: %q", users)
+	}
+	// A new goal drops the reminder of the cleared one.
+	client.mu.Lock()
+	client.replies = []string{"GOAL_MET — done"}
+	client.mu.Unlock()
+	postGoal(t, base, sess.ID, protocol.GoalRequest{Action: "set", Goal: "something else", Run: &protocol.PromptRequest{ClientRequestID: "clr-2"}})
+	waitGoal(t, base, sess.ID, func(s protocol.GoalState) bool { return s.Status == "met" })
+	postPlainRun(t, base, sess.ID, "after-met", "thanks")
+	waitTurns(t, client, 4)
+	if last := client.userTurns()[3]; strings.Contains(last, "[goal") {
+		t.Fatalf("no goal notice after a met goal: %q", last)
+	}
+}

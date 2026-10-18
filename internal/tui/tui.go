@@ -2025,6 +2025,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setGoal("")
 				return m, nil
 			}
+			if msg.stopReason != ai.StopReasonLength && goalNeedsInput(msg.final) {
+				// Another round cannot get the answer; the user's reply is the next turn,
+				// and the goal check runs again after it.
+				m.append(dimStyle.Render("◎ goal waiting for your reply — answer to continue, /goal clear to drop"))
+				return m, nil
+			}
 			if m.goalRounds >= m.goalMaxRounds() {
 				m.append(errStyle.Render(fmt.Sprintf("◎ goal paused after %d rounds — /goal resume to continue, /goal clear to drop", m.goalRounds)))
 				return m, nil

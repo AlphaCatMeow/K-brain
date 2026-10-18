@@ -17,6 +17,10 @@ import (
 
 const maxGoalBytes = 16 * 1024
 
+// goalReasonAwaitingInput pauses a goal whose round asked the user for input it cannot
+// advance without. Unlike a pause by the user, the user's next plain message resumes it.
+const goalReasonAwaitingInput = "awaiting_input"
+
 var errGoalRoundStale = errors.New("goal changed before the round was accepted")
 
 // goalRuntime is the in-memory goal loop of one session. The goal text is durable in
@@ -42,6 +46,9 @@ type goalRuntime struct {
 	// next is the round decided for the run that just completed; the run worker starts
 	// it once the session is idle again.
 	next *goalContinuation
+	// cleared is the text of a goal the user cleared, until a new goal is set; plain
+	// runs remind the model not to pick it back up. It does not survive a reload.
+	cleared string
 }
 
 type goalContinuation struct {
@@ -230,7 +237,7 @@ func (s *Server) clearGoal(w http.ResponseWriter, rt *runtimeSession) {
 	if rt.goal.status == "active" && rt.goalOwnsRunLocked() {
 		cancel = rt.cancel
 	}
-	rt.goal = goalRuntime{loaded: true, status: "cleared"}
+	rt.goal = goalRuntime{loaded: true, status: "cleared", cleared: rt.goal.text}
 	state := s.goalStateLocked(rt)
 	rt.goal.status = "none"
 	rt.mu.Unlock()
@@ -293,7 +300,7 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 	// History keeps what the user typed; the model gets the goal itself (first round, as
 	// in the TUI) or the goal check (resume) as request-only text.
 	if in.Action == "set" {
-		run.Snapshot = "The user set this session goal with /goal. Work toward it now:\n" + goal
+		run.Snapshot = goalloop.StartPrompt(goal)
 	} else {
 		run.Snapshot = goalloop.ContinuePrompt(goal)
 	}
@@ -301,7 +308,7 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 	// requests only the accepted one ever touches it and a rejected one has nothing to
 	// restore. The event is published there too, ahead of the run's first decision.
 	var state protocol.GoalState
-	admit := func() (func(), int, error) {
+	admit := func(*protocol.PromptRequest) (func(), int, error) {
 		if in.Action == "resume" && rt.goal.text != goal {
 			return nil, http.StatusConflict, errors.New("goal changed before resume was accepted")
 		}
@@ -357,9 +364,12 @@ func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 	case outcome != "completed":
 		// A stopped or failed round pauses the goal; only an explicit resume restarts it.
 		rt.goal.status, rt.goal.reason = "paused", outcome
-	case current && goalMetBy(rt):
+	case current && goalReplyLeads(rt, goalloop.Met):
 		_ = s.store.SetGoal(rt.id, "")
 		rt.goal.status, rt.goal.reason = "met", ""
+	case current && goalReplyLeads(rt, goalloop.NeedsInput):
+		// Another round cannot get the user's answer; wait for their next message.
+		rt.goal.status, rt.goal.reason = "paused", goalReasonAwaitingInput
 	case rt.goal.round >= s.goalMaxRoundsLocked(rt):
 		rt.goal.status, rt.goal.reason = "paused", "max_rounds"
 	default:
@@ -379,7 +389,9 @@ func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 	_, _ = rt.publish(protocol.EventGoalUpdated, state, "")
 }
 
-func goalMetBy(rt *runtimeSession) bool {
+// goalReplyLeads applies a leading-token check to the round's final reply. A reply cut
+// off at the length limit never counts.
+func goalReplyLeads(rt *runtimeSession, leads func(string) bool) bool {
 	if rt.agent == nil {
 		return false
 	}
@@ -388,9 +400,54 @@ func goalMetBy(rt *runtimeSession) bool {
 		if messages[i].Role != protocol.RoleAssistant {
 			continue
 		}
-		return messages[i].StopReason != ai.StopReasonLength && goalloop.Met(messages[i].TextContent())
+		return messages[i].StopReason != ai.StopReasonLength && leads(messages[i].TextContent())
 	}
 	return false
+}
+
+// goalUserRunAdmit admits a plain user run against the session goal.
+//
+// When the goal paused for the user's input, this run carries their answer: it becomes
+// the goal's round, with the reply rules as request-only text, so the round's outcome
+// decides the goal like any other round — met, waiting again, or continuing.
+//
+// When the user paused (or a reload restored) the goal, or cleared it, the run stays a
+// plain run and only gets a request-only notice. History still shows the /goal command,
+// and without the notice the model picks the goal back up on its own. The notice never
+// enters history, so it cannot land between a tool call and its result.
+func (s *Server) goalUserRunAdmit(rt *runtimeSession) runAdmit {
+	return func(in *protocol.PromptRequest) (func(), int, error) {
+		s.ensureGoalLoadedLocked(rt)
+		switch {
+		case rt.goal.text != "" && rt.goal.status == "paused" && rt.goal.reason == goalReasonAwaitingInput:
+		case rt.goal.text != "" && rt.goal.status == "paused":
+			appendSnapshot(in, goalloop.PausedNotice(rt.goal.text))
+			return nil, 0, nil
+		case rt.goal.text == "" && rt.goal.cleared != "":
+			appendSnapshot(in, goalloop.ClearedNotice(rt.goal.cleared))
+			return nil, 0, nil
+		default:
+			return nil, 0, nil
+		}
+		previous := rt.goal
+		rt.goal.status, rt.goal.reason = "active", ""
+		rt.goal.roundRequestID, rt.goal.runRevision = in.ClientRequestID, rt.goal.revision
+		appendSnapshot(in, goalloop.ReplyPrompt(rt.goal.text))
+		if rt.runID == "" {
+			rt.runID = "recovery"
+		}
+		_ = rt.publishEventLocked(rt.runID, protocol.EventGoalUpdated, s.goalStateLocked(rt))
+		return func() { rt.goal = previous }, 0, nil
+	}
+}
+
+// appendSnapshot adds request-only text after any the run already carries, such as an
+// expanded prompt command.
+func appendSnapshot(in *protocol.PromptRequest, text string) {
+	if in.Snapshot != "" {
+		text = in.Snapshot + "\n\n" + text
+	}
+	in.Snapshot = text
 }
 
 // continueGoal starts the round decided by evaluateGoal once the finished run has
@@ -426,7 +483,7 @@ func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protoco
 		// The round claims the goal only when it is accepted, and only if no pause, clear,
 		// new goal or update landed since the snapshot above was built.
 		stale := false
-		admit := func() (func(), int, error) {
+		admit := func(*protocol.PromptRequest) (func(), int, error) {
 			if rt.goal.status != "active" || rt.goal.nonce != nonce || rt.goal.round != round || rt.goal.revision != revision {
 				stale = true
 				return nil, http.StatusConflict, errGoalRoundStale
