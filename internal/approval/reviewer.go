@@ -58,6 +58,9 @@ type Reviewer struct {
 
 func New(_ context.Context, cfg *config.Config) *Reviewer {
 	snapshot := cfg.Snapshot()
+	if snapshot.AIApproval.Provider == "" || snapshot.AIApproval.Model == "" {
+		return &Reviewer{unavailable: true}
+	}
 	var secrets []string
 	for _, p := range snapshot.Providers {
 		if key, _ := p.ResolveKey(); key != "" {

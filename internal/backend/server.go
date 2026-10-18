@@ -299,7 +299,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -1195,7 +1195,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}
 	message.Content = append(message.Content, in.Content...)
 	converted, _ := message.ToAIMessage()
-	reviewer := s.newRunReviewer(ctx, rt, in.Prompt)
+	reviewer := s.newRunReviewer(ctx, rt, in.Prompt, options.PermissionMode)
 	gate := func(req tools.GateRequest) (tools.GateDecision, string) {
 		if options.Mode == "chat" {
 			return tools.GateReject, "chat mode disables tools"
@@ -1214,6 +1214,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			}
 			if policy == "ask" {
 				gateOptions.ApprovalPolicy = "ask"
+				gateOptions.PermissionMode = "normal"
 				gateOptions.Tools = &protocol.ToolSelection{Policies: map[string]string{"computer_exec": "ask"}}
 				if options.Tools != nil && options.Tools.Policies["computer_exec"] == "deny" {
 					return tools.GateReject, "computer use denied for this run"
@@ -1222,6 +1223,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		}
 		if reviewer != nil && reviewer.RequiresManual(req.Context) {
 			gateOptions.ApprovalPolicy = "ask"
+			gateOptions.PermissionMode = "normal"
 			policies := make(map[string]string)
 			if gateOptions.Tools != nil {
 				for tool, policy := range gateOptions.Tools.Policies {

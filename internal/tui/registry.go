@@ -51,7 +51,7 @@ var registry = []registryEntry{
 	{Name: "/mouse", Hint: "toggle mouse capture", Category: "Display"},
 	{Name: "/new", Hint: "start a fresh session (alias: /clear)", Category: "Session"},
 	{Name: "/new-context", Hint: "start a fresh context window and preserve raw history", Category: "Session"},
-	{Name: "/permissions", Args: "[normal|plan|always]", Hint: "change execution mode", Category: "Agent"},
+	{Name: "/permissions", Args: "[normal|plan|auto_review|auto_edit|full_access|always]", Hint: "change execution mode", Category: "Agent"},
 	{Name: "/plan", Hint: "show the current model-managed plan", Category: "Session"},
 	{Name: "/plugins", Args: "[list|enable NAME|disable NAME|reload]", Hint: "manage local plugins", Category: "App"},
 	{Name: "/pwd", Hint: "print working directory", Category: "Session"},
@@ -124,7 +124,7 @@ func helpTextFor(language string) string {
 	b.WriteString("!!cmd " + registryFind("!!cmd").helpHint(language) + "\n")
 	b.WriteString(tr("Tab — complete"))
 	for _, hint := range []string{
-		"Shift+Tab — cycle Normal / Plan / Always allow",
+		"Shift+Tab — cycle Normal / Plan / Auto review / Always allow",
 		"Ctrl+K — clear the conversation",
 		"Ctrl+T — focus the subagents dock (↑/↓ select, Enter opens, Esc Backs out)",
 		palHintThinking + " — toggle thinking tokens",

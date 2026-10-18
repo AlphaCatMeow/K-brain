@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
@@ -49,6 +50,12 @@ func normalizeRunOptions(in *protocol.RunOptions, cwd string, available []tools.
 	}
 	if out.ApprovalPolicy != "ask" && out.ApprovalPolicy != "auto" && out.ApprovalPolicy != "deny" {
 		return protocol.RunOptions{}, fmt.Errorf("options.approval_policy is invalid")
+	}
+	if err := permissions.Validate(out.PermissionMode); err != nil {
+		return protocol.RunOptions{}, fmt.Errorf("options.permission_mode: %w", err)
+	}
+	if out.PermissionMode == permissions.Plan {
+		out.PlanModeEnabled = true
 	}
 	if out.Reasoning != "" && !slices.Contains(runReasoning, out.Reasoning) {
 		return protocol.RunOptions{}, fmt.Errorf("options.reasoning is invalid")
@@ -215,7 +222,7 @@ func exitPlanModeTool() tools.Tool {
 }
 
 func runToolGate(options protocol.RunOptions, req tools.GateRequest, ask func(tools.GateRequest) (tools.GateDecision, string)) (tools.GateDecision, string) {
-	if options.PlanModeEnabled && req.Tool != "Read" && req.Tool != "Image" && req.Tool != "List" && req.Tool != "Glob" && req.Tool != "Grep" && req.Tool != "ExitPlanMode" && req.Tool != "read" && req.Tool != "question" && req.Tool != "AskUserQuestion" && req.Tool != "todowrite" {
+	if (options.PlanModeEnabled || options.PermissionMode == permissions.Plan) && req.Tool != "Read" && req.Tool != "Image" && req.Tool != "List" && req.Tool != "Glob" && req.Tool != "Grep" && req.Tool != "ExitPlanMode" && req.Tool != "read" && req.Tool != "question" && req.Tool != "AskUserQuestion" && req.Tool != "todowrite" {
 		return tools.GateReject, "plan mode blocks this tool until ExitPlanMode is approved"
 	}
 	if options.ApprovalPolicy == "deny" {
@@ -228,8 +235,23 @@ func runToolGate(options protocol.RunOptions, req tools.GateRequest, ask func(to
 		case "allow":
 			return tools.GateAllowOnce, "per-tool policy allows this action"
 		case "ask":
+			if options.PermissionMode != permissions.Always {
+				return ask(req)
+			}
+		}
+	}
+	switch options.PermissionMode {
+	case permissions.Normal, permissions.Plan, permissions.AutoReview:
+		if req.Tool != "ExitPlanMode" {
 			return ask(req)
 		}
+	case permissions.AutoEdit:
+		if permissions.IsEdit(req.Tool) {
+			return tools.GateAllowOnce, "auto-edit permission mode"
+		}
+		return ask(req)
+	case permissions.FullAccess, permissions.Always:
+		return tools.GateAllowOnce, "per-run permission mode"
 	}
 	if req.Tool == "ExitPlanMode" || options.ApprovalPolicy == "auto" {
 		return tools.GateAllowOnce, "per-run approval policy"

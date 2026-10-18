@@ -19,17 +19,27 @@ const reviewLow = `{"risk":"low","sandbox":"low","sensitive_data":"low","model_b
 
 func TestAIApprovalHTTPModesAndDenyPrecedence(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode, review, policy, decision string
-		permission, changed                  bool
+		name, mode, review, policy, decision, permissionMode string
+		permission, changed                                  bool
 	}{
-		{"off", "off", reviewLow, "ask", "reject", true, false},
-		{"warnings-preserve-ask", "risk_only", reviewLow, "ask", "reject", true, false},
-		{"warnings-preserve-allow", "risk_only", `bad`, "auto", "reject", false, true},
-		{"automatic-low", "auto", reviewLow, "ask", "reject", false, true},
-		{"automatic-high", "auto", strings.Replace(reviewLow, `"risk":"low"`, `"risk":"high"`, 1), "auto", "reject", true, false},
-		{"automatic-invalid", "auto", `broken`, "auto", "reject", true, false},
-		{"automatic-human-allow", "auto", `broken`, "ask", "allow_once", true, true},
-		{"hard-deny", "auto", reviewLow, "deny", "allow_once", false, false},
+		{"off", "off", reviewLow, "ask", "reject", "", true, false},
+		{"warnings-preserve-ask", "risk_only", reviewLow, "ask", "reject", "", true, false},
+		{"warnings-preserve-allow", "risk_only", reviewLow, "auto", "reject", "", false, true},
+		{"automatic-low", "auto", reviewLow, "ask", "reject", "", false, true},
+		{"automatic-high", "auto", strings.Replace(reviewLow, `"risk":"low"`, `"risk":"high"`, 1), "auto", "reject", "", true, false},
+		{"automatic-invalid", "auto", `broken`, "auto", "reject", "", true, false},
+		{"automatic-human-allow", "auto", `broken`, "ask", "allow_once", "", true, true},
+		{"hard-deny", "auto", reviewLow, "deny", "allow_once", "", false, false},
+		{"run-auto-review-low", "off", reviewLow, "ask", "reject", "auto_review", false, true},
+		{"run-auto-review-unknown", "off", `broken`, "auto", "reject", "auto_review", true, false},
+		{"run-always-skips-review", "auto", `broken`, "ask", "reject", "always", false, true},
+		{"run-full-access-keeps-review", "auto", `broken`, "auto", "reject", "full_access", true, false},
+		{"run-review-missing-model", "off", reviewLow, "ask", "reject", "auto_review", true, false},
+		{"run-normal-confirms", "off", reviewLow, "auto", "reject", "normal", true, false},
+		{"run-plan-blocks-write", "off", reviewLow, "auto", "reject", "plan", false, false},
+		{"run-auto-edit-writes", "off", reviewLow, "ask", "reject", "auto_edit", false, true},
+		{"run-full-access-writes", "off", reviewLow, "ask", "reject", "full_access", false, true},
+		{"run-always-deny-wins", "off", reviewLow, "deny", "allow_once", "always", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var reviewCalls atomic.Int32
@@ -53,9 +63,13 @@ func TestAIApprovalHTTPModesAndDenyPrecedence(t *testing.T) {
 			}
 			defer store.Close()
 			server, httpServer := newToolHistoryServer(t, store, t.TempDir(), client)
-			server.settings = NewSettingsStore(&config.Config{AIApproval: config.AIApprovalConfig{Mode: tc.mode, Provider: "fixture", Model: "small"}, Providers: map[string]config.Provider{"fixture": {API: "openai-completions", BaseURL: provider.URL, APIKey: "fixture-key"}}, Models: map[string]config.Model{"small": {Providers: []string{"fixture"}}, "fixture-model": {Providers: []string{"fixture"}}}}, nil)
+			cfg := &config.Config{AIApproval: config.AIApprovalConfig{Mode: tc.mode, Provider: "fixture", Model: "small"}, Providers: map[string]config.Provider{"fixture": {API: "openai-completions", BaseURL: provider.URL, APIKey: "fixture-key"}}, Models: map[string]config.Model{"small": {Providers: []string{"fixture"}}, "fixture-model": {Providers: []string{"fixture"}}}}
+			if tc.name == "run-review-missing-model" {
+				cfg.AIApproval = config.AIApprovalConfig{Mode: "off"}
+			}
+			server.settings = NewSettingsStore(cfg, nil)
 			sess := createTestSession(t, httpServer.URL)
-			options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: tc.policy, WorkspaceRoots: []protocol.WorkspaceRoot{{Path: root, Access: "write"}}}
+			options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: tc.policy, PermissionMode: tc.permissionMode, WorkspaceRoots: []protocol.WorkspaceRoot{{Path: root, Access: "write"}}}
 			var accepted protocol.RunAccepted
 			resp := postJSON(t, http.DefaultClient, httpServer.URL+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "review", Prompt: "write marker", Options: &options}, &accepted)
 			if resp.StatusCode != http.StatusAccepted {
@@ -69,10 +83,11 @@ func TestAIApprovalHTTPModesAndDenyPrecedence(t *testing.T) {
 			if (string(data) == "changed") != tc.changed {
 				t.Fatalf("unauthorized or missing mutation %q", data)
 			}
-			if tc.mode == "off" && reviewCalls.Load() != 0 {
+			reviewExpected := tc.name != "run-review-missing-model" && tc.permissionMode != "always" && (tc.mode != "off" || tc.permissionMode == "auto_review")
+			if !reviewExpected && reviewCalls.Load() != 0 {
 				t.Fatal("off contacted reviewer")
 			}
-			if tc.mode != "off" && tc.policy != "deny" && reviewCalls.Load() == 0 {
+			if reviewExpected && tc.policy != "deny" && reviewCalls.Load() == 0 {
 				t.Fatal("no real HTTP review")
 			}
 			for _, event := range events {

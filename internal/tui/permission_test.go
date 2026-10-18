@@ -118,7 +118,7 @@ func TestAIApprovalNeverOverridesPlanAndUnknownRequiresManual(t *testing.T) {
 			m.permissionMode = "plan"
 		}
 		if tc.mode == "auto" && tc.risk == "unknown" {
-			m.permissionMode = "always"
+			m.permissionMode = "auto_review"
 		}
 		report := approval.Report{Risk: tc.risk, Sandbox: tc.risk, SensitiveData: tc.risk, ModelBehavior: tc.risk, Injection: tc.risk, Reason: "review"}
 		ctx := context.WithValue(t.Context(), approval.ActionReportKey{}, report)
@@ -138,5 +138,45 @@ func TestAIApprovalNeverOverridesPlanAndUnknownRequiresManual(t *testing.T) {
 		default:
 			t.Fatal("no answer")
 		}
+	}
+}
+
+func TestPermissionModeDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		mode, tool, risk string
+		manual           bool
+	}{
+		{"normal", "bash", "", true},
+		{"auto_edit", "write", "", false},
+		{"auto_edit", "bash", "", true},
+		{"auto_review", "bash", "low", false},
+		{"auto_review", "bash", "unknown", true},
+		{"auto_review", "bash", "", true},
+		{"full_access", "bash", "", false},
+		{"always", "bash", "unknown", false},
+	} {
+		t.Run(tc.mode+"/"+tc.tool+"/"+tc.risk, func(t *testing.T) {
+			m := &model{permissionMode: tc.mode, perms: permRules{}}
+			ctx := t.Context()
+			if tc.risk != "" {
+				report := approval.Report{Risk: tc.risk, Sandbox: tc.risk, SensitiveData: tc.risk, ModelBehavior: tc.risk, Injection: tc.risk}
+				ctx = context.WithValue(ctx, approval.ActionReportKey{}, report)
+			}
+			reply := make(chan permAnswer, 1)
+			m.receivePermission(permRequest{req: tools.GateRequest{Context: ctx, Tool: tc.tool}, reply: reply})
+			if (m.permDialog != nil) != tc.manual {
+				t.Fatalf("manual=%v", m.permDialog != nil)
+			}
+			if !tc.manual {
+				select {
+				case answer := <-reply:
+					if answer.decision != tools.GateAllowOnce {
+						t.Fatalf("decision=%v", answer.decision)
+					}
+				default:
+					t.Fatal("missing automatic answer")
+				}
+			}
+		})
 	}
 }
