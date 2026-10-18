@@ -1499,13 +1499,17 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 	defer s.releaseRuntime(rt)
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after_seq"), 10, 64)
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSONError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	// Flush headers before waiting so clients and proxies establish the live stream.
+	flusher.Flush()
+	firstText, firstThinking := true, true
 	for {
 		rt.mu.Lock()
 		if rt.deleted {
@@ -1530,14 +1534,24 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		changed := rt.changed
 		rt.mu.Unlock()
-		for _, e := range pending {
+		for i, e := range pending {
 			if err := writeSSE(w, e); err != nil {
 				return
 			}
 			after = e.Seq
+			flush := (i+1)%32 == 0
+			if e.Type == protocol.EventTextDelta && firstText {
+				firstText, flush = false, true
+			}
+			if e.Type == protocol.EventThinkingDelta && firstThinking {
+				firstThinking, flush = false, true
+			}
 			if e.Type == protocol.EventRunCompleted || e.Type == protocol.EventRunFailed || e.Type == protocol.EventRunCancelled {
 				flusher.Flush()
 				return
+			}
+			if flush {
+				flusher.Flush()
 			}
 		}
 		flusher.Flush()
