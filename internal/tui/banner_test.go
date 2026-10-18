@@ -13,15 +13,15 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
-func TestBannerVersionHasNoPrefix(t *testing.T) {
+func TestBannerVersionPreservesBuildValue(t *testing.T) {
 	previous := Version
 	t.Cleanup(func() { Version = previous })
 	for _, tc := range []struct{ input, want string }{
 		{"0.107.6-beta.14", "0.107.6-beta.14"},
-		{"v0.107.6-beta.14", "0.107.6-beta.14"},
-		{"vv0.107.6-beta.14", "0.107.6-beta.14"},
-		{"V0.107.6-beta.14", "0.107.6-beta.14"},
-		{" v0.107.6-beta.14 ", "0.107.6-beta.14"},
+		{"v0.107.6-beta.14", "v0.107.6-beta.14"},
+		{"vv0.107.6-beta.14", "vv0.107.6-beta.14"},
+		{"V0.107.6-beta.14", "V0.107.6-beta.14"},
+		{" v0.107.6-beta.14 ", " v0.107.6-beta.14 "},
 		{"dev", "dev"},
 		{"", "dev"},
 	} {
@@ -34,7 +34,7 @@ func TestBannerVersionHasNoPrefix(t *testing.T) {
 			m.cfg.Language = "zh_cn"
 			banner := ansi.Strip(m.bannerBody())
 			if !strings.Contains(banner, "氪脑   "+tc.want) {
-				t.Fatalf("banner missing unprefixed version: %q", banner)
+				t.Fatalf("banner missing original build version: %q", banner)
 			}
 		})
 	}
