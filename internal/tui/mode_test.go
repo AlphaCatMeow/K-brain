@@ -10,7 +10,7 @@ import (
 func TestShiftTabCyclesPermissionModes(t *testing.T) {
 	m := compactCmdModel()
 	m.input.SetValue("keep this draft")
-	for _, mode := range []string{"plan", "always", "normal"} {
+	for _, mode := range []string{"plan", "auto_review", "always", "normal"} {
 		m = pressKey(m, tea.KeyShiftTab)
 		if m.permissionMode != mode || m.agent.PlanMode() != (mode == "plan") || m.input.Value() != "keep this draft" {
 			t.Fatalf("mode %s: got %s, plan=%v, draft=%q", mode, m.permissionMode, m.agent.PlanMode(), m.input.Value())

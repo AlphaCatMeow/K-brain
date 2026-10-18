@@ -58,7 +58,7 @@ func completions(val string, models, providers, skillCands, efforts []cand) (hea
 			}
 		}
 	case len(fields) == 1 && fields[0] == "/permissions":
-		cands = filterPrefix([]cand{{"normal", "Confirm commands and file changes"}, {"plan", "Read-only planning"}, {"always", "Always allow tool execution"}}, token)
+		cands = filterPrefix([]cand{{"normal", "Confirm commands and file changes"}, {"plan", "Read-only planning"}, {"auto_review", "AI review with manual fallback"}, {"auto_edit", "Automatically allow file edits"}, {"full_access", "Allow tools with configured AI review"}, {"always", "Always allow tool execution"}}, token)
 	case len(fields) == 1 && fields[0] == "/language":
 		cands = filterPrefix([]cand{{"zh_cn", "简体中文"}, {"zh_Hant", "繁體中文"}, {"en", "English"}}, token)
 	case len(fields) == 1 && fields[0] == "/effort":

@@ -18,6 +18,7 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/hooks"
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 	"github.com/Stack-Cairn/K-brain/internal/plugins"
 	sysprompt "github.com/Stack-Cairn/K-brain/internal/prompts"
 	"github.com/Stack-Cairn/K-brain/internal/routing"
@@ -69,6 +70,7 @@ func runCLI(args []string) (runErr error) {
 	quietFlag := fs.Bool("quiet", false, "suppress the stderr tool/session notes (clean stdout for -format json piping)")
 	noSessionFlag := fs.Bool("no-session", false, "run without persisting a session (one-off jobs don't clutter k-brain sessions)")
 	cacheKeyFlag := fs.String("cache-key", "", "prompt_cache_key for provider prefix caching; defaults to the session id, else a per-run key. Pass a STABLE value (e.g. repo/reviewer) to reuse the cached system prefix across runs.")
+	permissionModeFlag := fs.String("permission-mode", "", "normal, plan, auto_edit, full_access, always, or auto_review; unapproved actions fail in non-interactive runs")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: kn run [--format text|json] [-m model] [-p provider] [-resume id] [-system text | -system-file path] [-max-turns N] [-timeout dur] [-quiet] [-no-session] \"prompt\"")
 		fs.PrintDefaults()
@@ -140,6 +142,12 @@ func runCLI(args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
+	if err := permissions.Validate(*permissionModeFlag); err != nil {
+		return err
+	}
+	if *permissionModeFlag == permissions.AutoReview {
+		cfg.AIApproval.Mode = "auto"
+	}
 	closeTools, err := initializeToolRuntime(cfg)
 	if err != nil {
 		return err
@@ -164,6 +172,7 @@ func runCLI(args []string) (runErr error) {
 
 	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sys, agent.WithExperimental(cfg.Experimental), withToolAvailability(cfg), func(a *agent.Agent) { a.ComputerDisabled = true })
 	ag.WorkingDir = cwd()
+	ag.SetPlanMode(*permissionModeFlag == permissions.Plan)
 	ag.WorktreeSubagents = cfg.WorktreeSubagents != nil && *cfg.WorktreeSubagents
 	ag.Hooks = hooks.New(cfg.Hooks)
 	ag.ModelName, ag.Provider = route.ModelName, route.ProviderName
@@ -217,6 +226,23 @@ func runCLI(args []string) (runErr error) {
 		}
 	}
 	ctx = sandbox.WithPolicy(ctx, ag.SandboxPolicy)
+	if *permissionModeFlag != "" {
+		ctx = tools.WithGate(ctx, func(req tools.GateRequest) (tools.GateDecision, string) {
+			switch *permissionModeFlag {
+			case permissions.Always, permissions.FullAccess:
+				return tools.GateAllowOnce, "explicit permission mode"
+			case permissions.AutoEdit:
+				if permissions.IsEdit(req.Tool) {
+					return tools.GateAllowOnce, "auto edit"
+				}
+			case permissions.AutoReview:
+				if name, _ := req.Context.Value(approval.ReviewedActionKey{}).(string); name == req.Tool {
+					return tools.GateAllowOnce, "AI reviewed"
+				}
+			}
+			return tools.GateReject, "permission mode requires interactive approval; resume in TUI or LiveAgent"
+		})
+	}
 	ag.SetSessionID(sessionID)
 	if err := ag.StartSession(ctx); err != nil {
 		return err
@@ -240,7 +266,7 @@ func runCLI(args []string) (runErr error) {
 		note("task model: %v — subagents use the run's model", terr)
 	}
 
-	if cfg.AIApproval.Enabled() {
+	if *permissionModeFlag != permissions.Always && cfg.AIApproval.Enabled() {
 		run := approval.NewRun(cfg.AIApproval.Mode, prompt, approval.New(ctx, cfg), func(phase, tool string, report approval.Report, automatic bool) {
 			if !report.Safe() || automatic {
 				note("AI %s %s: %s", phase, tool, report.Description())

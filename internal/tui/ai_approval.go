@@ -8,10 +8,16 @@ import (
 )
 
 func (m *model) withAIApproval(ctx context.Context, intent string) context.Context {
-	if m.cfg == nil || !m.cfg.AIApproval.Enabled() {
+	if m.permissionMode == "always" || m.cfg == nil {
 		return ctx
 	}
 	cfg := m.cfg.Snapshot()
+	if m.permissionMode == "auto_review" {
+		cfg.AIApproval.Mode = "auto"
+	}
+	if !cfg.AIApproval.Enabled() {
+		return ctx
+	}
 	p := m.prog
 	run := approval.NewRun(cfg.AIApproval.Mode, intent, approval.New(ctx, cfg), func(phase, tool string, report approval.Report, automatic bool) {
 		if p != nil && (!report.Safe() || automatic) {

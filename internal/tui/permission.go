@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
@@ -104,7 +105,7 @@ func (m *model) receivePermission(msg permRequest) {
 			msg.req.Description = report.Description()
 		}
 	}
-	auto := m.cfg != nil && m.cfg.AIApproval.Mode == "auto"
+	auto := m.permissionMode == "auto_review" || (m.cfg != nil && m.cfg.AIApproval.Mode == "auto")
 	alreadyApproved := false
 	if msg.req.Context != nil {
 		name, _ := msg.req.Context.Value(approval.ReviewedActionKey{}).(string)
@@ -115,11 +116,15 @@ func (m *model) receivePermission(msg permRequest) {
 		msg.reply <- permAnswer{tools.GateReject, "cancelled"}
 	case m.permissionMode == "plan":
 		msg.reply <- permAnswer{tools.GateReject, "Plan mode only allows read-only inspection"}
+	case m.permissionMode == "always":
+		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	case alreadyApproved || (auto && reviewed && report.Safe()):
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	case auto && reviewed && !report.Safe():
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
-	case m.permissionMode == "always" || m.perms.coveredBy(msg.req):
+	case m.permissionMode == "auto_review":
+		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
+	case m.permissionMode == "full_access" || (m.permissionMode == "auto_edit" && permissions.IsEdit(msg.req.Tool)) || m.perms.coveredBy(msg.req):
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	default:
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}

@@ -319,6 +319,7 @@ type RunOptions struct {
 	Mode            string          `json:"mode,omitempty"`
 	Search          string          `json:"search,omitempty"`
 	ApprovalPolicy  string          `json:"approval_policy,omitempty"`
+	PermissionMode  string          `json:"permission_mode,omitempty"`
 	WorkspaceRoots  []WorkspaceRoot `json:"workspace_roots,omitempty"`
 	Tools           *ToolSelection  `json:"tools,omitempty"`
 	PlanModeEnabled bool            `json:"plan_mode_enabled,omitempty"`

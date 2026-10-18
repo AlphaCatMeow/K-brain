@@ -4,13 +4,21 @@ import (
 	"context"
 
 	"github.com/Stack-Cairn/K-brain/internal/approval"
+	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 )
 
-func (s *Server) newRunReviewer(ctx context.Context, rt *runtimeSession, intent string) *approval.RunReviewer {
-	if s.settings == nil {
+func (s *Server) newRunReviewer(ctx context.Context, rt *runtimeSession, intent, mode string) *approval.RunReviewer {
+	if mode == permissions.Always {
 		return nil
 	}
-	cfg := s.settings.Snapshot()
+	cfg := &config.Config{}
+	if s.settings != nil {
+		cfg = s.settings.Snapshot()
+	}
+	if mode == permissions.AutoReview {
+		cfg.AIApproval.Mode = "auto"
+	}
 	if !cfg.AIApproval.Enabled() {
 		return nil
 	}
