@@ -73,10 +73,10 @@ type bannerStats struct {
 }
 
 func versionLabel() string {
-	if Version == "" || Version == "dev" {
+	if Version == "" {
 		return "dev"
 	}
-	return "v" + Version
+	return Version
 }
 
 // bannerLabel right-pads a label to a fixed column so values line up, counting

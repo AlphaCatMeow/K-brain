@@ -13,6 +13,33 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
+func TestBannerVersionPreservesBuildValue(t *testing.T) {
+	previous := Version
+	t.Cleanup(func() { Version = previous })
+	for _, tc := range []struct{ input, want string }{
+		{"0.107.6-beta.14", "0.107.6-beta.14"},
+		{"v0.107.6-beta.14", "v0.107.6-beta.14"},
+		{"vv0.107.6-beta.14", "vv0.107.6-beta.14"},
+		{"V0.107.6-beta.14", "V0.107.6-beta.14"},
+		{" v0.107.6-beta.14 ", " v0.107.6-beta.14 "},
+		{"dev", "dev"},
+		{"", "dev"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			Version = tc.input
+			if got := versionLabel(); got != tc.want {
+				t.Fatalf("versionLabel(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+			m := compactCmdModel()
+			m.cfg.Language = "zh_cn"
+			banner := ansi.Strip(m.bannerBody())
+			if !strings.Contains(banner, "氪脑   "+tc.want) {
+				t.Fatalf("banner missing original build version: %q", banner)
+			}
+		})
+	}
+}
+
 func TestBannerBoxFitsEveryWidth(t *testing.T) {
 	m := compactCmdModel()
 	m.modelName, m.provName = "kimi-k3-fast", "inference"
