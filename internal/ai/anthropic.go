@@ -3,7 +3,6 @@ package ai
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -16,31 +15,14 @@ func NewAnthropic(baseURL, apiKey string) *Anthropic { return &Anthropic{OpenAI:
 func (c *Anthropic) Clone() Client                   { cp := *c.OpenAI; return &Anthropic{OpenAI: &cp} }
 
 func (c *Anthropic) Models(ctx context.Context) ([]ModelInfo, error) {
-	hr, err := http.NewRequestWithContext(ctx, http.MethodGet, c.modelCatalogURL(), nil)
-	if err != nil {
-		return nil, err
+	headers := http.Header{
+		"X-Api-Key":         {c.APIKey},
+		"Anthropic-Version": {"2023-06-01"},
 	}
-	hr.Header.Set("x-api-key", c.APIKey)
-	hr.Header.Set("anthropic-version", "2023-06-01")
 	for name, values := range c.Headers {
-		hr.Header[name] = append([]string(nil), values...)
+		headers[name] = append([]string(nil), values...)
 	}
-	resp, err := c.HTTP.Do(hr)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, newHTTPError(resp, string(b))
-	}
-	var list struct {
-		Data []ModelInfo `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return nil, err
-	}
-	return list.Data, nil
+	return c.modelsWithHeaders(ctx, headers)
 }
 
 func (c *Anthropic) request(ctx context.Context, req Request, stream bool) (*http.Response, error) {

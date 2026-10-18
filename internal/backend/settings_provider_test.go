@@ -136,6 +136,9 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 		{"chat completions", ai.APIChatCompletions, "/v1/chat/completions", "", "/v1/models", true},
 		{"responses", ai.APIResponses, "/responses", "", "/v1/models", true},
 		{"versioned responses", ai.APIResponses, "/v1/responses", "", "/v1/models", true},
+		{"grok root relay", ai.APIResponses, "", "", "/v1/models", false},
+		{"grok responses base", ai.APIResponses, "/v1/responses", "", "/v1/models", false},
+		{"grok catalog base", ai.APIResponses, "/v1/models", "", "/v1/models", false},
 		{"response alias", ai.APIResponses, "/response", "", "/v1/models", true},
 		{"prefixed query", ai.APIChatCompletions, "/custom/v1/chat/completions?region=cn", "", "/custom/v1/models", true},
 		{"custom generation", ai.APIChatCompletions, "/custom/complete?region=cn", "", "/custom/v1/models", true},
@@ -144,16 +147,22 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 		{"catalog override", ai.APIChatCompletions, "/chat", "/catalog/?region=cn/", "/catalog/?region=cn/", true},
 		{"messages", ai.APIMessages, "/messages", "", "/v1/models", true},
 		{"versioned messages", ai.APIMessages, "/custom/v1/messages", "", "/custom/v1/models", true},
+		{"messages base", ai.APIMessages, "/custom/v1", "", "/custom/v1/models", false},
+		{"messages catalog override", ai.APIMessages, "/messages", "/catalog/?region=cn", "/catalog/?region=cn", true},
 		{"gemini", ai.APIGemini, "/v1beta/models/m:generateContent?key=secret", "", "/v1beta/models", true},
 		{"gemini catalog override", ai.APIGemini, "/generate", "/catalog/", "/catalog/", true},
 		{"legacy base", ai.APIChatCompletions, "/custom/v1", "", "/custom/v1/models", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := make(chan *http.Request, 2)
+			requests := make(chan *http.Request, 4)
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests <- r.Clone(r.Context())
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
+					if tc.api == ai.APIMessages && (r.Header.Get("Authorization") != "Bearer k" || r.Header.Get("X-Api-Key") != "k" || r.Header.Get("Anthropic-Version") != "2023-06-01") {
+						http.Error(w, "missing gateway credentials", http.StatusUnauthorized)
+						return
+					}
 					if r.URL.RequestURI() != tc.catalog {
 						http.Error(w, "not a model catalog", http.StatusNotFound)
 						return
@@ -203,6 +212,12 @@ func TestProviderModelDiscoveryUsesBackendHeadersAndFullURL(t *testing.T) {
 				t.Fatalf("discovery=%d %s", out.StatusCode, body)
 			}
 			got := <-requests
+			if tc.name == "grok root relay" {
+				if got.URL.Path != "/models" {
+					t.Fatalf("initial root request=%s", got.URL)
+				}
+				got = <-requests
+			}
 			auth, key := "Authorization", "Bearer k"
 			if tc.api == ai.APIMessages {
 				auth, key = "X-Api-Key", "k"
