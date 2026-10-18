@@ -367,7 +367,7 @@ func (s *Server) evaluateGoal(rt *runtimeSession, runID, outcome string) {
 	case current && goalReplyLeads(rt, goalloop.Met):
 		_ = s.store.SetGoal(rt.id, "")
 		rt.goal.status, rt.goal.reason = "met", ""
-	case goalReplyLeads(rt, goalloop.NeedsInput):
+	case current && goalReplyLeads(rt, goalloop.NeedsInput):
 		// Another round cannot get the user's answer; wait for their next message.
 		rt.goal.status, rt.goal.reason = "paused", goalReasonAwaitingInput
 	case rt.goal.round >= s.goalMaxRoundsLocked(rt):
