@@ -1157,7 +1157,8 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request, id string) {
 	if err := decodeJSON(w, r, &in); err != nil {
 		return
 	}
-	accepted, status, err := s.startCanonicalRun(context.Background(), rt, in)
+	// A user run may answer a goal waiting for input or get a paused-goal notice; cron runs never do.
+	accepted, status, err := s.startCanonicalRunWith(context.Background(), rt, in, s.goalUserRunAdmit(rt))
 	if err != nil {
 		writeJSONError(w, status, err.Error())
 		return

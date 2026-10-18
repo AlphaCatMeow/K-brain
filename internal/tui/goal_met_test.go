@@ -66,3 +66,20 @@ func TestGoalLoopDoesNotCompleteOnTruncatedResponse(t *testing.T) {
 		t.Fatal("truncated completion marker ended the goal")
 	}
 }
+
+func TestGoalLoopWaitsWhenTheReplyNeedsInput(t *testing.T) {
+	m := goalFromContextModel(t, 200, `{"choices":[{"message":{"content":"ok"}}]}`)
+	m.goal = "ship the thing"
+	m.goalRounds = 3
+	tm, cmd := m.Update(turnDoneMsg{final: "GOAL_NEEDS_INPUT — which title should the file use?"})
+	mm := tm.(*model)
+	if cmd != nil {
+		t.Fatal("no continuation turn may start while the goal waits for the user")
+	}
+	if mm.goal != "ship the thing" || mm.goalRounds != 3 {
+		t.Fatalf("waiting must keep the goal: %q round %d", mm.goal, mm.goalRounds)
+	}
+	if !strings.Contains(lastBlock(mm), "waiting for your reply") {
+		t.Fatalf("notice: %q", lastBlock(mm))
+	}
+}

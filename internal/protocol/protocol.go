@@ -411,6 +411,9 @@ type GoalRequest struct {
 // GoalState is the session goal snapshot returned by the goal route and carried by
 // goal.updated events. Status is none, active, continuing, met, paused or cleared.
 // A continuing event names the request id of the round the backend starts next.
+// Reason explains a pause: user, restored, max_rounds, busy, start_failed, cancelled,
+// failed, or awaiting_input when a round asked the user for input; the user's next
+// plain run then resumes the goal as its round.
 type GoalState struct {
 	Version             string `json:"version"`
 	ConversationID      string `json:"conversation_id"`

@@ -42,10 +42,10 @@ func (s *Server) startCanonicalRun(ctx context.Context, rt *runtimeSession, in p
 }
 
 // runAdmit runs under rt.mu once a new run has passed every check and is about to be
-// accepted, so state tied to the run changes atomically with its acceptance. An error
-// rejects the run; the returned rollback, if any, undoes the change when persisting the
-// acceptance fails afterwards.
-type runAdmit func() (rollback func(), status int, err error)
+// accepted, so state tied to the run changes atomically with its acceptance. It may add
+// request-only text to in.Snapshot. An error rejects the run; the returned rollback, if
+// any, undoes the change when persisting the acceptance fails afterwards.
+type runAdmit func(in *protocol.PromptRequest) (rollback func(), status int, err error)
 
 func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, in protocol.PromptRequest, admit runAdmit) (protocol.RunAccepted, int, error) {
 	fail := func(status int, message string) (protocol.RunAccepted, int, error) {
@@ -148,7 +148,7 @@ func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, 
 	}
 	rollback := func() {}
 	if admit != nil {
-		undo, status, err := admit()
+		undo, status, err := admit(&in)
 		if err != nil {
 			return fail(status, err.Error())
 		}
