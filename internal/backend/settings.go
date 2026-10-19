@@ -260,6 +260,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func applySettings(cfg *config.Config, update settingsUpdate) error {
+	previousProviderOrder := cfg.OrderedProviderIDs()
 	if update.AIApproval != nil {
 		if err := update.AIApproval.Validate(); err != nil {
 			return err
@@ -389,7 +390,7 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 		}
 		cfg.Providers[id] = p
 	}
-	cfg.ProviderOrder = nextProviderOrder(cfg, update.Providers)
+	cfg.ProviderOrder = nextProviderOrder(cfg, update.Providers, previousProviderOrder)
 	if update.DefaultModel != nil {
 		cfg.DefaultModel = strings.TrimSpace(*update.DefaultModel)
 	}
@@ -417,7 +418,7 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 // nextProviderOrder applies the display order implied by an update. A provider list that names
 // every configured provider is the client's full ordering; a partial list (such as importing
 // only missing providers) keeps the existing order and appends the new providers after it.
-func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate) []string {
+func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate, previous []string) []string {
 	ids := make([]string, 0, len(providers))
 	for _, in := range providers {
 		ids = append(ids, strings.TrimSpace(in.ID))
@@ -425,10 +426,10 @@ func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate) [
 	if len(ids) > 0 && len(ids) == len(cfg.Providers) {
 		return ids
 	}
-	if len(cfg.ProviderOrder) == 0 {
+	if len(cfg.ProviderOrder) == 0 && len(ids) == 0 {
 		return nil
 	}
-	order := slices.DeleteFunc(slices.Clone(cfg.ProviderOrder), func(id string) bool {
+	order := slices.DeleteFunc(slices.Clone(previous), func(id string) bool {
 		_, ok := cfg.Providers[id]
 		return !ok
 	})

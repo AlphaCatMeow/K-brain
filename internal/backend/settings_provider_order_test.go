@@ -68,3 +68,20 @@ func TestSettingsProviderOrderPersistsAcrossSaveAndReload(t *testing.T) {
 	// Reordering again after a delete.
 	put(map[string]any{"providers": []any{provider("d"), provider("b"), provider("c")}}, "d", "b", "c")
 }
+
+func TestPartialProviderImportAppendsWithoutAnExplicitOrder(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"b": {API: "openai-completions", BaseURL: "https://b.invalid/v1"},
+		"c": {API: "openai-completions", BaseURL: "https://c.invalid/v1"},
+	}}
+	var update settingsUpdate
+	if err := json.Unmarshal([]byte(`{"providers":[{"id":"a","api":"openai-completions","baseUrl":"https://a.invalid/v1"}]}`), &update); err != nil {
+		t.Fatal(err)
+	}
+	if err := applySettings(cfg, update); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.OrderedProviderIDs(); !slices.Equal(got, []string{"b", "c", "a"}) {
+		t.Fatalf("partial import reordered existing providers: %v", got)
+	}
+}

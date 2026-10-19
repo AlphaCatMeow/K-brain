@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -33,6 +34,18 @@ func TestProviderOrderRoundTripsThroughMetadataForOlderBuilds(t *testing.T) {
 	}
 	if snap := back.Snapshot(); !slices.Equal(snap.ProviderOrder, back.ProviderOrder) {
 		t.Fatalf("snapshot order = %v", snap.ProviderOrder)
+	}
+}
+
+func TestProviderOrderIgnoresOutOfRangeNumbers(t *testing.T) {
+	for _, value := range []float64{1e100, math.Inf(1), math.NaN(), float64(int(^uint(0) >> 1))} {
+		p := Provider{Metadata: map[string]any{providerOrderMetadataKey: value}}
+		if _, ok := takeProviderOrder(&p); ok {
+			t.Fatalf("accepted invalid index %v", value)
+		}
+		if p.Metadata != nil {
+			t.Fatal("invalid order entry leaked into metadata")
+		}
 	}
 }
 

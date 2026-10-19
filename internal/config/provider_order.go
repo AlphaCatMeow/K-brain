@@ -44,7 +44,7 @@ func takeProviderOrder(provider *Provider) (int, bool) {
 	}
 	provider.Metadata = metadata
 	n, ok := raw.(float64)
-	if !ok || n < 0 || n != math.Trunc(n) {
+	if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= float64(int(^uint(0)>>1)) || n != math.Trunc(n) {
 		return 0, false
 	}
 	return int(n), true
