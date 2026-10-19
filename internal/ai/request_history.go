@@ -3,6 +3,7 @@ package ai
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 )
 
@@ -46,8 +47,15 @@ func wireToolCallIDs(msgs []Message, api string) []Message {
 		if !validWireToolCallID(mapped, api) {
 			mapped = hashedToolCallID(id)
 		}
-		if prev, taken := owner[mapped]; taken && prev != id {
-			mapped = hashedToolCallID(id)
+		for attempt := 0; ; attempt++ {
+			if prev, taken := owner[mapped]; !taken || prev == id {
+				break
+			}
+			if attempt == 0 {
+				mapped = hashedToolCallID(id)
+			} else {
+				mapped = hashedToolCallID(id + "\x00" + strconv.Itoa(attempt))
+			}
 		}
 		wire[id], owner[mapped] = mapped, id
 		return mapped

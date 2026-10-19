@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -137,5 +138,46 @@ func TestResponsesInputUsesWireToolCallIDs(t *testing.T) {
 	raw, _ := json.Marshal(input)
 	if strings.Contains(string(raw), "|fc_") || strings.Count(string(raw), `"call_id":"call_00ssMPSA89avT2VQMofCfJNG"`) != 2 {
 		t.Fatalf("unexpected Responses input: %s", raw)
+	}
+}
+
+func TestRequestHistoryResolvesHashNamespaceCollisions(t *testing.T) {
+	const imported = "|fc_imported"
+	for _, api := range []string{APIResponses, APIMessages} {
+		t.Run(api, func(t *testing.T) {
+			// Stored IDs can occupy both the first hash and later retry candidates.
+			reserved := []string{hashedToolCallID(imported)}
+			for attempt := 1; attempt <= 3; attempt++ {
+				reserved = append(reserved, hashedToolCallID(imported+"\x00"+strconv.Itoa(attempt)))
+			}
+			for _, ids := range [][]string{
+				append(append([]string{}, reserved...), imported),
+				append([]string{imported}, reserved...),
+			} {
+				messages := toolCallHistory(ids...)
+				before, _ := json.Marshal(messages)
+				calls, results := wireIDs(prepareRequestHistory(messages, api, "https://e.test", "m"))
+				if !reflect.DeepEqual(calls, results) {
+					t.Fatalf("call/result pairing broken: %v %v", calls, results)
+				}
+				seen := map[string]bool{}
+				for _, id := range calls {
+					if !validWireToolCallID(id, api) || seen[id] {
+						t.Fatalf("invalid or duplicate wire ID %q in %v", id, calls)
+					}
+					seen[id] = true
+				}
+				again, _ := wireIDs(prepareRequestHistory(messages, api, "https://e.test", "m"))
+				if !reflect.DeepEqual(calls, again) {
+					t.Fatalf("mapping changed across requests: %v %v", calls, again)
+				}
+				if after, _ := json.Marshal(messages); string(before) != string(after) {
+					t.Fatal("stored history mutated")
+				}
+				if ids[0] == reserved[0] && !reflect.DeepEqual(calls[:len(reserved)], reserved) {
+					t.Fatalf("existing owners changed: %v", calls)
+				}
+			}
+		})
 	}
 }
