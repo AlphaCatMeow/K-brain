@@ -226,7 +226,8 @@ func (a *Agent) SteerImages(text string, parts []ai.ContentPart) {
 func (a *Agent) AppendUser(content string) {
 	a.mu.Lock()
 	a.msgsMu.Lock()
-	a.Messages = append(a.Messages, ai.Message{Role: "user", Content: content})
+	now := time.Now()
+	a.Messages = append(a.Messages, ai.Message{Role: "user", Content: content, SentAt: &now})
 	a.msgsMu.Unlock()
 	a.mu.Unlock()
 }
@@ -587,10 +588,8 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		userMessage.ID = resumeID
 	}
 	msg := userMessage
-	if authored {
-		now := time.Now()
-		msg.SentAt = &now
-	}
+	now := time.Now()
+	msg.SentAt = &now
 	a.msgsMu.Lock()
 	if resumeID == "" {
 		a.Messages = append(a.Messages, msg)
@@ -619,7 +618,8 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			return "", err
 		}
 		if notice := a.takeContextNotice(); notice != "" {
-			message := ai.Message{Role: "user", Content: notice, PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
+			now := time.Now()
+			message := ai.Message{Role: "user", Content: notice, SentAt: &now, PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
 			a.msgsMu.Lock()
 			a.Messages = append(a.Messages, message)
 			a.msgsMu.Unlock()
@@ -718,7 +718,8 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			if ev.OnSteer != nil {
 				ev.OnSteer(s.text)
 			}
-			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts})
+			now := time.Now()
+			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts, SentAt: &now})
 		}
 		if len(steered) > 0 {
 			a.msgsMu.Unlock()

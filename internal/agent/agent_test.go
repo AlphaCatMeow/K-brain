@@ -789,6 +789,31 @@ func TestAppendUser(t *testing.T) {
 	if last.Authored {
 		t.Error("shared shell output is not an authored message")
 	}
+	if last.SentAt == nil || last.SentAt.IsZero() {
+		t.Error("background user message must carry a real timestamp")
+	}
+}
+
+func TestBackgroundTurnsHaveIndependentTimestamps(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("agent-%d", i+1), func(t *testing.T) {
+			t.Parallel()
+			srv := textServer(t, func(_ int, _ ai.Request) string { return "done" })
+			defer srv.Close()
+			ag := New(ai.New(srv.URL, "k"), "m", 100, "sys")
+			for turn := 0; turn < 3; turn++ {
+				userIndex := len(ag.Messages)
+				before := time.Now()
+				if _, err := ag.Turn(context.Background(), "read study materials", Events{}); err != nil {
+					t.Fatal(err)
+				}
+				message := ag.Messages[userIndex]
+				if message.Authored || message.SentAt == nil || message.SentAt.Before(before) || message.SentAt.After(time.Now()) {
+					t.Fatalf("background turn %d has invalid message timing: %+v", turn+1, message)
+				}
+			}
+		})
+	}
 }
 
 func TestSetAndResetUsage(t *testing.T) {
