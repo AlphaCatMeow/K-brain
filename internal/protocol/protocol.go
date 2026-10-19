@@ -230,6 +230,9 @@ type PermissionRequest struct {
 	Rule         string             `json:"rule,omitempty"`
 	Description  string             `json:"description,omitempty"`
 	Options      []PermissionOption `json:"options,omitempty"`
+	// Scope "session" means approving also grants this kind of action for the
+	// rest of the session, so clients can say so before the user decides.
+	Scope string `json:"scope,omitempty"`
 }
 
 type PermissionDecision struct {

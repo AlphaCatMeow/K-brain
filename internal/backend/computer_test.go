@@ -53,7 +53,8 @@ func TestComputerApprovalAndImagesOverHTTP(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			client := &runControlsClient{tool: "computer_exec", args: `{"action":"discover"}`}
+			// A desktop call, not discover: read-only actions skip the approval prompt.
+			client := &runControlsClient{tool: "computer_exec", args: `{"action":"call","tool":"screenshot","arguments":{}}`}
 			called := false
 			server, err := New(Options{Store: store, EventDir: t.TempDir(), DefaultCWD: t.TempDir(), Factory: func(context.Context, string, protocol.ModelRef) (*agent.Agent, error) {
 				a := agent.New(client, "fixture-model", 100, "fixture", agent.WithComputerConfig(config.ComputerConfig{ApprovalPolicy: policy}))

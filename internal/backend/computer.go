@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -65,4 +66,39 @@ func computerApprovalPolicy(cfg config.ComputerConfig) string {
 		return "ask"
 	}
 	return cfg.ApprovalPolicy
+}
+
+// computerRememberable reports whether the session-wide grant may cover a Cua
+// tool. Tools that replay or batch other tools, or install software, always ask.
+func computerRememberable(tool string) bool {
+	switch tool {
+	case "", "run_actions", "replay_trajectory", "install_ffmpeg", "install_extension":
+		return false
+	}
+	return true
+}
+
+// computerApprovalRule classifies a computer_exec request for interactive approval.
+// discover/describe/guide only read the driver catalog and bundled guides, so they
+// need no prompt. A call is keyed by its Cua tool; once the user approves any call,
+// every rememberable tool runs without asking for the rest of the session.
+func computerApprovalRule(command string) (rule string, readOnly, rememberable bool) {
+	var request struct {
+		Action string `json:"action"`
+		Tool   string `json:"tool"`
+	}
+	if json.Unmarshal([]byte(command), &request) != nil {
+		return "", false, false
+	}
+	switch request.Action {
+	case "discover", "describe", "guide":
+		return request.Action, true, false
+	case "call":
+		tool := strings.TrimSpace(request.Tool)
+		if tool == "" {
+			return "", false, false
+		}
+		return "call:" + tool, false, computerRememberable(tool)
+	}
+	return "", false, false
 }
