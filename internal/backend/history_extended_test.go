@@ -343,3 +343,43 @@ func TestShareDefaultRedactionPrivateProjectionRevokeAndDeleteRestart(t *testing
 		t.Fatalf("deleted/restarted token status=%d", status)
 	}
 }
+
+func TestBranchSummaryReportsForkLineage(t *testing.T) {
+	store, err := session.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, server := newTestServer(t, store, t.TempDir(), &scriptedClient{response: "unused"})
+
+	sourceID := createStoredHistorySession(t, store, t.TempDir(), []ai.Message{
+		{Role: protocol.RoleUser, Content: "question"},
+		{Role: protocol.RoleAssistant, Content: "answer"},
+		{Role: protocol.RoleUser, Content: "later"},
+	})
+	source := getSession(t, server.URL, sourceID)
+	if source.ForkedFrom != "" || source.ForkSeq != 0 {
+		t.Fatalf("source reports lineage: %+v", source.SessionSummary)
+	}
+	var child protocol.Session
+	if status := doJSON(t, http.MethodPost, server.URL+"/v1/sessions/"+sourceID+"/branch", protocol.BranchSessionRequest{
+		ExpectedRevision: source.Revision,
+		MessageRef:       protocol.HistoryMessageRef{MessageID: source.Messages[0].ID, Role: protocol.RoleUser},
+	}, &child); status != http.StatusCreated {
+		t.Fatalf("branch status=%d", status)
+	}
+	if child.ForkedFrom != sourceID || child.ForkSeq <= 0 {
+		t.Fatalf("branch lineage=%q/%d, want %q", child.ForkedFrom, child.ForkSeq, sourceID)
+	}
+	var page protocol.SessionPage
+	if status := doJSON(t, http.MethodGet, server.URL+"/v1/sessions", nil, &page); status != http.StatusOK {
+		t.Fatalf("list status=%d", status)
+	}
+	found := map[string]protocol.SessionSummary{}
+	for _, item := range page.Sessions {
+		found[item.ID] = item
+	}
+	if found[child.ID].ForkedFrom != sourceID || found[child.ID].ForkSeq != child.ForkSeq || found[sourceID].ForkedFrom != "" {
+		t.Fatalf("listing lineage=%+v", found)
+	}
+}

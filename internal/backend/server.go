@@ -693,7 +693,12 @@ func (s *Server) sessionSnapshotView(rt *runtimeSession, snap session.HistorySna
 }
 
 func summary(meta session.Meta, count int) protocol.SessionSummary {
-	return protocol.SessionSummary{ID: meta.ID, Title: meta.Title, CWD: meta.CWD, Model: protocol.ModelRef{Provider: meta.Provider, Model: meta.Model}, CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt, MessageCount: count, Pinned: meta.Pinned, Archived: meta.Archived, Shared: meta.Shared}
+	out := protocol.SessionSummary{ID: meta.ID, Title: meta.Title, CWD: meta.CWD, Model: protocol.ModelRef{Provider: meta.Provider, Model: meta.Model}, CreatedAt: meta.CreatedAt, UpdatedAt: meta.UpdatedAt, MessageCount: count, Pinned: meta.Pinned, Archived: meta.Archived, Shared: meta.Shared}
+	// Subagent sessions reuse ForkedFrom for their parent; that is not a user-visible branch.
+	if meta.TaskID == "" {
+		out.ForkedFrom, out.ForkSeq = meta.ForkedFrom, meta.ForkSeq
+	}
+	return out
 }
 
 func (s *Server) loadRuntimeByID(id string) (*runtimeSession, error) {
