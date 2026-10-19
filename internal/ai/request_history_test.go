@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,101 @@ func TestLateDuplicateToolResultsAreContextNotUnpairedCalls(t *testing.T) {
 	missing := repairToolHistory([]Message{{Role: "assistant", ToolCalls: []ToolCall{call}}, {Role: "user", Content: "interrupted"}, {Role: "tool", ToolCallID: "call", Content: "late"}})
 	if len(missing) != 4 || missing[1].Role != "tool" || missing[3].Role != "user" {
 		t.Fatalf("missing synthetic result: %+v", missing)
+	}
+}
+
+func toolCallHistory(ids ...string) []Message {
+	var calls []ToolCall
+	msgs := []Message{{Role: "user", Content: "go"}}
+	for _, id := range ids {
+		call := ToolCall{ID: id, Type: "function"}
+		call.Function.Name = "lookup"
+		call.Function.Arguments = "{}"
+		calls = append(calls, call)
+	}
+	msgs = append(msgs, Message{Role: "assistant", ToolCalls: calls})
+	for _, id := range ids {
+		msgs = append(msgs, Message{Role: "tool", ToolCallID: id, Name: "lookup", Content: "ok"})
+	}
+	return msgs
+}
+
+func wireIDs(msgs []Message) (calls, results []string) {
+	for _, m := range msgs {
+		for _, tc := range m.ToolCalls {
+			calls = append(calls, tc.ID)
+		}
+		if m.ToolCallID != "" {
+			results = append(results, m.ToolCallID)
+		}
+	}
+	return calls, results
+}
+
+func TestRequestHistoryKeepsValidToolCallIDs(t *testing.T) {
+	ids := []string{"call_00ssMPSA89avT2VQMofCfJNG", "toolu_01PD6wGTCkySbXFuTuXTtoUf", "gemini-call-0123456789abcdef0123456789abcdef"}
+	for _, api := range []string{APIChatCompletions, APIResponses, APIMessages, APIGemini} {
+		calls, results := wireIDs(prepareRequestHistory(toolCallHistory(ids...), api, "https://e.test", "m"))
+		if !reflect.DeepEqual(calls, ids) || !reflect.DeepEqual(results, ids) {
+			t.Fatalf("%s rewrote valid IDs: %v %v", api, calls, results)
+		}
+	}
+}
+
+func TestRequestHistoryRewritesImportedCompositeToolCallIDs(t *testing.T) {
+	composite := "call_00ssMPSA89avT2VQMofCfJNG|fc_0935037566037f86016aa9d987589087d0b36f7eba05ee5372"
+	messages := toolCallHistory(composite)
+	before, _ := json.Marshal(messages)
+	for _, api := range []string{APIResponses, APIMessages} {
+		calls, results := wireIDs(prepareRequestHistory(messages, api, "https://e.test", "m"))
+		if calls[0] != "call_00ssMPSA89avT2VQMofCfJNG" || results[0] != calls[0] {
+			t.Fatalf("%s composite ID not mapped to its call_id: %v %v", api, calls, results)
+		}
+	}
+	for _, api := range []string{APIChatCompletions, APIGemini} {
+		if calls, _ := wireIDs(prepareRequestHistory(messages, api, "https://e.test", "m")); calls[0] != composite {
+			t.Fatalf("%s must keep stored ID, got %q", api, calls[0])
+		}
+	}
+	if after, _ := json.Marshal(messages); string(before) != string(after) {
+		t.Fatal("stored history mutated")
+	}
+}
+
+func TestRequestHistoryHashesUnusableToolCallIDs(t *testing.T) {
+	long := strings.Repeat("x", 80)
+	colliding := "call_00ssMPSA89avT2VQMofCfJNG"
+	ids := []string{long, "kbrain-subagent:1", colliding, colliding + "|fc_dup"}
+	for _, api := range []string{APIResponses, APIMessages} {
+		calls, results := wireIDs(prepareRequestHistory(toolCallHistory(ids...), api, "https://e.test", "m"))
+		if !reflect.DeepEqual(calls, results) {
+			t.Fatalf("%s call/result pairing broken: %v %v", api, calls, results)
+		}
+		seen := map[string]bool{}
+		for _, id := range calls {
+			if !validWireToolCallID(id, api) || seen[id] {
+				t.Fatalf("%s produced invalid or duplicate ID %q in %v", api, id, calls)
+			}
+			seen[id] = true
+		}
+		if calls[2] != colliding {
+			t.Fatalf("%s rewrote the first owner of a colliding ID: %v", api, calls)
+		}
+	}
+	again, _ := wireIDs(prepareRequestHistory(toolCallHistory(ids...), APIResponses, "https://e.test", "m"))
+	if first, _ := wireIDs(prepareRequestHistory(toolCallHistory(ids...), APIResponses, "https://e.test", "m")); !reflect.DeepEqual(first, again) {
+		t.Fatal("wire IDs must be deterministic across requests")
+	}
+}
+
+func TestResponsesInputUsesWireToolCallIDs(t *testing.T) {
+	composite := "call_00ssMPSA89avT2VQMofCfJNG|fc_0935037566037f86016aa9d987589087d0b36f7eba05ee5372"
+	input, err := responsesInput(prepareRequestHistory(toolCallHistory(composite), APIResponses, "https://e.test", "m"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(input)
+	if strings.Contains(string(raw), "|fc_") || strings.Count(string(raw), `"call_id":"call_00ssMPSA89avT2VQMofCfJNG"`) != 2 {
+		t.Fatalf("unexpected Responses input: %s", raw)
 	}
 }
