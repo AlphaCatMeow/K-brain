@@ -111,7 +111,9 @@ model receives an explicit screenshot delivery error instead of silent loss.
   software) are never covered by the grant and ask every time. Run-level
   `deny`, plan and chat modes, unattended runs and an AI reviewer's
   manual-review verdict take precedence over `allow`, the read-only exemption
-  and the session grant. `/v1/health` advertises this as
+  and the session grant. A run that sets `tools.policies.computer_exec` to
+  `ask` itself is asked for every action, including read-only ones; its
+  approvals stay one-time and an earlier session grant does not apply to it. `/v1/health` advertises this as
   `capabilities.computer_session_approval`.
 - Existing tool authorization and plan/chat-mode filtering still apply. Cua's
   default standard mode is promptless for routine automation, unlike LCU's

@@ -219,6 +219,9 @@ func TestComputerFirstApprovalAllowsSessionComputerUse(t *testing.T) {
 		if len(request.Options) != 2 || request.Options[0].ID != "allow_once" || request.Options[0].Label != "Allow for this session" {
 			t.Fatalf("options %+v", request.Options)
 		}
+		if !strings.HasPrefix(request.ToolCallID, "computer-") {
+			t.Fatalf("prompt not tied to its tool call: %q", request.ToolCallID)
+		}
 	}
 
 	// The grant outlives the run; batch and install tools keep asking.
@@ -250,6 +253,45 @@ func TestComputerNonCallPromptsCarryNoSessionScope(t *testing.T) {
 	requests, executed := f.run(protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask"}, allowOnce, `click(1, 2)`, `click(3, 4)`)
 	if executed != 2 || len(requests) != 2 || requests[0].Scope != "" || requests[0].Options[0].Label != "Allow once" {
 		t.Fatalf("executed %d with prompts %+v", executed, requests)
+	}
+}
+
+func TestComputerExplicitRunAskBeatsSessionGrant(t *testing.T) {
+	explicitAsk := protocol.RunOptions{
+		Mode: "agent", ApprovalPolicy: "ask", PermissionMode: "normal",
+		Tools: &protocol.ToolSelection{Policies: map[string]string{"computer_exec": "ask"}},
+	}
+	// Distinct arguments keep the backend's repeated-call guard out of the way.
+	click := func(x int) string { return fmt.Sprintf(`{"action":"call","tool":"click","arguments":{"x":%d}}`, x) }
+	for _, policy := range []string{"allow", "ask"} {
+		t.Run(policy, func(t *testing.T) {
+			f := newComputerApprovalFixture(t, policy)
+			// Every call in a run that explicitly asks prompts, read-only ones included, and
+			// approving one never turns into a session grant.
+			requests, executed := f.run(explicitAsk, allowOnce, `{"action":"discover"}`, click(1), click(2))
+			if executed != 3 || promptRules(requests) != "discover/ call:click/ call:click/" {
+				t.Fatalf("explicit ask run executed %d with prompts %q", executed, promptRules(requests))
+			}
+			for _, request := range requests {
+				if request.Options[0].Label != "Allow once" {
+					t.Fatalf("explicit ask prompt offered %+v", request.Options)
+				}
+			}
+			if policy != "ask" {
+				return
+			}
+			// A grant from an ordinary run does not leak into a later run that asks explicitly.
+			if requests, _ := f.run(protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask"}, allowOnce, click(3)); promptRules(requests) != "call:click/session" {
+				t.Fatalf("ordinary run prompts %q", promptRules(requests))
+			}
+			requests, executed = f.run(explicitAsk, allowOnce, click(4))
+			if executed != 1 || promptRules(requests) != "call:click/" {
+				t.Fatalf("explicit ask after a session grant executed %d with prompts %q", executed, promptRules(requests))
+			}
+			if requests, executed := f.run(protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask"}, allowOnce, click(5)); executed != 1 || len(requests) != 0 {
+				t.Fatalf("session grant lost after an explicit ask run: %q", promptRules(requests))
+			}
+		})
 	}
 }
 

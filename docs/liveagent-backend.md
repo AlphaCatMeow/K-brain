@@ -37,7 +37,7 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | 用户/助手 | `ai.Message` | `Message` | LiveAgent 自有 `Message` 展示类型 |
 | 工具调用 | `ai.ToolCall` | `{id,name,arguments}` | `ToolCall` 与工具轨迹 |
 | 工具结果 | `tools.Result` | `{id,name,output,failed,cancelled}` | `ToolResultMessage` |
-| 权限 | `tools.GateRequest` | `permission_id`, `tool`, `command`, `options` | 集中审批栏 |
+| 权限 | `tools.GateRequest` | `permission_id`, `tool`, `command`, `options`, `scope`, `tool_call_id` | 集中审批栏 |
 | 子代理 | `agent.BackgroundTask` | `Subagent` | 状态与报告工具轨迹 |
 | 流顺序 | durable event journal | 单会话单调递增 `seq` | 去重与续传游标 |
 | 用量 | `ai.Usage` | input/output/cache token 计数 | assistant usage |

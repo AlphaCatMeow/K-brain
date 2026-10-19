@@ -1232,6 +1232,9 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 		}
 		gateOptions := options
 		computerReadOnly, computerRememberable := false, false
+		// A run that names computer_exec "ask" itself wants every call confirmed: the
+		// read-only exemption and the session grant must not override it.
+		explicitComputerAsk := options.Tools != nil && options.Tools.Policies["computer_exec"] == "ask"
 		if req.Tool == "computer_exec" {
 			policy := computerApprovalPolicy(rt.agent.ComputerConfig)
 			if policy == "deny" {
@@ -1283,8 +1286,8 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 				return tools.GateReject, "interactive approval requires the owning active run"
 			}
 			// Reached only after plan mode and deny policies passed. A manual review
-			// verdict still overrides read-only and remembered computer approvals.
-			if req.Tool == "computer_exec" && !manualReview {
+			// verdict or an explicit run-level ask overrides read-only and session approvals.
+			if req.Tool == "computer_exec" && !manualReview && !explicitComputerAsk {
 				if computerReadOnly {
 					return tools.GateAllowOnce, "read-only computer action"
 				}
@@ -1308,7 +1311,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			}
 			// Approving any Cua call grants the session; batch and install tools
 			// still ask on their own next time.
-			sessionGrant := req.Tool == "computer_exec" && strings.HasPrefix(req.Rule, "call:") && !manualReview
+			sessionGrant := req.Tool == "computer_exec" && strings.HasPrefix(req.Rule, "call:") && !manualReview && !explicitComputerAsk
 			decision, reason := s.waitPermission(rt, runID, req, sessionGrant, req.Context)
 			if decision != tools.GateReject && sessionGrant {
 				rt.mu.Lock()
@@ -1542,7 +1545,7 @@ func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.Gate
 		allow.Label, scope = "Allow for this session", "session"
 	}
 	options := []protocol.PermissionOption{allow, {ID: "reject", Label: "Reject", Kind: "reject_once"}}
-	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: options, Scope: scope}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
+	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: options, Scope: scope, ToolCallID: tools.ToolCallID(ctx)}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
 	rt.mu.Lock()
 	rt.permissions[id] = p
 	rt.mu.Unlock()
