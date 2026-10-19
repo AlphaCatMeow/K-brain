@@ -75,6 +75,9 @@ type SessionSummary struct {
 	Shared       bool      `json:"shared"`
 	Pinned       bool      `json:"pinned,omitempty"`
 	Archived     bool      `json:"archived,omitempty"`
+	// ForkedFrom names the session this one was branched from; ForkSeq is the last copied message.
+	ForkedFrom string `json:"forked_from,omitempty"`
+	ForkSeq    int    `json:"fork_seq,omitempty"`
 }
 
 type Session struct {
