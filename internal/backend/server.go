@@ -1250,7 +1250,12 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 				gateOptions.PermissionMode = "normal"
 				gateOptions.Tools = &protocol.ToolSelection{Policies: map[string]string{"computer_exec": "ask"}}
 			case "allow":
-				// The backend grant applies unless this run asked for computer_exec explicitly.
+				// The backend grant applies unless this run asked for computer_exec explicitly;
+				// an explicit ask then prompts in every permission mode, as under backend "ask".
+				if explicitComputerAsk {
+					gateOptions.ApprovalPolicy = "ask"
+					gateOptions.PermissionMode = "normal"
+				}
 				policies := map[string]string{}
 				if options.Tools != nil {
 					for tool, toolPolicy := range options.Tools.Policies {
@@ -1316,6 +1321,21 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			if decision != tools.GateReject && sessionGrant {
 				rt.mu.Lock()
 				rt.computerAllowAll = true
+				// Prompts for other Cua calls that are already waiting are covered by
+				// the grant too; settle them so the user is not asked again.
+				for _, waiter := range rt.permissions {
+					if waiter.request.Scope != "session" {
+						continue
+					}
+					select {
+					case waiter.reason <- "computer use allowed for this session":
+					default:
+					}
+					select {
+					case waiter.result <- tools.GateAllowOnce:
+					default:
+					}
+				}
 				rt.mu.Unlock()
 			}
 			return decision, reason
@@ -1803,4 +1823,12 @@ func hashPrompt(in protocol.PromptRequest) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
-func newRunID() string { return fmt.Sprintf("run-%d", time.Now().UnixNano()) }
+
+// idSequence keeps ids unique when two are minted inside one clock tick: Windows
+// reports time in 100ns steps, so parallel tool calls asking for permission at
+// once used to share an id and the second answer found no waiter.
+var idSequence atomic.Uint64
+
+func newRunID() string {
+	return fmt.Sprintf("run-%d-%d", time.Now().UnixNano(), idSequence.Add(1))
+}
