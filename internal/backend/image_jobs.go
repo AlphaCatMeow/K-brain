@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -53,7 +54,22 @@ func (s *Server) imageJobs(w http.ResponseWriter, r *http.Request, scope imaging
 		return
 	}
 	if len(parts) == 2 && parts[1] != "" {
-		if !imageMethod(w, r, http.MethodGet) {
+		if !imageMethod(w, r, http.MethodGet, http.MethodDelete) {
+			return
+		}
+		if r.Method == http.MethodDelete {
+			// Soft delete: the job disappears from reads and lists at once; its asset
+			// files are reclaimed later by maintenance GC. Unfinished jobs return 409.
+			if err := s.image.Store.DeleteJob(r.Context(), scope, parts[1]); err != nil {
+				var ie *imaging.ImageError
+				if errors.As(err, &ie) && ie.Code == imaging.CodeProjectBusy {
+					imageFailure(w, r, http.StatusConflict, imaging.CodeProjectBusy, "Image job is still active", false, nil)
+					return
+				}
+				imageHTTPError(w, r, err)
+				return
+			}
+			imageJSON(w, r, 200, map[string]any{"deleted": true})
 			return
 		}
 		job, pos, err := s.image.Store.ReadJobSnapshot(scope, parts[1])

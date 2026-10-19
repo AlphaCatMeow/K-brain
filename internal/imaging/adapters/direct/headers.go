@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// ValidateCustomHeaders checks the same offline header contract used by adapter
+// construction. It does not resolve secrets or make network requests.
+func ValidateCustomHeaders(in map[string]string) error {
+	_, err := customHeaders(in)
+	return err
+}
+
 // customHeaders applies an explicit namespace whitelist, then reserves names
 // that could change auth, request routing/framing, method or replay semantics.
 // Non-X names must be individually listed; caller supplied auth never wins.

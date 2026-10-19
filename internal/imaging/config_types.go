@@ -36,6 +36,9 @@ type ConnectionBinding struct {
 	UseSystemProxy bool              `json:"useSystemProxy,omitempty"`
 }
 type ImageTarget struct {
+	Source            string               `json:"source,omitempty"` // "provider" for read-only targets derived from ordinary providers.
+	ProviderID        string               `json:"providerId,omitempty"`
+	ModelID           string               `json:"modelId,omitempty"`
 	ID                string               `json:"id"`
 	Name              string               `json:"name"`
 	ConnectionID      string               `json:"connectionId"`
@@ -100,6 +103,9 @@ type WorkflowOutput struct {
 	OutputName string `json:"outputName"`
 }
 type TargetSnapshot struct {
+	Source          string             `json:"source,omitempty"`
+	ProviderID      string             `json:"providerId,omitempty"`
+	ModelID         string             `json:"modelId,omitempty"`
 	VerificationID  string             `json:"verificationId,omitempty"` // Backend-issued receipt identity; never a credential.
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
@@ -191,7 +197,7 @@ func PublicTarget(t ImageTarget) ImageTarget {
 			state = &VerificationSummary{State: "verified", JobID: t.Verification.JobID, LiveVerifiedAt: &t.Verification.LiveVerifiedAt}
 		}
 	}
-	return ImageTarget{VerificationState: state, ID: s.ID, Name: s.Name, ConnectionID: s.ConnectionID, Adapter: s.Adapter, AdapterVersion: s.AdapterVersion, Kind: s.Kind, RemoteID: s.RemoteID, Revision: s.Revision, Enabled: t.Enabled, DisabledReason: t.DisabledReason, Capabilities: s.Capabilities, Parameters: s.Parameters, WorkflowMapping: s.WorkflowMapping}
+	return ImageTarget{Source: t.Source, ProviderID: t.ProviderID, ModelID: t.ModelID, VerificationState: state, ID: s.ID, Name: s.Name, ConnectionID: s.ConnectionID, Adapter: s.Adapter, AdapterVersion: s.AdapterVersion, Kind: s.Kind, RemoteID: s.RemoteID, Revision: s.Revision, Enabled: t.Enabled, DisabledReason: t.DisabledReason, Capabilities: s.Capabilities, Parameters: s.Parameters, WorkflowMapping: s.WorkflowMapping}
 }
 func PublicSettings(s ImageSettings) ImageSettings {
 	c := make([]ImageConnection, len(s.Connections))
@@ -205,7 +211,7 @@ func PublicSettings(s ImageSettings) ImageSettings {
 	return ImageSettings{Revision: s.Revision, Connections: c, Targets: t}
 }
 func SnapshotTarget(t ImageTarget) TargetSnapshot {
-	return cloneSnapshot(TargetSnapshot{ID: t.ID, Name: t.Name, ConnectionID: t.ConnectionID, Adapter: t.Adapter, AdapterVersion: t.AdapterVersion, Kind: t.Kind, RemoteID: t.RemoteID, Revision: t.Revision, Capabilities: t.Capabilities, Parameters: t.Parameters, WorkflowMapping: t.WorkflowMapping})
+	return cloneSnapshot(TargetSnapshot{Source: t.Source, ProviderID: t.ProviderID, ModelID: t.ModelID, ID: t.ID, Name: t.Name, ConnectionID: t.ConnectionID, Adapter: t.Adapter, AdapterVersion: t.AdapterVersion, Kind: t.Kind, RemoteID: t.RemoteID, Revision: t.Revision, Capabilities: t.Capabilities, Parameters: t.Parameters, WorkflowMapping: t.WorkflowMapping})
 }
 func cloneSnapshot(t TargetSnapshot) TargetSnapshot {
 	c := t.Capabilities
@@ -228,5 +234,5 @@ func cloneSnapshot(t TargetSnapshot) TargetSnapshot {
 		v := t.WorkflowMapping
 		m = &WorkflowMapping{Revision: v.Revision, Inputs: append([]WorkflowInput{}, v.Inputs...), Outputs: append([]WorkflowOutput{}, v.Outputs...)}
 	}
-	return TargetSnapshot{VerificationID: t.VerificationID, ID: t.ID, Name: t.Name, ConnectionID: t.ConnectionID, Adapter: t.Adapter, AdapterVersion: t.AdapterVersion, Kind: t.Kind, RemoteID: t.RemoteID, Revision: t.Revision, Capabilities: c, Parameters: ps, WorkflowMapping: m}
+	return TargetSnapshot{Source: t.Source, ProviderID: t.ProviderID, ModelID: t.ModelID, VerificationID: t.VerificationID, ID: t.ID, Name: t.Name, ConnectionID: t.ConnectionID, Adapter: t.Adapter, AdapterVersion: t.AdapterVersion, Kind: t.Kind, RemoteID: t.RemoteID, Revision: t.Revision, Capabilities: c, Parameters: ps, WorkflowMapping: m}
 }

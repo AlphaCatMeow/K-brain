@@ -101,6 +101,9 @@ func validateSettings(s ImageSettings, providerExists func(string) bool) error {
 	}
 	seen := map[string]bool{}
 	for _, t := range s.Targets {
+		if t.Source != "" || t.ProviderID != "" || t.ModelID != "" {
+			return invalid("provider-derived targets are read-only")
+		}
 		if !validID(t.ID, "it_") || seen[t.ID] {
 			return invalid("invalid or duplicate target ID")
 		}

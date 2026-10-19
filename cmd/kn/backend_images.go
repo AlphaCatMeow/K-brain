@@ -121,7 +121,7 @@ func resolveImageAdapter(ctx context.Context, manager *backend.ImageSettingsMana
 	if target.AdapterVersion != direct.Version {
 		return nil, imaging.ErrUnsupported
 	}
-	connection, err := manager.ResolveImageConnection(ctx, scope, target.ConnectionID)
+	connection, err := manager.ResolveImageTargetConnection(ctx, scope, target)
 	if err != nil {
 		return nil, err
 	}
