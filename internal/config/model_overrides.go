@@ -19,7 +19,7 @@ const modelOverridesMetadataKey = "kbrainModelMetadataOverrides"
 func piModelFor(id string, model Model) PiModel {
 	pm := PiModel{
 		ID: id, Name: model.Name, DisplayName: model.DisplayName, OwnedBy: model.OwnedBy,
-		LimitsSource: model.LimitsSource, InputModalities: model.InputModalities,
+		LimitsSource: model.LimitsSource, InputModalities: model.InputModalities, OutputModalities: model.OutputModalities, ImageAdapter: model.ImageAdapter,
 		ContextWindow: model.ContextWindow(), MaxTokens: model.MaxOut, SamplingParams: model.SamplingParams,
 	}
 	if model.Vision {
@@ -31,7 +31,7 @@ func piModelFor(id string, model Model) PiModel {
 func metadataFromPiModel(pm PiModel) Model {
 	return Model{
 		Name: pm.Name, DisplayName: pm.DisplayName, OwnedBy: pm.OwnedBy, LimitsSource: pm.LimitsSource,
-		InputModalities: pm.InputModalities, Context: pm.ContextWindow, MaxOut: pm.MaxTokens,
+		InputModalities: pm.InputModalities, OutputModalities: pm.OutputModalities, ImageAdapter: pm.ImageAdapter, Context: pm.ContextWindow, MaxOut: pm.MaxTokens,
 		Vision:         slices.Contains(pm.Input, "image") || slices.Contains(pm.InputModalities, "image"),
 		SamplingParams: pm.SamplingParams,
 	}
