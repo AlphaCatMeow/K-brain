@@ -1323,10 +1323,12 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 				rt.computerAllowAll = true
 				// Prompts for other Cua calls that are already waiting are covered by
 				// the grant too; settle them so the user is not asked again.
-				for _, waiter := range rt.permissions {
-					if waiter.request.Scope != "session" {
+				for id, waiter := range rt.permissions {
+					_, _, rememberable := computerApprovalRule(waiter.request.Command)
+					if waiter.request.Tool != "computer_exec" || waiter.request.Scope != "session" || !rememberable {
 						continue
 					}
+					delete(rt.permissions, id)
 					select {
 					case waiter.reason <- "computer use allowed for this session":
 					default:
@@ -1567,9 +1569,20 @@ func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.Gate
 	options := []protocol.PermissionOption{allow, {ID: "reject", Label: "Reject", Kind: "reject_once"}}
 	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: options, Scope: scope, ToolCallID: tools.ToolCallID(ctx)}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
 	rt.mu.Lock()
+	_, _, rememberable := computerApprovalRule(req.Command)
+	if sessionGrant && rememberable && rt.computerAllowAll {
+		rt.mu.Unlock()
+		return tools.GateAllowOnce, "computer use allowed for this session"
+	}
 	rt.permissions[id] = p
+	err := rt.publishEventLocked(runID, protocol.EventPermissionRequest, p.request)
+	if err != nil {
+		delete(rt.permissions, id)
+	}
 	rt.mu.Unlock()
-	s.publish(rt, protocol.EventPermissionRequest, p.request, "")
+	if err != nil {
+		return tools.GateReject, "publish permission request: " + err.Error()
+	}
 	defer func() { rt.mu.Lock(); delete(rt.permissions, id); rt.mu.Unlock() }()
 	select {
 	case d := <-p.result:
@@ -1736,13 +1749,6 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 	if err = decodeJSON(w, r, &in); err != nil {
 		return
 	}
-	rt.mu.Lock()
-	p := rt.permissions[pid]
-	rt.mu.Unlock()
-	if p == nil {
-		writeJSONError(w, http.StatusNotFound, "permission request not found")
-		return
-	}
 	var d tools.GateDecision
 	switch in.Decision.Decision {
 	case "allow_once":
@@ -1753,6 +1759,14 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 		d = tools.GateReject
 	default:
 		writeJSONError(w, http.StatusBadRequest, "unsupported permission decision")
+		return
+	}
+	rt.mu.Lock()
+	p := rt.permissions[pid]
+	delete(rt.permissions, pid)
+	rt.mu.Unlock()
+	if p == nil {
+		writeJSONError(w, http.StatusNotFound, "permission request not found")
 		return
 	}
 	if in.Decision.Reason != "" {
