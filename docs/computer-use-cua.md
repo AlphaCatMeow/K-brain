@@ -99,6 +99,25 @@ model receives an explicit screenshot delivery error instead of silent loss.
 - Only one K-brain turn per process may own the desktop client. Other turns
   receive a busy error. This is not a cross-process desktop lock: other apps
   and other K-brain processes still need external coordination.
+- Backend runs gate `computer_exec` by `computer.approvalPolicy`: `deny` rejects
+  every action, `allow` runs without prompting, and `ask` (the default) prompts
+  regardless of the run's permission mode. Under `ask`, `discover`, `describe`
+  and `guide` only read the driver catalog and guides, so they never prompt. A
+  `call` prompt carries the rule `call:<cua tool>` and `scope: "session"`, and
+  its approve option reads "Allow for this session": approving any call lets
+  every other Cua call run without asking for the rest of the loaded session,
+  and settles any other session-scoped prompt that is already waiting.
+  Rejecting grants nothing. Each prompt has its own `permission_id` even when
+  several tool calls of one turn ask at the same instant. `run_actions` and `replay_trajectory` (which run
+  other tools) and `install_ffmpeg`/`install_extension` (which install
+  software) are never covered by the grant and ask every time. Run-level
+  `deny`, plan and chat modes, unattended runs and an AI reviewer's
+  manual-review verdict take precedence over `allow`, the read-only exemption
+  and the session grant. A run that sets `tools.policies.computer_exec` to
+  `ask` itself is asked for every action, including read-only ones; its
+  approvals stay one-time and an earlier session grant does not apply to it,
+  whatever the run's permission mode and under both `ask` and `allow` backends. `/v1/health` advertises this as
+  `capabilities.computer_session_approval`.
 - Existing tool authorization and plan/chat-mode filtering still apply. Cua's
   default standard mode is promptless for routine automation, unlike LCU's
   per-app approval model. The MCP adapter does **not** pretend to implement

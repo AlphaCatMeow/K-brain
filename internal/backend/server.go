@@ -132,6 +132,9 @@ type runtimeSession struct {
 	processManager   *tools.ManagedProcessManager
 	terminalContexts map[string]context.Context
 	permissions      map[string]*permissionWaiter
+	// computerAllowAll is set once the user approves a computer_exec call: routine
+	// Cua tools then run without asking for as long as the runtime stays loaded.
+	computerAllowAll bool
 	questions        map[string]*questionWaiter
 	clientTools      map[string]*clientToolWaiter
 	eventDir         string
@@ -305,7 +308,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -1228,21 +1231,45 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			return tools.GateReject, "unattended scheduled runs cannot request interactive approval"
 		}
 		gateOptions := options
+		computerReadOnly, computerRememberable := false, false
+		// A run that names computer_exec "ask" itself wants every call confirmed: the
+		// read-only exemption and the session grant must not override it.
+		explicitComputerAsk := options.Tools != nil && options.Tools.Policies["computer_exec"] == "ask"
 		if req.Tool == "computer_exec" {
 			policy := computerApprovalPolicy(rt.agent.ComputerConfig)
 			if policy == "deny" {
 				return tools.GateReject, "computer use denied by backend configuration"
 			}
-			if policy == "ask" {
+			if options.Tools != nil && options.Tools.Policies["computer_exec"] == "deny" {
+				return tools.GateReject, "computer use denied for this run"
+			}
+			req.Rule, computerReadOnly, computerRememberable = computerApprovalRule(req.Command)
+			switch policy {
+			case "ask":
 				gateOptions.ApprovalPolicy = "ask"
 				gateOptions.PermissionMode = "normal"
 				gateOptions.Tools = &protocol.ToolSelection{Policies: map[string]string{"computer_exec": "ask"}}
-				if options.Tools != nil && options.Tools.Policies["computer_exec"] == "deny" {
-					return tools.GateReject, "computer use denied for this run"
+			case "allow":
+				// The backend grant applies unless this run asked for computer_exec explicitly;
+				// an explicit ask then prompts in every permission mode, as under backend "ask".
+				if explicitComputerAsk {
+					gateOptions.ApprovalPolicy = "ask"
+					gateOptions.PermissionMode = "normal"
 				}
+				policies := map[string]string{}
+				if options.Tools != nil {
+					for tool, toolPolicy := range options.Tools.Policies {
+						policies[tool] = toolPolicy
+					}
+				}
+				if policies["computer_exec"] == "" {
+					policies["computer_exec"] = "allow"
+				}
+				gateOptions.Tools = &protocol.ToolSelection{Policies: policies}
 			}
 		}
-		if reviewer != nil && reviewer.RequiresManual(req.Context) {
+		manualReview := reviewer != nil && reviewer.RequiresManual(req.Context)
+		if manualReview {
 			gateOptions.ApprovalPolicy = "ask"
 			gateOptions.PermissionMode = "normal"
 			policies := make(map[string]string)
@@ -1263,6 +1290,19 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 			if !active {
 				return tools.GateReject, "interactive approval requires the owning active run"
 			}
+			// Reached only after plan mode and deny policies passed. A manual review
+			// verdict or an explicit run-level ask overrides read-only and session approvals.
+			if req.Tool == "computer_exec" && !manualReview && !explicitComputerAsk {
+				if computerReadOnly {
+					return tools.GateAllowOnce, "read-only computer action"
+				}
+				rt.mu.Lock()
+				remembered := computerRememberable && rt.computerAllowAll
+				rt.mu.Unlock()
+				if remembered {
+					return tools.GateAllowOnce, "computer use allowed for this session"
+				}
+			}
 			if reviewer != nil {
 				if reviewed, ok := req.Context.Value(approval.ReviewedActionKey{}).(string); ok && reviewed == req.Tool {
 					return tools.GateAllowOnce, "action already approved"
@@ -1274,7 +1314,33 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 					}
 				}
 			}
-			return s.waitPermission(rt, runID, req, req.Context)
+			// Approving any Cua call grants the session; batch and install tools
+			// still ask on their own next time.
+			sessionGrant := req.Tool == "computer_exec" && strings.HasPrefix(req.Rule, "call:") && !manualReview && !explicitComputerAsk
+			decision, reason := s.waitPermission(rt, runID, req, sessionGrant, req.Context)
+			if decision != tools.GateReject && sessionGrant {
+				rt.mu.Lock()
+				rt.computerAllowAll = true
+				// Prompts for other Cua calls that are already waiting are covered by
+				// the grant too; settle them so the user is not asked again.
+				for id, waiter := range rt.permissions {
+					_, _, rememberable := computerApprovalRule(waiter.request.Command)
+					if waiter.request.Tool != "computer_exec" || waiter.request.Scope != "session" || !rememberable {
+						continue
+					}
+					delete(rt.permissions, id)
+					select {
+					case waiter.reason <- "computer use allowed for this session":
+					default:
+					}
+					select {
+					case waiter.result <- tools.GateAllowOnce:
+					default:
+					}
+				}
+				rt.mu.Unlock()
+			}
+			return decision, reason
 		})
 	}
 	roots := make([]tools.WorkspaceRoot, len(options.WorkspaceRoots))
@@ -1491,13 +1557,32 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}
 }
 
-func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.GateRequest, ctx context.Context) (tools.GateDecision, string) {
+// waitPermission asks the client; sessionGrant marks a prompt whose approval also
+// grants the session, labelling allow_once accordingly.
+func (s *Server) waitPermission(rt *runtimeSession, runID string, req tools.GateRequest, sessionGrant bool, ctx context.Context) (tools.GateDecision, string) {
 	id := newRunID()
-	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: []protocol.PermissionOption{{ID: "allow_once", Label: "Allow once", Kind: "allow_once"}, {ID: "reject", Label: "Reject", Kind: "reject_once"}}}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
+	allow := protocol.PermissionOption{ID: "allow_once", Label: "Allow once", Kind: "allow_once"}
+	scope := ""
+	if sessionGrant {
+		allow.Label, scope = "Allow for this session", "session"
+	}
+	options := []protocol.PermissionOption{allow, {ID: "reject", Label: "Reject", Kind: "reject_once"}}
+	p := &permissionWaiter{request: protocol.PermissionRequest{PermissionID: id, Tool: req.Tool, Command: req.Command, Rule: req.Rule, Description: req.Description, Options: options, Scope: scope, ToolCallID: tools.ToolCallID(ctx)}, result: make(chan tools.GateDecision, 1), reason: make(chan string, 1)}
 	rt.mu.Lock()
+	_, _, rememberable := computerApprovalRule(req.Command)
+	if sessionGrant && rememberable && rt.computerAllowAll {
+		rt.mu.Unlock()
+		return tools.GateAllowOnce, "computer use allowed for this session"
+	}
 	rt.permissions[id] = p
+	err := rt.publishEventLocked(runID, protocol.EventPermissionRequest, p.request)
+	if err != nil {
+		delete(rt.permissions, id)
+	}
 	rt.mu.Unlock()
-	s.publish(rt, protocol.EventPermissionRequest, p.request, "")
+	if err != nil {
+		return tools.GateReject, "publish permission request: " + err.Error()
+	}
 	defer func() { rt.mu.Lock(); delete(rt.permissions, id); rt.mu.Unlock() }()
 	select {
 	case d := <-p.result:
@@ -1664,13 +1749,6 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 	if err = decodeJSON(w, r, &in); err != nil {
 		return
 	}
-	rt.mu.Lock()
-	p := rt.permissions[pid]
-	rt.mu.Unlock()
-	if p == nil {
-		writeJSONError(w, http.StatusNotFound, "permission request not found")
-		return
-	}
 	var d tools.GateDecision
 	switch in.Decision.Decision {
 	case "allow_once":
@@ -1681,6 +1759,14 @@ func (s *Server) permission(w http.ResponseWriter, r *http.Request, id, pid stri
 		d = tools.GateReject
 	default:
 		writeJSONError(w, http.StatusBadRequest, "unsupported permission decision")
+		return
+	}
+	rt.mu.Lock()
+	p := rt.permissions[pid]
+	delete(rt.permissions, pid)
+	rt.mu.Unlock()
+	if p == nil {
+		writeJSONError(w, http.StatusNotFound, "permission request not found")
 		return
 	}
 	if in.Decision.Reason != "" {
@@ -1751,4 +1837,12 @@ func hashPrompt(in protocol.PromptRequest) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
-func newRunID() string { return fmt.Sprintf("run-%d", time.Now().UnixNano()) }
+
+// idSequence keeps ids unique when two are minted inside one clock tick: Windows
+// reports time in 100ns steps, so parallel tool calls asking for permission at
+// once used to share an id and the second answer found no waiter.
+var idSequence atomic.Uint64
+
+func newRunID() string {
+	return fmt.Sprintf("run-%d-%d", time.Now().UnixNano(), idSequence.Add(1))
+}
