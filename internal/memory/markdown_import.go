@@ -18,9 +18,11 @@ import (
 //
 // Each entry is claimed as pending before its write and recorded as done after
 // it. A pending entry found on the next start is kept if its write landed and
-// written again if not; deleting a pending entry records it as done first, so a
-// deletion sticks even when the import did not finish. Done entries are never
-// written again.
+// written again if not; deleting a pending entry, or wiping the store, records
+// it as done first, so a deletion sticks even when the import did not finish.
+// Done entries are never written again. State is re-read before every save so
+// a concurrent writer of the state file (another host on the same store) loses
+// as little as possible.
 func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -33,9 +35,12 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 		return 0, fmt.Errorf("read %s memory: %w", scope.Name, err)
 	}
 	finish := func(hash string) error {
-		state.MarkdownPending = slices.DeleteFunc(state.MarkdownPending, func(h string) bool { return h == hash })
-		state.MarkdownImports = append(state.MarkdownImports, hash)
-		return s.saveState(state)
+		return s.updateStateLocked(func(state *storeState) {
+			state.MarkdownPending = without(state.MarkdownPending, hash)
+			if !slices.Contains(state.MarkdownImports, hash) {
+				state.MarkdownImports = append(state.MarkdownImports, hash)
+			}
+		})
 	}
 	imported := 0
 	var skipped error
@@ -47,7 +52,11 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 		sum := sha256.Sum256([]byte(text))
 		hash := hex.EncodeToString(sum[:6])
 		slug := "imported-" + hash
-		if slices.Contains(state.MarkdownImports, hash) {
+		state, err := s.state()
+		if err != nil {
+			return imported, err
+		}
+		if state.MarkdownImported || slices.Contains(state.MarkdownImports, hash) {
 			continue
 		}
 		if slices.Contains(state.MarkdownPending, hash) {
@@ -62,11 +71,10 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 				imported++
 				continue
 			}
-		} else {
+		} else if err := s.updateStateLocked(func(state *storeState) {
 			state.MarkdownPending = append(state.MarkdownPending, hash)
-			if err := s.saveState(state); err != nil {
-				return imported, err
-			}
+		}); err != nil {
+			return imported, err
 		}
 		description := []rune(text)
 		if len(description) > 80 {
@@ -85,16 +93,16 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 			// The failed write left no entry file; if dropping the claim cannot
 			// be saved either, the pending claim still makes the next start
 			// retry the write.
-			state.MarkdownPending = slices.DeleteFunc(state.MarkdownPending, func(h string) bool { return h == hash })
-			return imported, errors.Join(err, s.saveState(state))
+			return imported, errors.Join(err, s.updateStateLocked(func(state *storeState) {
+				state.MarkdownPending = without(state.MarkdownPending, hash)
+			}))
 		}
 		if err := finish(hash); err != nil {
 			return imported, err
 		}
 		imported++
 	}
-	state.MarkdownImported = true
-	if err := s.saveState(state); err != nil {
+	if err := s.updateStateLocked(func(state *storeState) { state.MarkdownImported = true }); err != nil {
 		return imported, err
 	}
 	return imported, skipped
@@ -111,7 +119,22 @@ func (s *Store) settleImportClaimLocked(slug string) error {
 	if err != nil || !slices.Contains(state.MarkdownPending, hash) {
 		return err
 	}
-	state.MarkdownPending = slices.DeleteFunc(state.MarkdownPending, func(h string) bool { return h == hash })
-	state.MarkdownImports = append(state.MarkdownImports, hash)
+	return s.updateStateLocked(func(state *storeState) {
+		state.MarkdownPending = without(state.MarkdownPending, hash)
+		state.MarkdownImports = append(state.MarkdownImports, hash)
+	})
+}
+
+// updateStateLocked applies change to a freshly read state and saves it.
+func (s *Store) updateStateLocked(change func(*storeState)) error {
+	state, err := s.state()
+	if err != nil {
+		return err
+	}
+	change(&state)
 	return s.saveState(state)
+}
+
+func without(hashes []string, hash string) []string {
+	return slices.DeleteFunc(hashes, func(h string) bool { return h == hash })
 }

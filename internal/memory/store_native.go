@@ -89,6 +89,15 @@ func (s *Store) WipeAll() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A wipe also ends the one-time memory.md import, so nothing comes back on
+	// the next start.
+	if err := s.updateStateLocked(func(state *storeState) {
+		state.MarkdownImports = append(state.MarkdownImports, state.MarkdownPending...)
+		state.MarkdownPending = nil
+		state.MarkdownImported = true
+	}); err != nil {
+		return nil, err
+	}
 	for _, e := range entries {
 		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
 			return nil, err
