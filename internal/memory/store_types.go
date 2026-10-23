@@ -237,9 +237,11 @@ type storeState struct {
 	// MarkdownImported records that the one-time memory.md import finished;
 	// later edits to memory.md belong to the hosts that still use it.
 	MarkdownImported bool `json:"markdownImported,omitempty"`
-	// MarkdownImports lists entry hashes claimed before their write, so a retry
-	// never resurrects an imported entry the user deleted meanwhile.
+	// MarkdownImports lists memory.md entry hashes already imported, so a
+	// deletion in the store sticks. MarkdownPending holds the hash claimed for a
+	// write that has not been confirmed yet.
 	MarkdownImports []string `json:"markdownImports,omitempty"`
+	MarkdownPending []string `json:"markdownPending,omitempty"`
 }
 
 type StoreError struct {

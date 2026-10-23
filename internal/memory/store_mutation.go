@@ -398,6 +398,11 @@ func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 				scope = "global"
 			}
 		}
+		if d.Op == "accept" && args.Trigger == "extraction" {
+			// Only the user reviews memory; the hidden extractor cannot.
+			out.WarningDetails = append(out.WarningDetails, BatchWarning{Code: "rejected", Message: "extraction cannot accept memory", Slug: d.Slug, Op: d.Op, DecisionIndex: i})
+			continue
+		}
 		switch d.Op {
 		case "upsert":
 			if d.Description == nil || d.Body == nil {
@@ -455,6 +460,7 @@ func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 		e := WriteArgs{Slug: "daily-" + date, Scope: "global", MemoryType: "daily", Description: "Daily journal", Body: body, Actor: "daily"}
 		if _, er = s.writeDailyLocked(e); er != nil {
 			out.Warnings = append(out.Warnings, er.Error())
+			out.WarningDetails = append(out.WarningDetails, BatchWarning{Code: "rejected", Message: er.Error(), Slug: e.Slug, Op: "append_daily", DecisionIndex: -1})
 		}
 	}
 	return out, nil

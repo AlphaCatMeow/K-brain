@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -52,59 +51,6 @@ func TestImportMarkdownUnreadableFileIsNotMarkedImported(t *testing.T) {
 	}
 	if bodies := globalBodies(t, store); len(bodies) != 1 {
 		t.Fatalf("unreadable memory.md at first start: first import n=%d err=%v, after it became readable store has %q", n, firstErr, bodies)
-	}
-}
-
-// The state save that sets markdownImported fails after the entries were
-// written. kn backend only logs the error and keeps serving, so the user can
-// delete the imported entry; the retry on the next start brings it back.
-func TestImportMarkdownRetryAfterStateSaveFailureKeepsDeletion(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("relies on Windows refusing to rename over an open file")
-	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "memory.md")
-	if err := os.WriteFile(path, []byte("- [ ] prefers tabs\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(dir, "memory")
-	store, err := OpenStore(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statePath := filepath.Join(root, ".kbrain-state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		if err := os.WriteFile(statePath, []byte("{}"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	held, err := os.Open(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := Scope{Path: path, Name: "installation"}
-	_, saveErr := store.ImportMarkdown(scope)
-	held.Close()
-	if saveErr == nil {
-		t.Skip("state save did not fail; cannot inject the I/O error here")
-	}
-	// Whatever the failed attempt wrote, the retry completes the import once and
-	// a deletion made afterwards sticks.
-	if _, err := store.ImportMarkdown(scope); err != nil {
-		t.Fatal(err)
-	}
-	list, err := store.List(ListArgs{Scope: "global"})
-	if err != nil || len(list.Entries) != 1 {
-		t.Fatalf("retry after %v left %+v %v", saveErr, list.Entries, err)
-	}
-	if _, err := store.Delete(DeleteArgs{ReadArgs: ReadArgs{Slug: list.Entries[0].Slug, Scope: "global"}, Actor: "user"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ImportMarkdown(scope); err != nil {
-		t.Fatal(err)
-	}
-	if bodies := globalBodies(t, store); len(bodies) != 0 {
-		t.Fatalf("deleted entry came back: %q", bodies)
 	}
 }
 

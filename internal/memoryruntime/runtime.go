@@ -239,7 +239,7 @@ func extractionMessages(turn agent.MemoryTurn) []ai.Message {
 	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: content}}
 }
 
-const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), accept, delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote. If there is no durable fact, do not submit a plan.`
+const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote. If there is no durable fact, do not submit a plan.`
 
 func (r *Runtime) submit(ctx context.Context, model string, messages []ai.Message, retry bool) (*planEnvelope, error) {
 	client, resolved, err := r.resolve(ctx, model)
@@ -388,7 +388,7 @@ func decodeEvidence(raw json.RawMessage) *memory.Evidence {
 }
 
 const submitPlanSchema = `{"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{` +
-	`"action":{"type":"string","enum":["write","update","accept","delete","append_daily"]},` +
+	`"action":{"type":"string","enum":["write","update","delete","append_daily"]},` +
 	`"slug":{"type":"string","description":"Stable kebab-case id, e.g. user-reply-language; required except for append_daily"},` +
 	`"scope":{"type":"string","enum":["global","project"],"description":"project only for facts specific to the current workspace"},` +
 	`"type":{"type":"string","enum":["user","feedback","project","reference"]},` +
