@@ -52,12 +52,21 @@ func Session(id string) Scope {
 }
 
 func (s Scope) Entries() []Entry {
+	entries, _ := s.ReadEntries()
+	return entries
+}
+
+// ReadEntries is Entries with the read error kept; a missing file is empty.
+func (s Scope) ReadEntries() ([]Entry, error) {
 	if s.Path == "" {
-		return nil
+		return nil, errors.New("memory scope has no path")
 	}
 	data, err := os.ReadFile(s.Path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []Entry
 	for line := range strings.Lines(string(data)) {
@@ -72,7 +81,7 @@ func (s Scope) Entries() []Entry {
 		}
 		out = append(out, Entry{N: len(out) + 1, Text: rest, Done: done})
 	}
-	return out
+	return out, nil
 }
 
 func (s Scope) Remember(text string) error {
