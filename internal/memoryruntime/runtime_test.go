@@ -149,7 +149,10 @@ func TestCompletedAppliesPlanWrittenToAdvertisedSchema(t *testing.T) {
 	client := &fixtureClient{payload: `{"decisions":[{"action":"write","slug":"user-reply-language","scope":"global","type":"user","description":"Reply in Chinese","body":"Answer in Chinese, conclusion first.","confidence":"high","source_quote":"以后回答我都用中文","reasoning":"explicit request"},{"action":"append_daily","body":"Asked for Chinese replies"}]}`}
 	rt, store := testRuntime(t, client)
 	rt.Completed(context.Background(), agent.MemoryTurn{SessionID: "s", User: ai.Message{ID: "u1", Role: "user", Content: "以后回答我都用中文，记住"}, History: []ai.Message{{Role: "user", Content: "以后回答我都用中文，记住"}}})
-	time.Sleep(50 * time.Millisecond)
+	waitFor(t, func() bool {
+		_, err := store.Read(memory.ReadArgs{Slug: "user-reply-language", Scope: "global"})
+		return err == nil
+	})
 	got, err := store.Read(memory.ReadArgs{Slug: "user-reply-language", Scope: "global"})
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +176,10 @@ func TestCompletedKeepsValidDecisionsBesideMalformedOnes(t *testing.T) {
 	client := &fixtureClient{payload: `{"decisions":[{"action":"write","key":"k","value":"v","evidence":"quote"},{"action":"write","slug":"user-style","scope":"global","type":"feedback","description":"Concise","body":"Keep answers short."}]}`}
 	rt, store := testRuntime(t, client)
 	rt.Completed(context.Background(), agent.MemoryTurn{SessionID: "s", User: ai.Message{ID: "u1", Role: "user", Content: "keep answers short"}, History: []ai.Message{{Role: "user", Content: "keep answers short"}}})
-	time.Sleep(50 * time.Millisecond)
+	waitFor(t, func() bool {
+		_, err := store.Read(memory.ReadArgs{Slug: "user-style", Scope: "global"})
+		return err == nil
+	})
 	if _, err := store.Read(memory.ReadArgs{Slug: "user-style", Scope: "global"}); err != nil {
 		t.Fatal(err)
 	}

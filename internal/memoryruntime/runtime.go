@@ -183,13 +183,13 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 			return
 		}
 		if err != nil {
-			log.Printf("memory extraction %s: %v; retrying", key, err)
+			log.Printf("memory extraction %s: %s; retrying", key, describeExtractionError(err))
 		}
 		plan, err = r.submit(ctx, r.extraction, messages, true)
 	}
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("memory extraction %s: %v", key, err)
+			log.Printf("memory extraction %s: %s", key, describeExtractionError(err))
 		}
 		return
 	}
@@ -202,7 +202,7 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	}
 	result, err := r.store.ApplyBatch(batch)
 	if err != nil {
-		log.Printf("memory extraction %s: apply batch: %v", key, err)
+		log.Printf("memory extraction %s: apply batch: %s", key, describeExtractionError(err))
 		return
 	}
 	for _, warning := range result.WarningDetails {
@@ -282,19 +282,37 @@ type rawPlan struct {
 // planItem is one decision as SubmitMemoryPlan advertises it. Op and MemoryType
 // keep accepting the store's own field names.
 type planItem struct {
-	Action      string           `json:"action"`
-	Op          string           `json:"op"`
-	Slug        string           `json:"slug"`
-	Scope       string           `json:"scope"`
-	Type        string           `json:"type"`
-	MemoryType  string           `json:"memoryType"`
-	Description *string          `json:"description"`
-	Body        *string          `json:"body"`
-	Mode        string           `json:"mode"`
-	Confidence  string           `json:"confidence"`
-	SourceQuote string           `json:"source_quote"`
-	Reasoning   string           `json:"reasoning"`
-	Evidence    *memory.Evidence `json:"evidence"`
+	Action      string          `json:"action"`
+	Op          string          `json:"op"`
+	Slug        string          `json:"slug"`
+	Scope       string          `json:"scope"`
+	Type        string          `json:"type"`
+	MemoryType  string          `json:"memoryType"`
+	Description *string         `json:"description"`
+	Body        *string         `json:"body"`
+	Mode        string          `json:"mode"`
+	Confidence  string          `json:"confidence"`
+	SourceQuote string          `json:"source_quote"`
+	Reasoning   string          `json:"reasoning"`
+	Evidence    json.RawMessage `json:"evidence"`
+}
+
+// planError marks extractor-side plan problems; their text names fields, not
+// user content, so it is safe to log.
+type planError struct{ error }
+
+// describeExtractionError keeps provider bodies (credentials, echoed prompts)
+// out of the log.
+func describeExtractionError(err error) string {
+	var httpErr *ai.HTTPError
+	if errors.As(err, &httpErr) {
+		return fmt.Sprintf("model request failed with HTTP %d", httpErr.StatusCode)
+	}
+	var plan planError
+	if errors.As(err, &plan) {
+		return plan.Error()
+	}
+	return fmt.Sprintf("model request failed (%T)", err)
 }
 
 // parsePlan keeps every well-formed decision; a malformed one is logged and
@@ -302,7 +320,7 @@ type planItem struct {
 func parsePlan(raw string) (*planEnvelope, error) {
 	var envelope rawPlan
 	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
-		return nil, fmt.Errorf("decode memory plan: %w", err)
+		return nil, planError{fmt.Errorf("decode memory plan: %w", err)}
 	}
 	items := envelope.Decisions
 	if len(items) == 0 {
@@ -321,7 +339,7 @@ func parsePlan(raw string) (*planEnvelope, error) {
 		p.Decisions = append(p.Decisions, d)
 	}
 	if len(items) > 0 && len(p.Decisions) == 0 {
-		return nil, errors.New("memory plan had no valid decisions")
+		return nil, planError{errors.New("memory plan had no valid decisions")}
 	}
 	return p, nil
 }
@@ -342,11 +360,31 @@ func decodeDecision(raw json.RawMessage) (memory.Decision, error) {
 	if memoryType == "" {
 		memoryType = item.Type
 	}
-	evidence := item.Evidence
+	evidence := decodeEvidence(item.Evidence)
 	if evidence == nil && (item.Confidence != "" || item.SourceQuote != "" || item.Reasoning != "") {
 		evidence = &memory.Evidence{Confidence: item.Confidence, SourceQuote: item.SourceQuote, Reasoning: item.Reasoning}
 	}
 	return memory.Decision{Op: op, Slug: item.Slug, Scope: item.Scope, MemoryType: memoryType, Description: item.Description, Body: item.Body, Mode: item.Mode, Evidence: evidence}, nil
+}
+
+// decodeEvidence accepts the store's evidence object or a bare quote string;
+// anything else is ignored rather than dropping the decision.
+func decodeEvidence(raw json.RawMessage) *memory.Evidence {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var quote string
+	if json.Unmarshal(raw, &quote) == nil {
+		if quote = strings.TrimSpace(quote); quote != "" {
+			return &memory.Evidence{SourceQuote: quote}
+		}
+		return nil
+	}
+	var evidence memory.Evidence
+	if json.Unmarshal(raw, &evidence) == nil {
+		return &evidence
+	}
+	return nil
 }
 
 const submitPlanSchema = `{"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{` +

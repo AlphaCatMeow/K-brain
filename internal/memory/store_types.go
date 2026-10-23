@@ -118,6 +118,8 @@ type UpdateArgs struct {
 	ConversationID string    `json:"conversationId,omitempty"`
 	Model          string    `json:"model,omitempty"`
 	Evidence       *Evidence `json:"evidence,omitempty"`
+	// Unreviewed is set by internal callers only (hidden extraction).
+	Unreviewed *bool `json:"-"`
 }
 type DeleteArgs struct {
 	ReadArgs

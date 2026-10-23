@@ -282,7 +282,7 @@ func (s *Store) updateLocked(args UpdateArgs) (MutationResponse, error) {
 	if workdir == "" {
 		workdir = old.WorkdirPath
 	}
-	r, err := s.writeLocked(WriteArgs{Slug: old.Slug, Scope: scope, Workdir: workdir, MemoryType: old.MemoryType, Description: old.Description, Body: body, Actor: args.Actor, ConversationID: args.ConversationID, Model: args.Model, Evidence: args.Evidence})
+	r, err := s.writeLocked(WriteArgs{Slug: old.Slug, Scope: scope, Workdir: workdir, MemoryType: old.MemoryType, Description: old.Description, Body: body, Actor: args.Actor, ConversationID: args.ConversationID, Model: args.Model, Evidence: args.Evidence, Unreviewed: args.Unreviewed})
 	if err != nil {
 		return r, err
 	}
@@ -379,6 +379,17 @@ func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := BatchResponse{}
+	var unreviewed *bool
+	if args.Trigger == "extraction" {
+		// Text the hidden extractor wrote is never user-reviewed, even when it
+		// rewrites an entry the user had accepted.
+		unreviewed = new(bool)
+		*unreviewed = true
+	}
+	reject := func(i int, d Decision, e error) {
+		out.Warnings = append(out.Warnings, e.Error())
+		out.WarningDetails = append(out.WarningDetails, BatchWarning{Code: "rejected", Message: e.Error(), Slug: d.Slug, Op: d.Op, DecisionIndex: i})
+	}
 	for i, d := range args.Decisions {
 		scope := d.Scope
 		if scope == "" {
@@ -393,10 +404,9 @@ func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 				out.WarningDetails = append(out.WarningDetails, BatchWarning{Code: "missing_payload", Message: "upsert requires description and body", Slug: d.Slug, Op: d.Op, DecisionIndex: i})
 				continue
 			}
-			r, e := s.writeLocked(WriteArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, MemoryType: d.MemoryType, Description: *d.Description, Body: *d.Body, Actor: "batch", ConversationID: args.ConversationID, Model: args.Model, Evidence: d.Evidence})
+			r, e := s.writeLocked(WriteArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, MemoryType: d.MemoryType, Description: *d.Description, Body: *d.Body, Actor: "batch", ConversationID: args.ConversationID, Model: args.Model, Evidence: d.Evidence, Unreviewed: unreviewed})
 			if e != nil {
-				out.Warnings = append(out.Warnings, e.Error())
-				out.WarningDetails = append(out.WarningDetails, BatchWarning{Code: "rejected", Message: e.Error(), Slug: d.Slug, Op: d.Op, DecisionIndex: i})
+				reject(i, d, e)
 				continue
 			}
 			if r.Created {
@@ -405,23 +415,23 @@ func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 				out.Updated = append(out.Updated, d.Slug)
 			}
 		case "update":
-			r, e := s.updateLocked(UpdateArgs{ReadArgs: ReadArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, WorkdirHash: d.WorkdirHash}, Description: d.Description, Body: d.Body, Mode: d.Mode, Evidence: d.Evidence})
+			r, e := s.updateLocked(UpdateArgs{ReadArgs: ReadArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, WorkdirHash: d.WorkdirHash}, Description: d.Description, Body: d.Body, Mode: d.Mode, Evidence: d.Evidence, Unreviewed: unreviewed})
 			if e != nil {
-				out.Warnings = append(out.Warnings, e.Error())
+				reject(i, d, e)
 				continue
 			}
 			out.Updated = append(out.Updated, r.Slug)
 		case "delete":
 			r, e := s.deleteLocked(DeleteArgs{ReadArgs: ReadArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, WorkdirHash: d.WorkdirHash}, Reason: d.Reason, Actor: "batch"})
 			if e != nil {
-				out.Warnings = append(out.Warnings, e.Error())
+				reject(i, d, e)
 				continue
 			}
 			out.Deleted = append(out.Deleted, r.Slug)
 		case "accept":
 			r, e := s.acceptLocked(ReadArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, WorkdirHash: d.WorkdirHash})
 			if e != nil {
-				out.Warnings = append(out.Warnings, e.Error())
+				reject(i, d, e)
 				continue
 			}
 			out.Updated = append(out.Updated, r.Slug)
