@@ -234,9 +234,9 @@ type storeState struct {
 	Runs           []OrganizeRun     `json:"runs"`
 	Audit          []json.RawMessage `json:"audit"`
 	OrganizerEpoch uint64            `json:"organizerEpoch,omitempty"`
-	// MarkdownImports holds hashes of memory.md entries already imported, so an
-	// entry deleted from the store is not imported again.
-	MarkdownImports []string `json:"markdownImports,omitempty"`
+	// MarkdownImported records that the one-time memory.md import ran; later
+	// edits to memory.md belong to the hosts that still use it.
+	MarkdownImported bool `json:"markdownImported,omitempty"`
 }
 
 type StoreError struct {

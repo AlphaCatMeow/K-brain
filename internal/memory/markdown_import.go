@@ -5,44 +5,36 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 )
 
-// ImportMarkdown copies open remember/forget markdown entries that were not
-// imported before into unreviewed global user memory. The markdown file stays
-// in place for hosts that still read it (TUI, non-interactive kn). Entries the
-// store rejects are skipped and reported in the returned error.
+// ImportMarkdown copies the open remember/forget markdown entries into
+// unreviewed global user memory, once per store. Later edits to the file are not
+// followed: it stays in place for hosts that still read it (TUI,
+// non-interactive kn), and the store is the backend's only writable memory.
+// Entries the store rejects are skipped and reported in the returned error.
 func (s *Store) ImportMarkdown(scope Scope) (int, error) {
-	entries := scope.Entries()
-	if len(entries) == 0 {
-		return 0, nil
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.state()
-	if err != nil {
+	if err != nil || state.MarkdownImported {
 		return 0, err
 	}
 	imported := 0
 	var skipped error
-	for _, entry := range entries {
+	for _, entry := range scope.Entries() {
 		text := strings.TrimSpace(entry.Text)
 		if entry.Done || text == "" {
 			continue
 		}
 		sum := sha256.Sum256([]byte(text))
-		hash := hex.EncodeToString(sum[:6])
-		if slices.Contains(state.MarkdownImports, hash) {
-			continue
-		}
 		description := []rune(text)
 		if len(description) > 80 {
 			description = description[:80]
 		}
-		if _, err := s.writeLocked(WriteArgs{Slug: "imported-" + hash, Scope: "global", MemoryType: "user", Description: string(description), Body: text, Actor: "migration"}); err != nil {
-			// A line the store rejects (too long, over quota) must not block
-			// the entries after it; it is retried on the next start.
+		// Slugs derive from the text, so a retry after an interrupted import
+		// overwrites instead of duplicating.
+		if _, err := s.writeLocked(WriteArgs{Slug: "imported-" + hex.EncodeToString(sum[:6]), Scope: "global", MemoryType: "user", Description: string(description), Body: text, Actor: "migration"}); err != nil {
 			var rejected *StoreError
 			if errors.As(err, &rejected) {
 				skipped = errors.Join(skipped, fmt.Errorf("entry %d: %w", entry.N, err))
@@ -50,11 +42,11 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 			}
 			return imported, err
 		}
-		state.MarkdownImports = append(state.MarkdownImports, hash)
-		if err := s.saveState(state); err != nil {
-			return imported, err
-		}
 		imported++
+	}
+	state.MarkdownImported = true
+	if err := s.saveState(state); err != nil {
+		return imported, err
 	}
 	return imported, skipped
 }

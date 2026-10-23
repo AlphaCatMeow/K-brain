@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestImportMarkdownCopiesOpenEntriesOnce(t *testing.T) {
+func TestImportMarkdownRunsOnce(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "memory.md")
 	if err := os.WriteFile(path, []byte("- [ ] 所有 UI 工作遵守 design.md 规范\n- [x] stale fact\n"), 0o600); err != nil {
@@ -38,18 +38,19 @@ func TestImportMarkdownCopiesOpenEntriesOnce(t *testing.T) {
 		t.Fatalf("memory.md must stay for TUI and kn: %v", err)
 	}
 
-	// Deleting in the store sticks; only entries added later are imported.
+	// The import runs once: deletions in the store stick and later memory.md
+	// lines stay with the hosts that still use the file.
 	if _, err := store.Delete(DeleteArgs{ReadArgs: ReadArgs{Slug: slug, Scope: "global"}, Actor: "user"}); err != nil {
 		t.Fatal(err)
-	}
-	if n, err := store.ImportMarkdown(scope); err != nil || n != 0 {
-		t.Fatalf("re-import n=%d err=%v", n, err)
 	}
 	if err := scope.Remember("prefers pnpm"); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := store.ImportMarkdown(scope); err != nil || n != 1 {
-		t.Fatalf("new entry n=%d err=%v", n, err)
+	if n, err := store.ImportMarkdown(scope); err != nil || n != 0 {
+		t.Fatalf("second import n=%d err=%v", n, err)
+	}
+	if list, _ := store.List(ListArgs{Scope: "global"}); len(list.Entries) != 0 {
+		t.Fatalf("second import wrote %+v", list.Entries)
 	}
 }
 
