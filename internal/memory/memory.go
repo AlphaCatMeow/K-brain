@@ -136,6 +136,16 @@ func (s Scope) Forget(n int) error {
 }
 
 func PromptBlock(scopes ...Scope) string {
+	return promptBlock("edit or delete lines there directly; forget marks an entry done", scopes)
+}
+
+// ReadOnlyPromptBlock injects saved entries for hosts that no longer offer
+// remember/forget.
+func ReadOnlyPromptBlock(scopes ...Scope) string {
+	return promptBlock("read-only notes kept from earlier in this conversation", scopes)
+}
+
+func promptBlock(note string, scopes []Scope) string {
 	var b strings.Builder
 	for _, s := range scopes {
 		var lines []string
@@ -145,8 +155,8 @@ func PromptBlock(scopes ...Scope) string {
 			}
 		}
 		if len(lines) > 0 {
-			fmt.Fprintf(&b, "\n\nSaved %s memory (%s — edit or delete lines there directly; forget marks an entry done):\n%s",
-				s.Name, s.Path, strings.Join(lines, "\n"))
+			fmt.Fprintf(&b, "\n\nSaved %s memory (%s — %s):\n%s",
+				s.Name, s.Path, note, strings.Join(lines, "\n"))
 		}
 	}
 	if b.Len() == 0 {

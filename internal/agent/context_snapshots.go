@@ -30,12 +30,7 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 		{Source: runtimeMemorySource, Text: a.runtimeMemoryBlock},
 	} {
 		if current.Source == savedMemorySource && a.memoryDisabled {
-			// Still clear a snapshot a resumed session carries from before
-			// markdown memory was disabled.
-			if _, exists := retainedSnapshot(a.Messages, current.Source); !exists {
-				continue
-			}
-			current.Text = ""
+			continue
 		}
 		// Empty runtime state means no successful refresh, not an empty index.
 		if current.Source == runtimeMemorySource && current.Text == "" {

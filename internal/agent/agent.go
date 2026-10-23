@@ -175,17 +175,19 @@ type Agent struct {
 
 	OnOrphanedSteer func(text string)
 
-	Hooks                *hooks.Runner
-	PluginHook           func(context.Context, hooks.Event) error
-	startMu              sync.Mutex
-	sessionStarted       bool
-	startedSessionID     string
-	memoryBlock          string
-	runtimeMemoryBlock   string
-	memoryDisabled       bool
-	memoryRuntime        MemoryRuntime
-	systemPromptResolver func() (string, error)
-	turnTimeContext      bool
+	Hooks              *hooks.Runner
+	PluginHook         func(context.Context, hooks.Event) error
+	startMu            sync.Mutex
+	sessionStarted     bool
+	startedSessionID   string
+	memoryBlock        string
+	runtimeMemoryBlock string
+	memoryDisabled     bool
+	// markdownMemoryReadOnly is set once a memory runtime owns memory.
+	markdownMemoryReadOnly bool
+	memoryRuntime          MemoryRuntime
+	systemPromptResolver   func() (string, error)
+	turnTimeContext        bool
 
 	usageMu    sync.Mutex
 	usage      ai.Usage
