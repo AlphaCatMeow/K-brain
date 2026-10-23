@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -181,16 +182,32 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 		if ctx.Err() != nil {
 			return
 		}
+		if err != nil {
+			log.Printf("memory extraction %s: %v; retrying", key, err)
+		}
 		plan, err = r.submit(ctx, r.extraction, messages, true)
 	}
-	if err != nil || plan == nil || len(plan.Decisions) == 0 {
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("memory extraction %s: %v", key, err)
+		}
+		return
+	}
+	if plan == nil || len(plan.Decisions) == 0 {
 		return
 	}
 	batch, ok := extractionBatch(plan.Decisions, turn)
 	if !ok || ctx.Err() != nil {
 		return
 	}
-	_, _ = r.store.ApplyBatch(batch)
+	result, err := r.store.ApplyBatch(batch)
+	if err != nil {
+		log.Printf("memory extraction %s: apply batch: %v", key, err)
+		return
+	}
+	for _, warning := range result.WarningDetails {
+		log.Printf("memory extraction %s: decision %d (%s %s) not applied: %s", key, warning.DecisionIndex, warning.Op, warning.Slug, warning.Code)
+	}
 }
 
 func (r *Runtime) finishClaim(key string) {
@@ -222,7 +239,7 @@ func extractionMessages(turn agent.MemoryTurn) []ai.Message {
 	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: content}}
 }
 
-const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call. Use evidence quotes from the conversation. Allowed actions are write, update, accept, delete, append_daily. If there is no durable fact, do not submit a plan.`
+const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), accept, delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote. If there is no durable fact, do not submit a plan.`
 
 func (r *Runtime) submit(ctx context.Context, model string, messages []ai.Message, retry bool) (*planEnvelope, error) {
 	client, resolved, err := r.resolve(ctx, model)
@@ -250,28 +267,103 @@ func (r *Runtime) submit(ctx context.Context, model string, messages []ai.Messag
 	if !call || strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
-	var p planEnvelope
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		return nil, err
-	}
-	if len(p.Decisions) == 0 && len(p.Plan) > 0 {
-		p.Decisions = p.Plan
-	}
-	for i := range p.Decisions {
-		if err := validateDecision(p.Decisions[i]); err != nil {
-			return nil, err
-		}
-	}
-	return &p, nil
+	return parsePlan(raw)
 }
 
 type planEnvelope struct {
-	Decisions []memory.Decision `json:"decisions"`
-	Plan      []memory.Decision `json:"plan"`
+	Decisions []memory.Decision
 }
 
+type rawPlan struct {
+	Decisions []json.RawMessage `json:"decisions"`
+	Plan      []json.RawMessage `json:"plan"`
+}
+
+// planItem is one decision as SubmitMemoryPlan advertises it. Op and MemoryType
+// keep accepting the store's own field names.
+type planItem struct {
+	Action      string           `json:"action"`
+	Op          string           `json:"op"`
+	Slug        string           `json:"slug"`
+	Scope       string           `json:"scope"`
+	Type        string           `json:"type"`
+	MemoryType  string           `json:"memoryType"`
+	Description *string          `json:"description"`
+	Body        *string          `json:"body"`
+	Mode        string           `json:"mode"`
+	Confidence  string           `json:"confidence"`
+	SourceQuote string           `json:"source_quote"`
+	Reasoning   string           `json:"reasoning"`
+	Evidence    *memory.Evidence `json:"evidence"`
+}
+
+// parsePlan keeps every well-formed decision; a malformed one is logged and
+// dropped instead of discarding the whole plan.
+func parsePlan(raw string) (*planEnvelope, error) {
+	var envelope rawPlan
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return nil, fmt.Errorf("decode memory plan: %w", err)
+	}
+	items := envelope.Decisions
+	if len(items) == 0 {
+		items = envelope.Plan
+	}
+	p := &planEnvelope{}
+	for i, item := range items {
+		d, err := decodeDecision(item)
+		if err == nil {
+			err = validateDecision(d)
+		}
+		if err != nil {
+			log.Printf("memory extraction: dropped plan decision %d: %v", i, err)
+			continue
+		}
+		p.Decisions = append(p.Decisions, d)
+	}
+	if len(items) > 0 && len(p.Decisions) == 0 {
+		return nil, errors.New("memory plan had no valid decisions")
+	}
+	return p, nil
+}
+
+func decodeDecision(raw json.RawMessage) (memory.Decision, error) {
+	var item planItem
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return memory.Decision{}, err
+	}
+	op := item.Op
+	if op == "" {
+		op = item.Action
+	}
+	if op == "write" {
+		op = "upsert"
+	}
+	memoryType := item.MemoryType
+	if memoryType == "" {
+		memoryType = item.Type
+	}
+	evidence := item.Evidence
+	if evidence == nil && (item.Confidence != "" || item.SourceQuote != "" || item.Reasoning != "") {
+		evidence = &memory.Evidence{Confidence: item.Confidence, SourceQuote: item.SourceQuote, Reasoning: item.Reasoning}
+	}
+	return memory.Decision{Op: op, Slug: item.Slug, Scope: item.Scope, MemoryType: memoryType, Description: item.Description, Body: item.Body, Mode: item.Mode, Evidence: evidence}, nil
+}
+
+const submitPlanSchema = `{"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object","properties":{` +
+	`"action":{"type":"string","enum":["write","update","accept","delete","append_daily"]},` +
+	`"slug":{"type":"string","description":"Stable kebab-case id, e.g. user-reply-language; required except for append_daily"},` +
+	`"scope":{"type":"string","enum":["global","project"],"description":"project only for facts specific to the current workspace"},` +
+	`"type":{"type":"string","enum":["user","feedback","project","reference"]},` +
+	`"description":{"type":"string","description":"One-line summary, at most 120 characters"},` +
+	`"body":{"type":"string","description":"The memory content; for append_daily, one journal bullet"},` +
+	`"mode":{"type":"string","enum":["merge","replace"],"description":"update only"},` +
+	`"confidence":{"type":"string","enum":["high","medium","low"]},` +
+	`"source_quote":{"type":"string","description":"The user's own words supporting this decision"},` +
+	`"reasoning":{"type":"string"}` +
+	`},"required":["action"]}}},"required":["decisions"]}`
+
 func submitTool() ai.Tool {
-	return ai.NewTool("SubmitMemoryPlan", "Submit validated memory mutations for one atomic batch.", `{"type":"object","properties":{"decisions":{"type":"array","items":{"type":"object"}}},"required":["decisions"]}`)
+	return ai.NewTool("SubmitMemoryPlan", "Submit validated memory mutations for one atomic batch.", submitPlanSchema)
 }
 
 func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn) (memory.BatchArgs, bool) {

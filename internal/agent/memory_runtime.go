@@ -31,6 +31,17 @@ func (a *Agent) SetMemoryRuntime(runtime MemoryRuntime) {
 	if runtime == nil {
 		return
 	}
+	// The runtime's store is the only memory the host shows; markdown
+	// remember/forget files would be a second, invisible one.
+	a.memoryDisabled = true
+	a.memoryBlock = ""
+	kept := a.Tools[:0]
+	for _, tool := range a.Tools {
+		if name := tool.Def.Function.Name; name != "remember" && name != "forget" {
+			kept = append(kept, tool)
+		}
+	}
+	a.Tools = kept
 	for _, candidate := range runtime.Tools(func() string { return a.WorkingDir }) {
 		duplicate := false
 		for _, existing := range a.Tools {

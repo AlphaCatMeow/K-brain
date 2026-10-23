@@ -19,6 +19,7 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/backend"
 	"github.com/Stack-Cairn/K-brain/internal/mcp"
+	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/memoryruntime"
 	sysprompt "github.com/Stack-Cairn/K-brain/internal/prompts"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
@@ -61,6 +62,10 @@ func backendCLI(args []string) error {
 		return fmt.Errorf("initialize backend storage: %w", err)
 	}
 	defer data.Close()
+	// Backend sessions no longer offer remember/forget; carry their saved facts into the store.
+	if _, err := data.Memory.ImportMarkdown(memory.Installation()); err != nil {
+		fmt.Fprintln(os.Stderr, "memory: import of memory.md incomplete:", err)
+	}
 	if *prepareStorage {
 		fmt.Println("k-brain backend storage prepared")
 		return nil

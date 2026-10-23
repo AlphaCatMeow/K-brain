@@ -85,3 +85,24 @@ func TestMemoryToolErrors(t *testing.T) {
 		}
 	}
 }
+
+// A backend memory runtime owns memory; the markdown remember/forget files would
+// be a second store the LiveAgent memory panel never shows.
+func TestMemoryRuntimeReplacesMarkdownMemory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LIVEAGENT_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "memory.md"), []byte("- [ ] prefers tabs\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ag := New(ai.New("http://unused", "k"), "m", 100, "sys")
+	ag.SetMemoryRuntime(&cacheMemoryFixture{})
+	for _, tool := range ag.Tools {
+		if name := tool.Def.Function.Name; name == "remember" || name == "forget" {
+			t.Fatalf("%s must not be offered alongside the memory runtime", name)
+		}
+	}
+	ag.RefreshMemory()
+	if ag.memoryBlock != "" {
+		t.Fatalf("markdown memory still injected: %q", ag.memoryBlock)
+	}
+}
