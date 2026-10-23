@@ -17,10 +17,10 @@ import (
 // read or I/O failure leaves the import unfinished so the next start retries.
 //
 // Each entry is claimed as pending before its write and recorded as done after
-// it. The import runs before the backend serves, so a pending entry found on the
-// next start cannot have been deleted by the user: it is kept if its write
-// landed and written again if not. Done entries are never written again, so a
-// deletion in the store sticks.
+// it. A pending entry found on the next start is kept if its write landed and
+// written again if not; deleting a pending entry records it as done first, so a
+// deletion sticks even when the import did not finish. Done entries are never
+// written again.
 func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,4 +98,20 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 		return imported, err
 	}
 	return imported, skipped
+}
+
+// settleImportClaimLocked records a pending memory.md import as done when its
+// entry is deleted, before the file goes, so no later import writes it back.
+func (s *Store) settleImportClaimLocked(slug string) error {
+	hash, ok := strings.CutPrefix(slug, "imported-")
+	if !ok {
+		return nil
+	}
+	state, err := s.state()
+	if err != nil || !slices.Contains(state.MarkdownPending, hash) {
+		return err
+	}
+	state.MarkdownPending = slices.DeleteFunc(state.MarkdownPending, func(h string) bool { return h == hash })
+	state.MarkdownImports = append(state.MarkdownImports, hash)
+	return s.saveState(state)
 }

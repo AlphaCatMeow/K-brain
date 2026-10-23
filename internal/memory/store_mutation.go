@@ -326,6 +326,9 @@ func (s *Store) deleteLocked(args DeleteArgs) (MutationResponse, error) {
 	if err := s.safe(e.path); err != nil {
 		return MutationResponse{}, err
 	}
+	if err := s.settleImportClaimLocked(e.Slug); err != nil {
+		return MutationResponse{}, err
+	}
 	if err := os.Remove(e.path); err != nil {
 		return MutationResponse{}, err
 	}
