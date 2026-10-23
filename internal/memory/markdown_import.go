@@ -54,6 +54,10 @@ func (s *Store) ImportMarkdown(scope Scope) (int, error) {
 				skipped = errors.Join(skipped, fmt.Errorf("entry %d: %w", entry.N, err))
 				continue
 			}
+			// A failed write leaves no entry file, so releasing the claim lets
+			// the next start retry it without resurrecting anything.
+			state.MarkdownImports = state.MarkdownImports[:len(state.MarkdownImports)-1]
+			_ = s.saveState(state)
 			return imported, err
 		}
 		imported++

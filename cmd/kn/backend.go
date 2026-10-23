@@ -64,7 +64,7 @@ func backendCLI(args []string) error {
 	defer data.Close()
 	// Backend sessions no longer offer remember/forget; carry their saved facts into the store.
 	if _, err := data.Memory.ImportMarkdown(memory.Installation()); err != nil {
-		fmt.Fprintln(os.Stderr, "memory: some memory.md entries were not imported:", err)
+		fmt.Fprintln(os.Stderr, "memory: memory.md import incomplete:", err)
 	}
 	if *prepareStorage {
 		fmt.Println("k-brain backend storage prepared")
