@@ -459,6 +459,15 @@ func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate, p
 	return order
 }
 
+// memoryEnabledNow is the current memory switch for input that arrives between runs
+// (queued messages, command notes); the agent applies the switch only at a run boundary.
+func (s *Server) memoryEnabledNow(rt *runtimeSession) bool {
+	if s.settings == nil {
+		return rt.agent.MemoryEnabled()
+	}
+	return s.settings.Snapshot().Memory.IsEnabled()
+}
+
 // Refresh only at the next idle run boundary; SetModel preserves tasks and history.
 func (s *Server) refreshSettingsLocked(rt *runtimeSession) error {
 	if s.settings == nil {

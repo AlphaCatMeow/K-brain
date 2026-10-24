@@ -62,12 +62,7 @@ func (s *Server) handleCommandNote(w http.ResponseWriter, r *http.Request, id st
 	}
 	now := time.Now()
 	note := ai.Message{ID: commandNoteID(), Role: "user", Content: command, Authored: true, SentAt: &now}
-	// Notes arrive between runs, so the current setting decides, not the last run's state.
-	memoryOn := rt.agent.MemoryEnabled()
-	if s.settings != nil {
-		memoryOn = s.settings.Snapshot().Memory.IsEnabled()
-	}
-	if !memoryOn {
+	if !s.memoryEnabledNow(rt) {
 		note.PromptSnapshots = []ai.PromptSnapshot{agent.MemoryOffSnapshot()}
 	}
 	messages := append(rt.agent.MessagesSnapshot(), note,

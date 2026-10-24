@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
 
@@ -411,7 +412,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request, id string, 
 		writeJSONError(w, 400, err.Error())
 		return
 	}
-	entry := queueEntry{ID: newRunID(), Request: submit.Request, Source: submit.Source, CreatedAt: time.Now().UnixMilli(), DraftJSON: submit.DraftJSON, UploadedFilesJSON: submit.UploadedFilesJSON}
+	entry := queueEntry{ID: newRunID(), Request: submit.Request, Source: submit.Source, CreatedAt: time.Now().UnixMilli(), DraftJSON: submit.DraftJSON, UploadedFilesJSON: submit.UploadedFilesJSON, MemoryOff: !s.memoryEnabledNow(rt)}
 	if entry.DraftJSON == "" {
 		entry.DraftJSON = defaultQueueDraft(entry.Request.Prompt)
 	}
@@ -515,6 +516,8 @@ func (s *Server) queueActionLocked(w http.ResponseWriter, rt *runtimeSession, in
 			}
 			request.ConversationID = rt.id
 			edit.Entry.Request = request
+			// Text edited while memory is off is off-period input; the mark is never cleared.
+			edit.Entry.MemoryOff = edit.Entry.MemoryOff || !s.memoryEnabledNow(rt)
 			edit.Entry.DraftJSON = in.DraftJSON
 			if edit.Entry.DraftJSON == "" {
 				edit.Entry.DraftJSON = defaultQueueDraft(request.Prompt)
@@ -624,7 +627,11 @@ func (s *Server) startQueueWorkerLocked(rt *runtimeSession) {
 			status := http.StatusOK
 			var err error
 			if !already {
-				accepted, status, err = s.startCanonicalRun(context.WithValue(context.Background(), queueDispatchKey{}, rt), rt, entry.Request)
+				dispatchCtx := context.WithValue(context.Background(), queueDispatchKey{}, rt)
+				if entry.MemoryOff {
+					dispatchCtx = agent.WithMemoryOffAuthored(dispatchCtx)
+				}
+				accepted, status, err = s.startCanonicalRun(dispatchCtx, rt, entry.Request)
 			}
 			rt.mu.Lock()
 			rt.queueDispatchID = ""
