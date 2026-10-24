@@ -134,6 +134,8 @@ type Agent struct {
 	contextRequested atomic.Bool
 	contextNoticeMu  sync.Mutex
 	contextNotice    string
+	// contextNoticeOff: the notice quotes a user message written while memory was off.
+	contextNoticeOff bool
 	running          atomic.Bool
 	turnMu           sync.Mutex
 	waitReg          *waitRegistry
@@ -597,9 +599,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if resumeID == "" {
 		a.Messages = append(a.Messages, msg)
 	} else {
-		if !a.MemoryEnabled() {
-			markResumedMessage(&a.Messages[len(a.Messages)-1], userMessage.PromptSnapshots)
-		}
+		markResumedMessage(&a.Messages[len(a.Messages)-1], userMessage.PromptSnapshots, a.MemoryEnabled())
 		msg = a.Messages[len(a.Messages)-1]
 	}
 	a.msgsMu.Unlock()
@@ -636,9 +636,13 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		if err := a.maybeCompactForRequest(ctx, ev); err != nil {
 			return "", err
 		}
-		if notice := a.takeContextNotice(); notice != "" {
+		if notice, quotesOff := a.takeContextNotice(); notice != "" {
 			now := time.Now()
-			message := ai.Message{Role: "user", Content: notice, SentAt: &now, PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
+			snapshots := a.contextSnapshots()
+			if quotesOff && a.MemoryEnabled() {
+				snapshots = append(snapshots, MemoryOffSnapshot())
+			}
+			message := ai.Message{Role: "user", Content: notice, SentAt: &now, PromptContext: a.todoContext(), PromptSnapshots: snapshots}
 			a.msgsMu.Lock()
 			a.Messages = append(a.Messages, message)
 			a.msgsMu.Unlock()
@@ -776,12 +780,13 @@ func (a *Agent) requestNewContext() {
 }
 
 func (a *Agent) resetContextMessages(notice bool) {
-	lastUser := ""
+	lastUser, lastUserOff := "", false
 	a.msgsMu.Lock()
 	if len(a.Messages) > 0 {
 		for i := len(a.Messages) - 1; i >= 0; i-- {
 			if a.Messages[i].Role == "user" {
 				lastUser = truncateField(a.Messages[i].TextContent(), 8000)
+				lastUserOff = isMemoryOffMessage(a.Messages[i])
 				break
 			}
 		}
@@ -797,16 +802,17 @@ func (a *Agent) resetContextMessages(notice bool) {
 		if lastUser != "" {
 			a.contextNotice += "\n\nCurrent task:\n" + lastUser
 		}
+		a.contextNoticeOff = lastUser != "" && lastUserOff
 		a.contextNoticeMu.Unlock()
 	}
 }
 
-func (a *Agent) takeContextNotice() string {
+func (a *Agent) takeContextNotice() (string, bool) {
 	a.contextNoticeMu.Lock()
 	defer a.contextNoticeMu.Unlock()
-	n := a.contextNotice
-	a.contextNotice = ""
-	return n
+	n, off := a.contextNotice, a.contextNoticeOff
+	a.contextNotice, a.contextNoticeOff = "", false
+	return n, off
 }
 
 const (
