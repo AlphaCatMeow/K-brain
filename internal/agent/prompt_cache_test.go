@@ -20,6 +20,7 @@ type cacheMemoryFixture struct{ block string }
 
 func (m *cacheMemoryFixture) Inject(context.Context, string) (string, error) { return m.block, nil }
 func (*cacheMemoryFixture) Completed(context.Context, MemoryTurn)            {}
+func (*cacheMemoryFixture) Abandoned(string, ai.Message)                     {}
 func (*cacheMemoryFixture) Tools(func() string) []tools.Tool                 { return nil }
 func (*cacheMemoryFixture) Close() error                                     { return nil }
 

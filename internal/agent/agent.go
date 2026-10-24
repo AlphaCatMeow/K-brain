@@ -185,13 +185,9 @@ type Agent struct {
 	memoryDisabled     bool
 	// markdownMemoryReadOnly is set once a memory runtime owns memory.
 	markdownMemoryReadOnly bool
-	// memoryAbandoned holds user messages of turns that ended without
-	// reaching memory; the next completed turn reports those still in History.
-	memoryAbandonedMu    sync.Mutex
-	memoryAbandoned      []ai.Message
-	memoryRuntime        MemoryRuntime
-	systemPromptResolver func() (string, error)
-	turnTimeContext      bool
+	memoryRuntime          MemoryRuntime
+	systemPromptResolver   func() (string, error)
+	turnTimeContext        bool
 
 	usageMu    sync.Mutex
 	usage      ai.Usage
@@ -604,16 +600,14 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	}
 	a.msgsMu.Unlock()
 	// A cancelled, failed or plan-exit turn keeps its user message in History,
-	// which later turns treat as context only. Hold it for the next completed
-	// turn instead of judging it now: a resume reports it once and an edit can
-	// still remove it. Only memoryAbandonedMu is taken here, so a panic under
-	// msgsMu still propagates.
+	// which later turns treat as context only. The runtime holds it for the
+	// next completed turn: a resume reports it once and an edit can still
+	// remove it. No agent lock is taken here, so a panic under msgsMu still
+	// propagates.
 	memoryReported := false
 	defer func() {
 		if !memoryReported && a.memoryRuntime != nil {
-			a.memoryAbandonedMu.Lock()
-			a.memoryAbandoned = append(a.memoryAbandoned, userMessage)
-			a.memoryAbandonedMu.Unlock()
+			a.memoryRuntime.Abandoned(a.SessionIDValue(), userMessage)
 		}
 	}()
 	if err := observeUserMessage(ctx, msg); err != nil {
@@ -753,40 +747,11 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			a.compacted = false
 			if a.memoryRuntime != nil {
 				memoryReported = true
-				history := a.MessagesSnapshot()
-				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: history, Abandoned: a.takeAbandonedMemory(userMessage.ID, history)})
+				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
 			}
 			return msg.Content, nil
 		}
 	}
-}
-
-// takeAbandonedMemory returns held user messages that are still in History,
-// other than the current turn's own (a resumed turn reports it itself).
-func (a *Agent) takeAbandonedMemory(current string, history []ai.Message) []ai.Message {
-	a.memoryAbandonedMu.Lock()
-	held := a.memoryAbandoned
-	a.memoryAbandoned = nil
-	a.memoryAbandonedMu.Unlock()
-	if len(held) == 0 {
-		return nil
-	}
-	present := make(map[string]bool, len(history))
-	for _, m := range history {
-		if m.Role == "user" && m.ID != "" {
-			present[m.ID] = true
-		}
-	}
-	var out []ai.Message
-	seen := map[string]bool{current: true}
-	for _, m := range held {
-		if m.ID == "" || seen[m.ID] || !present[m.ID] {
-			continue
-		}
-		seen[m.ID] = true
-		out = append(out, m)
-	}
-	return out
 }
 
 func (a *Agent) drainOrphanedSteers() {

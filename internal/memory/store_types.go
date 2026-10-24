@@ -242,9 +242,9 @@ type storeState struct {
 	// write that has not been confirmed yet.
 	MarkdownImports []string `json:"markdownImports,omitempty"`
 	MarkdownPending []string `json:"markdownPending,omitempty"`
-	// ExtractionMarks records, per session, the last user message ID the
-	// hidden extractor judged, so later turns judge only what came after.
-	ExtractionMarks map[string]string `json:"extractionMarks,omitempty"`
+	// Unjudged holds, per session, user messages the hidden extractor still
+	// has to judge (stopped or failed turns, unfinished extractions).
+	Unjudged map[string][]UnjudgedMessage `json:"unjudged,omitempty"`
 }
 
 type StoreError struct {

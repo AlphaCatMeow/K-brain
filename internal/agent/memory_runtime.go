@@ -15,10 +15,6 @@ type MemoryTurn struct {
 	Model     string
 	User      ai.Message
 	History   []ai.Message
-	// Abandoned holds user messages of earlier turns that were stopped,
-	// failed or exited plan mode and are still in History; they are judged
-	// with this turn.
-	Abandoned []ai.Message
 }
 
 // MemoryRuntime owns backend memory injection and hidden extraction. Implementations
@@ -26,6 +22,10 @@ type MemoryTurn struct {
 type MemoryRuntime interface {
 	Inject(context.Context, string) (string, error)
 	Completed(context.Context, MemoryTurn)
+	// Abandoned is called for a turn that ended without completing (stopped,
+	// failed, plan-mode exit) after its user message entered History. It must
+	// not take the agent's locks.
+	Abandoned(sessionID string, user ai.Message)
 	Tools(func() string) []tools.Tool
 	Close() error
 }
