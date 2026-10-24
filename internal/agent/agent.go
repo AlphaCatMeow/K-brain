@@ -599,6 +599,14 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		msg = a.Messages[len(a.Messages)-1]
 	}
 	a.msgsMu.Unlock()
+	// A cancelled, failed or plan-exit turn still hands its user message to
+	// memory: it stays in History, and later turns treat History as context only.
+	memoryReported := false
+	defer func() {
+		if !memoryReported && a.memoryRuntime != nil {
+			a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
+		}
+	}()
 	if err := observeUserMessage(ctx, msg); err != nil {
 		return "", err
 	}
@@ -735,6 +743,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			}
 			a.compacted = false
 			if a.memoryRuntime != nil {
+				memoryReported = true
 				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
 			}
 			return msg.Content, nil

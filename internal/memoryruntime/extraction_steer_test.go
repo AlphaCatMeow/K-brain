@@ -6,31 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
 )
-
-// steerOnceClient is the chat model of a real agent.Agent: on its first
-// request it steers the running turn, the way a user types while the agent
-// works.
-type steerOnceClient struct {
-	fixtureClient
-	ag    *agent.Agent
-	steer string
-	once  sync.Once
-}
-
-func (c *steerOnceClient) Clone() ai.Client { return c }
-
-func (c *steerOnceClient) Stream(_ context.Context, _ ai.Request, _ func(string), _ func(string), _ func(string, string, string)) (ai.Message, ai.Usage, error) {
-	c.once.Do(func() { c.ag.Steer(c.steer) })
-	return ai.Message{Role: "assistant", Content: "ok"}, ai.Usage{}, nil
-}
 
 // archive moves a live entry into the store's .archive directory, which the
 // store loads as Archived (store.go load) and Overview hides.
