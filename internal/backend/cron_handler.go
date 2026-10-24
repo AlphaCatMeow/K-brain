@@ -96,6 +96,7 @@ func (s *Server) cronApply(w http.ResponseWriter, r *http.Request) {
 	if err := decodeCronJSON(w, r, &input); err != nil {
 		return
 	}
+	s.markCronMemoryOff(&input)
 	response, err := s.cron.store.apply(input)
 	if err != nil {
 		writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
@@ -103,6 +104,37 @@ func (s *Server) cronApply(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
+// markCronMemoryOff sets memoryOff on prompts users write over HTTP while memory is off.
+// Clients cannot set or clear it; an update keeps the mark unless it rewrites the prompt
+// while off, which adds it.
+func (s *Server) markCronMemoryOff(input *CronApplyInput) {
+	off := s.settings != nil && !s.settings.Snapshot().Memory.IsEnabled()
+	prompts := map[string]string{}
+	for _, task := range s.cron.store.snapshot().Tasks {
+		if task != nil {
+			prompts[task.ID] = task.Prompt
+		}
+	}
+	for i := range input.Ops {
+		op := &input.Ops[i]
+		switch op.Op {
+		case "create":
+			if op.Item != nil {
+				op.Item["memoryOff"] = off
+			}
+		case "update":
+			if op.Patch == nil {
+				continue
+			}
+			delete(op.Patch, "memoryOff")
+			if prompt, ok := op.Patch["prompt"].(string); ok && off && prompt != prompts[op.ID] {
+				op.Patch["memoryOff"] = true
+			}
+		}
+	}
+}
+
 func (s *Server) cronValidate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Expression string `json:"expression"`

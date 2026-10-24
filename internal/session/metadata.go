@@ -306,7 +306,7 @@ func (s *Store) Fork(srcID string, uptoSeq int, title string) (id string, err er
 			return err
 		}
 		m := src.Meta
-		d := newData(Meta{CWD: m.CWD, Model: m.Model, Provider: m.Provider, Goal: m.Goal, Effort: m.Effort,
+		d := newData(Meta{CWD: m.CWD, Model: m.Model, Provider: m.Provider, Goal: m.Goal, GoalMemoryOff: m.GoalMemoryOff, Effort: m.Effort,
 			Title: title, ForkedFrom: srcID, ForkSeq: uptoSeq, UpdatedAt: time.Now().UTC()})
 		for seq, msg := range src.Messages {
 			if seq <= uptoSeq {

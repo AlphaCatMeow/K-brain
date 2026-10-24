@@ -21,6 +21,9 @@ type CronTask struct {
 	Reasoning           string            `json:"reasoning,omitempty"`
 	Workdir             string            `json:"workdir,omitempty"`
 	LastError           string            `json:"lastError,omitempty"`
+	// MemoryOff records that a user wrote the prompt while memory was off; its runs stay
+	// out of memory extraction. Backend-owned: set from the switch, never cleared.
+	MemoryOff bool `json:"memoryOff,omitempty"`
 }
 
 type CronHTTPRequest struct {

@@ -319,7 +319,9 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 		}
 		memoryOff := rt.goal.memoryOff
 		if in.Action == "set" {
-			memoryOff = !s.memoryEnabledNow(rt)
+			// Admission runs after this run's settings refresh, so the agent's switch is the
+			// one that marks this round's History message.
+			memoryOff = !rt.agent.MemoryEnabled()
 			if err := s.store.SetGoalMemory(rt.id, goal, memoryOff); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}

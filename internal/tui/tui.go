@@ -899,7 +899,7 @@ func (m *model) setGoal(goal string) {
 	m.goal = goal
 	m.goalRounds = 0
 	if m.store != nil && m.sessionID != "" {
-		_ = m.store.SetGoal(m.sessionID, goal)
+		_ = m.store.SetGoalMemory(m.sessionID, goal, !m.cfg.Memory.IsEnabled())
 	}
 }
 

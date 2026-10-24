@@ -164,7 +164,9 @@ func TestReview2MemorySwitchCancelledOffTurnResumedAfterReenableIsExtracted(t *t
 	if code := doJSON(t, http.MethodPost, f.url+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "on-resume", ResumeMessageID: tail.ID, Prompt: secret}, nil); code != http.StatusAccepted {
 		t.Fatalf("resume status %d", code)
 	}
-	waitForRun(t, f.url, sess.ID, seq)
-	time.Sleep(200 * time.Millisecond)
-	review2AssertNoLeak(t, f.extractionRequests(), "OFFSECRET-CANCEL-5521")
+	events = waitForRun(t, f.url, sess.ID, seq)
+	// A later turn written while on is extracted; once it is, the resumed message has had
+	// its chance to leak, as the latest or an earlier message.
+	f.turn(t, sess.ID, "on-sentinel", "I also prefer short commit messages", events[len(events)-1].Seq)
+	review2AssertNoLeak(t, f.review2WaitExtraction(t), "OFFSECRET-CANCEL-5521")
 }
