@@ -225,6 +225,10 @@ type MemoryConfig struct {
 // IsEnabled defaults to true so configurations written before the switch keep memory on.
 func (m MemoryConfig) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
 
+// IsZero lets omitzero drop the default (on) switch: releases without it reject an
+// unknown "memory" key, so only an explicit off is written to disk.
+func (m MemoryConfig) IsZero() bool { return m.IsEnabled() }
+
 type BrowserConfig struct {
 	Mode string `json:"mode,omitempty"`
 
