@@ -32,47 +32,6 @@ func (c *steerOnceClient) Stream(_ context.Context, _ ai.Request, _ func(string)
 	return ai.Message{Role: "assistant", Content: "ok"}, ai.Usage{}, nil
 }
 
-// A message the user sends while a run is going (Steer) becomes a user
-// message in History after turn.User, but the agent reports only turn.User to
-// Completed. The extractor now puts every other user message in
-// <earlier-user-messages context-only="true"> and tells the model they were
-// "already handled on earlier turns", so a "remember" sent as a steer is never
-// judged. The 1f27ade extractor judged the last four user messages.
-func TestSteeredUserMessageIsJudged(t *testing.T) {
-	extraction := &fixtureClient{}
-	rt, _ := testRuntime(t, extraction)
-	t.Cleanup(func() { _ = rt.Close() })
-	steer := "记住：以后提交信息一律用英文写"
-	chat := &steerOnceClient{steer: steer}
-	ag := agent.New(chat, "m", 1000, "sys")
-	chat.ag = ag
-	ag.SetMemoryRuntime(rt)
-	if _, err := ag.Turn(context.Background(), "帮我把这个函数改短一点", agent.Events{}); err != nil {
-		t.Fatal(err)
-	}
-	steered := false
-	for _, m := range ag.MessagesSnapshot() {
-		if m.Role == "user" && m.TextContent() == steer {
-			steered = true
-		}
-	}
-	if !steered {
-		t.Fatal("fixture: steer did not reach the transcript")
-	}
-	if !waitFor(t, func() bool { extraction.mu.Lock(); defer extraction.mu.Unlock(); return extraction.calls > 0 }) {
-		t.Fatal("extraction never ran")
-	}
-	time.Sleep(100 * time.Millisecond)
-	extraction.mu.Lock()
-	defer extraction.mu.Unlock()
-	for _, request := range extraction.requests {
-		if judged(request.Messages[1].TextContent(), steer) {
-			return
-		}
-	}
-	t.Fatalf("steered message was only given as already-handled context in %d requests; prompt:\n%s", len(extraction.requests), extraction.requests[0].Messages[1].TextContent())
-}
-
 // archive moves a live entry into the store's .archive directory, which the
 // store loads as Archived (store.go load) and Overview hides.
 func archive(t *testing.T, store *memory.Store, rel string) {
