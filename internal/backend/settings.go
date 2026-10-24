@@ -463,7 +463,7 @@ func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate, p
 // (queued messages, command notes); the agent applies the switch only at a run boundary.
 func (s *Server) memoryEnabledNow(rt *runtimeSession) bool {
 	if s.settings == nil {
-		return rt.agent.MemoryEnabled()
+		return rt.agent == nil || rt.agent.MemoryEnabled()
 	}
 	return s.settings.Snapshot().Memory.IsEnabled()
 }

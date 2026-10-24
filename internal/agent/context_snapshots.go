@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
@@ -66,6 +67,16 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 			continue
 		}
 		snapshots = append(snapshots, current)
+	}
+	// Without a memory runtime nothing above replaces the off instruction once memory is
+	// back on, so lift it explicitly.
+	for _, source := range []string{savedMemorySource, runtimeMemorySource} {
+		if slices.ContainsFunc(snapshots, func(s ai.PromptSnapshot) bool { return s.Source == source }) {
+			continue
+		}
+		if previous, exists := retainedSnapshot(a.Messages, source); exists && previous == memoryOffNotice {
+			snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: memoryOnNotice})
+		}
 	}
 	return snapshots
 }
