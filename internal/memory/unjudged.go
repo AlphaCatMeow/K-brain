@@ -12,15 +12,16 @@ const maxUnjudgedPerSession = 8
 
 // HoldUnjudged adds messages to a session's unjudged list, keeping the newest
 // maxUnjudgedPerSession and one entry per ID. Messages read before a wipe
-// (epoch is not the current WipeEpoch) are dropped.
-func (s *Store) HoldUnjudged(session string, epoch uint64, msgs []UnjudgedMessage) error {
+// (epoch is not the current WipeEpoch) are dropped; a nil epoch, when the
+// caller could not read it, skips the check.
+func (s *Store) HoldUnjudged(session string, epoch *uint64, msgs []UnjudgedMessage) error {
 	if session == "" || len(msgs) == 0 {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.state()
-	if err != nil || state.WipeEpoch != epoch {
+	if err != nil || (epoch != nil && state.WipeEpoch != *epoch) {
 		return err
 	}
 	return s.updateStateLocked(func(state *storeState) {

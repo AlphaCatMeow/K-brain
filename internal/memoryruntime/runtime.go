@@ -62,9 +62,9 @@ type claim struct {
 	// inflight holds the messages of the running extraction, kept by Close
 	// so a cancelled extraction never writes after it.
 	inflight []ai.Message
-	// The store's wipe epoch when unjudged was first queued and when the
-	// running extraction started: a wipe in between discards them.
-	unjudgedEpoch, inflightEpoch uint64
+	// The store's wipe epoch the queued and the running messages belong to;
+	// nil when it could not be read. A wipe since then discards them.
+	unjudgedEpoch, inflightEpoch *uint64
 }
 
 func New(cfg Config) (*Runtime, error) {
@@ -170,9 +170,15 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	}
 	c.pending = &turn
 	c.parent = parent
-	if epoch := r.epoch(); len(c.unjudged) == 0 || epoch != c.unjudgedEpoch {
+	epoch := r.epoch()
+	switch {
+	case len(c.unjudged) == 0:
+		c.unjudged, c.unjudgedEpoch = nil, epoch
+	case wipedSince(c.unjudgedEpoch, epoch):
 		// Messages queued before a wipe are dropped; the queue starts over.
 		c.unjudged, c.unjudgedEpoch = nil, epoch
+	case c.unjudgedEpoch == nil:
+		c.unjudgedEpoch = epoch
 	}
 	c.unjudged = append(c.unjudged, add...)
 	now := r.now()
@@ -194,9 +200,9 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	ctx, cancel := context.WithCancel(parent)
 	c.cancel = cancel
 	c.inflight, c.inflightEpoch = judge, c.unjudgedEpoch
-	epoch := c.unjudgedEpoch
+	started := c.unjudgedEpoch
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending, judge, epoch)
+	go r.extract(ctx, key, pending, judge, started)
 }
 
 // Abandoned keeps the user message of a stopped or failed turn for the
@@ -209,18 +215,25 @@ func (r *Runtime) Abandoned(sessionID string, user ai.Message) {
 	r.hold(sessionID, []ai.Message{user}, r.epoch())
 }
 
-// epoch is the store's current wipe generation (WipeAll only).
-func (r *Runtime) epoch() uint64 {
+// epoch is the store's current wipe generation (WipeAll only), or nil when
+// the state could not be read: a failed read is not a wipe.
+func (r *Runtime) epoch() *uint64 {
 	epoch, err := r.store.WipeEpoch()
 	if err != nil {
 		logf("memory extraction: read wipe epoch: %s", describeExtractionError(err))
+		return nil
 	}
-	return epoch
+	return &epoch
+}
+
+// wipedSince reports a wipe between two known epochs.
+func wipedSince(then, now *uint64) bool {
+	return then != nil && now != nil && *then != *now
 }
 
 // holdUnlessClosed keeps messages of a failed extraction; after Close they
 // were already kept and the runtime must not write again.
-func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message, epoch uint64) {
+func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message, epoch *uint64) {
 	r.mu.Lock()
 	closed := r.closed
 	r.mu.Unlock()
@@ -239,7 +252,7 @@ func judgedText(m ai.Message) string {
 }
 
 // hold persists user messages that still need judging.
-func (r *Runtime) hold(key string, msgs []ai.Message, epoch uint64) {
+func (r *Runtime) hold(key string, msgs []ai.Message, epoch *uint64) {
 	var held []memory.UnjudgedMessage
 	for _, m := range msgs {
 		if text := judgedText(m); m.ID != "" && text != "" {
@@ -290,12 +303,12 @@ func (r *Runtime) startPending(key string) {
 	ctx, cancel := context.WithCancel(c.parent)
 	c.cancel = cancel
 	c.inflight, c.inflightEpoch = judge, c.unjudgedEpoch
-	epoch := c.unjudgedEpoch
+	started := c.unjudgedEpoch
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending, judge, epoch)
+	go r.extract(ctx, key, pending, judge, started)
 }
 
-func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message, epoch uint64) {
+func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message, epoch *uint64) {
 	defer func() { r.finishClaim(key) }()
 	existing := r.existingMemory(turn.Workdir)
 	messages := extractionMessages(turn, existing, judge)
@@ -318,7 +331,7 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	if !ok || ctx.Err() != nil {
 		return
 	}
-	if r.epoch() != epoch {
+	if wipedSince(epoch, r.epoch()) {
 		// Memory was wiped while this turn was being judged.
 		logf("memory extraction %s: memory wiped during extraction; plan dropped", key)
 		return
@@ -750,7 +763,7 @@ func (r *Runtime) Close() error {
 	type kept struct {
 		key   string
 		msgs  []ai.Message
-		epoch uint64
+		epoch *uint64
 	}
 	var queued []kept
 	for key, c := range r.claims {
