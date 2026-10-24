@@ -92,9 +92,24 @@ func (r *Runtime) RunOrganizer(ctx context.Context, workdir string, trigger Orga
 		// organizer model is configured, while configured models are K-brain-only.
 		if len(cluster) > 1 {
 			first := cluster[0]
+			original, readErr := r.store.Read(memory.ReadArgs{Slug: first.Slug, Scope: first.Scope, WorkdirHash: first.WorkdirHash, Length: 10000})
+			if readErr != nil {
+				return r.cancelRun(run, readErr)
+			}
 			for _, duplicate := range cluster[1:] {
 				if duplicate.Description != "" && strings.EqualFold(duplicate.Description, first.Description) {
-					decisions = append(decisions, memory.Decision{Op: "delete", Slug: duplicate.Slug, Scope: duplicate.Scope, WorkdirHash: duplicate.WorkdirHash, GroupID: run.RunID, Reason: "duplicate in organizer cluster"})
+					candidate, readErr := r.store.Read(memory.ReadArgs{Slug: duplicate.Slug, Scope: duplicate.Scope, WorkdirHash: duplicate.WorkdirHash, Length: 10000})
+					if readErr != nil {
+						return r.cancelRun(run, readErr)
+					}
+					// Matching summaries alone do not establish duplicate content.
+					if original.Window.Truncated || candidate.Window.Truncated || original.Body != candidate.Body {
+						continue
+					}
+					decisions = append(decisions, memory.Decision{Op: "delete", Slug: duplicate.Slug, Scope: duplicate.Scope, WorkdirHash: duplicate.WorkdirHash, GroupID: run.RunID, Reason: "duplicate in organizer cluster", Preconditions: []memory.EntryPrecondition{
+						{ReadArgs: memory.ReadArgs{Slug: first.Slug, Scope: first.Scope, WorkdirHash: first.WorkdirHash}, Body: original.Body, Description: original.Description},
+						{ReadArgs: memory.ReadArgs{Slug: duplicate.Slug, Scope: duplicate.Scope, WorkdirHash: duplicate.WorkdirHash}, Body: candidate.Body, Description: candidate.Description},
+					}})
 				}
 			}
 		}
@@ -132,6 +147,7 @@ func (r *Runtime) RunOrganizer(ctx context.Context, workdir string, trigger Orga
 		}
 		run = claimedRun
 		result, applyErr = r.store.ApplyBatch(memory.BatchArgs{Workdir: workdir, Trigger: "organizer", Model: r.organizer, Decisions: decisions})
+		run.Warnings = append(run.Warnings, result.Warnings...)
 		if applyErr != nil {
 			run.Status = "failed"
 			run.Warnings = []string{applyErr.Error()}
@@ -190,6 +206,7 @@ func (r *Runtime) ApplyOrganizerRun(ctx context.Context, runID string) (Organize
 		return run, decodeErr
 	}
 	result, applyErr := r.store.ApplyBatch(memory.BatchArgs{Workdir: run.Workdir, Trigger: "organizer-manual", Model: run.Model, Decisions: run.Pending})
+	run.Warnings = append(run.Warnings, result.Warnings...)
 	if applyErr != nil {
 		run.Status = "failed"
 		run.Warnings = append(run.Warnings, applyErr.Error())

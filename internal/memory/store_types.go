@@ -179,17 +179,23 @@ type OverviewResponse struct {
 	WorkdirHash *string `json:"workdirHash"`
 }
 type Decision struct {
-	Op          string    `json:"op"`
-	Slug        string    `json:"slug"`
-	Scope       string    `json:"scope,omitempty"`
-	WorkdirHash string    `json:"workdirHash,omitempty"`
-	MemoryType  string    `json:"memoryType,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	Body        *string   `json:"body,omitempty"`
-	Mode        string    `json:"mode,omitempty"`
-	Reason      string    `json:"reason,omitempty"`
-	GroupID     string    `json:"groupId,omitempty"`
-	Evidence    *Evidence `json:"evidence,omitempty"`
+	Op            string              `json:"op"`
+	Slug          string              `json:"slug"`
+	Scope         string              `json:"scope,omitempty"`
+	WorkdirHash   string              `json:"workdirHash,omitempty"`
+	MemoryType    string              `json:"memoryType,omitempty"`
+	Description   *string             `json:"description,omitempty"`
+	Body          *string             `json:"body,omitempty"`
+	Mode          string              `json:"mode,omitempty"`
+	Reason        string              `json:"reason,omitempty"`
+	GroupID       string              `json:"groupId,omitempty"`
+	Evidence      *Evidence           `json:"evidence,omitempty"`
+	Preconditions []EntryPrecondition `json:"preconditions,omitempty"`
+}
+type EntryPrecondition struct {
+	ReadArgs
+	Body        string `json:"body"`
+	Description string `json:"description"`
 }
 type BatchArgs struct {
 	Workdir        string `json:"workdir,omitempty"`
