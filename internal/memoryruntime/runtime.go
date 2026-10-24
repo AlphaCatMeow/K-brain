@@ -56,6 +56,9 @@ type claim struct {
 	last    time.Time
 	pending *agent.MemoryTurn
 	parent  context.Context
+	// unjudged holds the user messages of turns coalesced into the pending
+	// one; they are judged together so none is skipped.
+	unjudged []ai.Message
 }
 
 func New(cfg Config) (*Runtime, error) {
@@ -146,6 +149,7 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	}
 	c.pending = &turn
 	c.parent = parent
+	c.unjudged = append(c.unjudged, turn.User)
 	now := r.now()
 	if c.cancel != nil {
 		r.mu.Unlock()
@@ -159,13 +163,13 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 		r.mu.Unlock()
 		return
 	}
-	pending := *c.pending
-	c.pending = nil
+	pending, judge := *c.pending, c.unjudged
+	c.pending, c.unjudged = nil, nil
 	c.last = now
 	ctx, cancel := context.WithCancel(parent)
 	c.cancel = cancel
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending)
+	go r.extract(ctx, key, pending, judge)
 }
 
 func (r *Runtime) startPending(key string) {
@@ -176,22 +180,22 @@ func (r *Runtime) startPending(key string) {
 		return
 	}
 	c.timer = nil
-	pending := *c.pending
-	c.pending = nil
+	pending, judge := *c.pending, c.unjudged
+	c.pending, c.unjudged = nil, nil
 	c.last = r.now()
 	ctx, cancel := context.WithCancel(c.parent)
 	c.cancel = cancel
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending)
+	go r.extract(ctx, key, pending, judge)
 }
 
-func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn) {
+func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message) {
 	defer func() { r.finishClaim(key) }()
 	existing := r.existingMemory(turn.Workdir)
-	messages := extractionMessages(turn, existing)
-	plan, err := r.submitRetrying(ctx, key, messages, false)
-	if err == nil && plan == nil && ctx.Err() == nil {
-		plan, err = r.submitRetrying(ctx, key, messages, true)
+	messages := extractionMessages(turn, existing, judge)
+	plan, nudged, err := r.submitRetrying(ctx, key, messages, false)
+	if err == nil && plan == nil && !nudged && ctx.Err() == nil {
+		plan, _, err = r.submitRetrying(ctx, key, messages, true)
 	}
 	if err != nil {
 		if ctx.Err() == nil {
@@ -218,12 +222,13 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 
 // submitRetrying retries failed model requests on extractionRetryDelays. A plan
 // the model got wrong is retried once by the caller with a nudge instead.
-func (r *Runtime) submitRetrying(ctx context.Context, key string, messages []ai.Message, nudge bool) (*planEnvelope, error) {
+func (r *Runtime) submitRetrying(ctx context.Context, key string, messages []ai.Message, nudge bool) (*planEnvelope, bool, error) {
 	plan, err := r.submit(ctx, r.extraction, messages, nudge)
 	var bad planError
 	if err != nil && errors.As(err, &bad) && !nudge {
 		logf("memory extraction %s: %s; retrying", key, describeExtractionError(err))
-		return r.submit(ctx, r.extraction, messages, true)
+		plan, _, err = r.submitRetrying(ctx, key, messages, true)
+		return plan, true, err
 	}
 	for _, delay := range extractionRetryDelays {
 		if err == nil || errors.As(err, &bad) || ctx.Err() != nil || permanentModelError(err) {
@@ -232,12 +237,12 @@ func (r *Runtime) submitRetrying(ctx context.Context, key string, messages []ai.
 		logf("memory extraction %s: %s; retrying in %s", key, describeExtractionError(err), delay)
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nudge, ctx.Err()
 		case <-time.After(delay):
 		}
 		plan, err = r.submit(ctx, r.extraction, messages, nudge)
 	}
-	return plan, err
+	return plan, nudge, err
 }
 
 // permanentModelError reports client errors a retry cannot fix (bad key,
@@ -265,33 +270,36 @@ func (r *Runtime) finishClaim(key string) {
 // existingMemory lists the entries the extractor must reuse instead of
 // re-creating; a failed read only loses deduplication, not the turn.
 func (r *Runtime) existingMemory(workdir string) []memory.Meta {
-	overview, err := r.store.Overview(workdir)
+	list, err := r.store.List(memory.ListArgs{Workdir: workdir, Limit: 10000})
 	if err != nil {
 		logf("memory extraction: list existing memory: %s", describeExtractionError(err))
 		return nil
 	}
-	var out []memory.Meta
-	for _, group := range [][]memory.Meta{overview.User, overview.Project, overview.Global} {
-		for _, e := range group {
-			if e.MemoryType != "daily" {
-				out = append(out, e)
-			}
-		}
-	}
-	return out
+	return list.Entries
 }
 
-func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta) []ai.Message {
-	latest := truncateRunes(turn.User.TextContent(), 2000)
+// maxPromptEntries bounds the existing-memory block; deduplication and the
+// new-slug gate still see every entry.
+const maxPromptEntries = 200
+
+func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta, judge []ai.Message) []ai.Message {
+	if len(judge) == 0 {
+		judge = []ai.Message{turn.User}
+	}
+	judged := make(map[string]bool, len(judge))
+	latest := make([]string, 0, len(judge))
+	for _, m := range judge {
+		text := truncateRunes(m.TextContent(), 2000)
+		judged[text] = true
+		latest = append(latest, text)
+	}
 	earlier := make([]string, 0, 3)
-	skippedLatest := false
 	for i := len(turn.History) - 1; i >= 0 && len(earlier) < 3; i-- {
 		if turn.History[i].Role != "user" {
 			continue
 		}
 		text := truncateRunes(turn.History[i].TextContent(), 2000)
-		if !skippedLatest && text == latest {
-			skippedLatest = true
+		if judged[text] {
 			continue
 		}
 		earlier = append(earlier, text)
@@ -304,7 +312,11 @@ func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta) []ai.Mess
 	if len(existing) == 0 {
 		b.WriteString("- (none)\n")
 	}
-	for _, e := range existing {
+	for i, e := range existing {
+		if i == maxPromptEntries {
+			fmt.Fprintf(&b, "- (%d more entries not shown)\n", len(existing)-i)
+			break
+		}
 		fmt.Fprintf(&b, "- %s (type=%s; scope=%s) %s\n", e.Slug, e.MemoryType, e.Scope, truncateRunes(e.Description, 160))
 	}
 	b.WriteString("</existing-memory>\n\n<earlier-user-messages context-only=\"true\">\n")
@@ -314,13 +326,13 @@ func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta) []ai.Mess
 	for _, text := range earlier {
 		b.WriteString(text + "\n---\n")
 	}
-	b.WriteString("</earlier-user-messages>\n\n<latest-user-message>\n" + latest + "\n</latest-user-message>")
+	b.WriteString("</earlier-user-messages>\n\n<latest-user-message>\n" + strings.Join(latest, "\n---\n") + "\n</latest-user-message>")
 	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: b.String()}}
 }
 
 const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote.
 
-Judge only <latest-user-message>. <earlier-user-messages> is context for understanding it; anything in them was already handled on earlier turns, so never extract from them again.
+Judge only <latest-user-message>, which may hold several messages separated by ---. <earlier-user-messages> is context for understanding it; anything in them was already handled on earlier turns, so never extract from them again.
 
 Durable memory is what should still apply in a later, unrelated conversation: the user's lasting preferences and instructions for how to work or answer (language, format, tools, style; type user or feedback), facts about the user, project conventions (type project, scope project), and pointers to external resources the user will keep using (type reference). Anything the user explicitly asks you to remember is durable. Signal words include 记住, 以后, 总是, 每次, 不要, 别再, remember, from now on, always, never, prefer.
 
@@ -509,7 +521,7 @@ func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn, existin
 	batch := memory.BatchArgs{Workdir: turn.Workdir, ConversationID: turn.SessionID, Trigger: "extraction", Model: turn.Model}
 	known := make(map[string]bool, len(existing))
 	for _, e := range existing {
-		known[e.Slug] = true
+		known[e.Scope+"/"+e.Slug] = true
 	}
 	for _, d := range decisions {
 		if d.Op == "append_daily" {
@@ -524,7 +536,15 @@ func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn, existin
 		if d.Scope == "project" && strings.TrimSpace(turn.Workdir) == "" {
 			continue
 		}
-		if d.Op == "upsert" && !known[d.Slug] && !strongNewMemory(d.Evidence) {
+		scope := d.Scope
+		if scope == "" {
+			// ApplyBatch's default scope.
+			scope = "project"
+			if strings.TrimSpace(turn.Workdir) == "" {
+				scope = "global"
+			}
+		}
+		if d.Op == "upsert" && !known[scope+"/"+d.Slug] && !strongNewMemory(d.Evidence) {
 			logf("memory extraction %s: skipped weak new memory %s", turn.SessionID, d.Slug)
 			continue
 		}
