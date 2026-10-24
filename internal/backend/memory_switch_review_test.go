@@ -3,7 +3,6 @@ package backend
 import (
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +22,7 @@ func TestReviewMemorySwitchPutSequences(t *testing.T) {
 		if strings.Contains(string(data), `"memory"`) {
 			t.Fatalf("config.json carries the memory key:\n%s", data)
 		}
-		_, err = os.Stat(filepath.Join(filepath.Dir(f.configPath), "memory-switch.json"))
+		_, err = os.Stat(f.configPath + ".memory-switch.json")
 		return err == nil
 	}
 	f.setEnabled(t, true)

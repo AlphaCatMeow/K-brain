@@ -14,7 +14,7 @@ func TestReviewMemorySwitchSaveLoadRoundTrips(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LIVEAGENT_HOME", home)
 	p := filepath.Join(home, "config.json")
-	side := filepath.Join(home, memorySwitchFileName)
+	side := memorySwitchPath(filepath.Join(home, "config.json"))
 	read := func() string {
 		t.Helper()
 		data, err := os.ReadFile(p)

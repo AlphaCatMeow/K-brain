@@ -169,7 +169,7 @@ type Config struct {
 
 	Browser BrowserConfig `json:"browser,omitzero"`
 
-	// Memory is persisted in memorySwitchFileName, never in config.json; the key is still
+	// Memory is persisted in the memorySwitchSuffix file, never in config.json; the key is still
 	// read so values written by earlier builds of the switch carry over.
 	Memory MemoryConfig `json:"memory,omitzero"`
 

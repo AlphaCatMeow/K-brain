@@ -3,7 +3,6 @@ package backend
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,7 +42,7 @@ func TestMemorySwitchOnLeavesConfigReadableByOlderReleases(t *testing.T) {
 	if raw, ok := topLevel()["memory"]; ok {
 		t.Fatalf("memory off wrote %s; older releases would refuse this config", raw)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(f.configPath), "memory-switch.json")); err != nil {
+	if _, err := os.Stat(f.configPath + ".memory-switch.json"); err != nil {
 		t.Fatalf("memory off left no switch file: %v", err)
 	}
 	cfg, err := config.LoadFile(f.configPath)

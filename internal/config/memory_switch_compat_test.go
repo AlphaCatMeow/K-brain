@@ -10,6 +10,8 @@ import (
 // Releases without the memory switch decode config.json with DisallowUnknownFields and
 // refuse to start on a "memory" key, so the switch must never be written there.
 func TestMemoryConfigNeverWrittenToConfigJSON(t *testing.T) {
+	// The load and save logs resolve the data root; keep them out of the real one.
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	on, off := true, false
 	for _, enabled := range []*bool{nil, &on, &off} {
 		data, err := marshalConfig(&Config{Memory: MemoryConfig{Enabled: enabled}, allowEmptySave: true})
@@ -23,9 +25,11 @@ func TestMemoryConfigNeverWrittenToConfigJSON(t *testing.T) {
 }
 
 func TestMemorySwitchFileHoldsOnlyTheOffState(t *testing.T) {
+	// The load and save logs resolve the data root; keep them out of the real one.
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
-	side := filepath.Join(dir, memorySwitchFileName)
+	side := memorySwitchPath(filepath.Join(dir, "config.json"))
 	off := false
 	cfg := &Config{Memory: MemoryConfig{Enabled: &off}, allowEmptySave: true}
 	if err := cfg.SaveFile(p); err != nil {
@@ -57,6 +61,8 @@ func TestMemorySwitchFileHoldsOnlyTheOffState(t *testing.T) {
 // Builds of this branch before the side file wrote "memory" into config.json; that value
 // still counts and moves to the side file on the next save.
 func TestMemorySwitchMigratesLegacyConfigValue(t *testing.T) {
+	// The load and save logs resolve the data root; keep them out of the real one.
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(p, []byte(`{"memory":{"enabled":false}}`), 0o600); err != nil {
@@ -87,12 +93,14 @@ func TestMemorySwitchMigratesLegacyConfigValue(t *testing.T) {
 
 // The switch file exists only while memory is off, so a damaged one still means off.
 func TestMemorySwitchDamagedFileStaysOff(t *testing.T) {
+	// The load and save logs resolve the data root; keep them out of the real one.
+	t.Setenv("LIVEAGENT_HOME", t.TempDir())
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, memorySwitchFileName), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(memorySwitchPath(filepath.Join(dir, "config.json")), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := LoadFile(p)
@@ -129,7 +137,7 @@ func TestMemorySwitchSurvivesLoadRecoveryPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := os.WriteFile(filepath.Join(home, memorySwitchFileName), []byte(`{"enabled":false}`), 0o600); err != nil {
+		if err := os.WriteFile(memorySwitchPath(filepath.Join(home, "config.json")), []byte(`{"enabled":false}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		cfg, err := Load()

@@ -6,27 +6,27 @@ import (
 	"path/filepath"
 )
 
-// memorySwitchFileName keeps the memory switch beside config.json. Releases without the
-// switch decode config.json with DisallowUnknownFields and refuse to start on a "memory"
-// key; they never read this file, so rolling back runs with memory on and still starts.
-// The file exists only while memory is off.
-const memorySwitchFileName = "memory-switch.json"
+// memorySwitchSuffix names the file beside each config file that keeps its memory switch,
+// like the ".bak" and ".live-mcp.json" companions. Releases without the switch decode
+// config.json with DisallowUnknownFields and refuse to start on a "memory" key; they never
+// read this file, so rolling back runs with memory on and still starts. The file exists
+// only while memory is off.
+const memorySwitchSuffix = ".memory-switch.json"
 
-func memorySwitchPath(configPath string) string {
-	return filepath.Join(filepath.Dir(configPath), memorySwitchFileName)
-}
+func memorySwitchPath(configPath string) string { return configPath + memorySwitchSuffix }
 
 // loadMemorySwitch applies the switch file. Without one, a "memory" value left in
 // config.json by earlier builds of the switch still counts and moves here on the next save.
 func (c *Config) loadMemorySwitch(configPath string) {
 	data, err := os.ReadFile(memorySwitchPath(configPath))
-	if err != nil {
+	if os.IsNotExist(err) {
 		return
 	}
 	var m MemoryConfig
-	if err := json.Unmarshal(data, &m); err != nil || m.Enabled == nil {
-		// Only an off switch is ever written, so a damaged file still means off.
-		logf("config.load", "unreadable %s, keeping memory off", memorySwitchFileName)
+	if err != nil || json.Unmarshal(data, &m) != nil || m.Enabled == nil {
+		// Only an off switch is ever written, so a file that exists but cannot be read
+		// (locked by another process, damaged) still means off.
+		logf("config.load", "unreadable memory switch file, keeping memory off")
 		off := false
 		m.Enabled = &off
 	}
