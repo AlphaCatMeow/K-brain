@@ -119,6 +119,9 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	if strings.TrimSpace(turn.User.TextContent()) == "" || isAcknowledgement(turn.User.TextContent()) || r.extraction == "" {
 		return
 	}
+	// The backend cancels the run's context as soon as the run returns, right
+	// after this call; extraction outlives the run and stops only on Close.
+	parent = context.WithoutCancel(parent)
 	key := turn.SessionID
 	if key == "" {
 		key = "global"

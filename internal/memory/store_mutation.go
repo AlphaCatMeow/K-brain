@@ -361,15 +361,11 @@ func (s *Store) acceptLocked(args ReadArgs) (MutationResponse, error) {
 		return MutationResponse{}, err
 	}
 	reviewed := false
-	var evidence *Evidence
-	if e.Confidence == "high" || e.Confidence == "medium" || e.Confidence == "low" {
-		evidence = &Evidence{Confidence: e.Confidence}
-	}
 	workdir := e.WorkdirPath
 	if args.Workdir != "" {
 		workdir = args.Workdir
 	}
-	r, err := s.writeLocked(WriteArgs{Slug: e.Slug, Scope: e.Scope, Workdir: workdir, MemoryType: e.MemoryType, Description: e.Description, Body: e.body, Actor: "accept", Evidence: evidence, Unreviewed: &reviewed})
+	r, err := s.writeLocked(WriteArgs{Slug: e.Slug, Scope: e.Scope, Workdir: workdir, MemoryType: e.MemoryType, Description: e.Description, Body: e.body, Actor: "accept", Unreviewed: &reviewed}) // nil Evidence keeps the stored evidence
 	if err != nil {
 		return MutationResponse{}, err
 	}
