@@ -58,3 +58,15 @@ func (s *Store) TakeUnjudged(session string) ([]UnjudgedMessage, error) {
 	delete(state.Unjudged, session)
 	return held, s.saveState(state)
 }
+
+// DropUnjudged forgets a session's held messages, for a deleted session.
+func (s *Store) DropUnjudged(session string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.state()
+	if err != nil || len(state.Unjudged[session]) == 0 {
+		return err
+	}
+	delete(state.Unjudged, session)
+	return s.saveState(state)
+}

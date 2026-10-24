@@ -186,8 +186,8 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	c.last = now
 	ctx, cancel := context.WithCancel(parent)
 	c.cancel = cancel
-	r.mu.Unlock()
 	c.inflight = judge
+	r.mu.Unlock()
 	go r.extract(ctx, key, pending, judge)
 }
 
@@ -212,12 +212,16 @@ func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message) {
 	}
 }
 
+// maxJudgedRunes is how much of a user message the extraction prompt shows,
+// and so all that a held message needs to keep.
+const maxJudgedRunes = 2000
+
 // hold persists user messages that still need judging.
 func (r *Runtime) hold(key string, msgs []ai.Message) {
 	var held []memory.UnjudgedMessage
 	for _, m := range msgs {
 		if text := strings.TrimSpace(m.TextContent()); m.ID != "" && text != "" {
-			held = append(held, memory.UnjudgedMessage{ID: m.ID, Text: text})
+			held = append(held, memory.UnjudgedMessage{ID: m.ID, Text: truncateRunes(text, maxJudgedRunes)})
 		}
 	}
 	if err := r.store.HoldUnjudged(key, held); err != nil {
@@ -263,8 +267,8 @@ func (r *Runtime) startPending(key string) {
 	c.last = r.now()
 	ctx, cancel := context.WithCancel(c.parent)
 	c.cancel = cancel
-	r.mu.Unlock()
 	c.inflight = judge
+	r.mu.Unlock()
 	go r.extract(ctx, key, pending, judge)
 }
 
@@ -391,7 +395,7 @@ func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta, judge []a
 	judged := make(map[string]bool, len(judge))
 	latest := make([]string, 0, len(judge))
 	for _, m := range judge {
-		text := truncateRunes(m.TextContent(), 2000)
+		text := truncateRunes(m.TextContent(), maxJudgedRunes)
 		judged[text] = true
 		latest = append(latest, text)
 	}

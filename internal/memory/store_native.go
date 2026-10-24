@@ -111,6 +111,7 @@ func (s *Store) WipeAll() (map[string]any, error) {
 		return nil, stateErr
 	}
 	state.Runs = nil
+	state.Unjudged = nil
 	state.OrganizerEpoch++
 	if err := s.saveState(state); err != nil {
 		return nil, err

@@ -244,6 +244,12 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 				delete(s.sessions, id)
 			}
 			s.mu.Unlock()
+			// Its held user messages would otherwise stay in the memory state.
+			if s.memoryStore != nil {
+				if err := s.memoryStore.DropUnjudged(id); err != nil {
+					log.Printf("memory: forget deleted session %s: %v", id, err)
+				}
+			}
 			// Loops bound to the conversation would otherwise fail on every tick.
 			if s.cron != nil {
 				tasks := s.cron.store.snapshot().Tasks
