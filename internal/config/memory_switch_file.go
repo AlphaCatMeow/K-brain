@@ -22,27 +22,54 @@ func (c *Config) loadMemorySwitch(configPath string) {
 	if os.IsNotExist(err) {
 		return
 	}
-	var m MemoryConfig
-	if err != nil || json.Unmarshal(data, &m) != nil || m.Enabled == nil {
-		// Only an off switch is ever written, so a file that exists but cannot be read
-		// (locked by another process, damaged) still means off.
+	m, ok := decodeMemorySwitch(data, err)
+	if !ok {
 		logf("config.load", "unreadable memory switch file, keeping memory off")
-		off := false
-		m.Enabled = &off
 	}
 	c.Memory = m
 }
 
-// saveMemorySwitch writes the switch file for off and removes it for on. The returned
-// restore puts the previous file back when the config.json write that follows fails.
+// decodeMemorySwitch reads a switch file that exists. Only an off switch is ever written,
+// so a file that cannot be read (locked by another process, damaged) still means off.
+func decodeMemorySwitch(data []byte, readErr error) (MemoryConfig, bool) {
+	var m MemoryConfig
+	if readErr == nil && json.Unmarshal(data, &m) == nil && m.Enabled != nil {
+		return m, true
+	}
+	off := false
+	return MemoryConfig{Enabled: &off}, false
+}
+
+// saveMemorySwitch writes the switch file for off and removes it for on, leaving it alone
+// when the value is unchanged so a file held by another process cannot block unrelated
+// saves. The returned restore puts the previous state back when the config.json write
+// that follows fails.
 func saveMemorySwitch(configPath string, m MemoryConfig) (restore func(), err error) {
 	p := memorySwitchPath(configPath)
 	previous, readErr := os.ReadFile(p)
+	existed := !os.IsNotExist(readErr)
+	wasOff := false
+	if existed {
+		current, _ := decodeMemorySwitch(previous, readErr)
+		wasOff = !current.IsEnabled()
+	}
+	off, err := json.MarshalIndent(MemoryConfig{Enabled: new(bool)}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	unchanged := func() {}
+	if m.IsEnabled() && !existed || !m.IsEnabled() && wasOff {
+		return unchanged, nil
+	}
 	restore = func() {
-		if readErr == nil {
-			_ = writeMemorySwitch(p, previous)
-		} else if os.IsNotExist(readErr) {
+		switch {
+		case !existed:
 			_ = os.Remove(p)
+		case readErr == nil:
+			_ = writeMemorySwitch(p, previous)
+		default:
+			// The unreadable file meant off; put that state back.
+			_ = writeMemorySwitch(p, off)
 		}
 	}
 	if m.IsEnabled() {
@@ -51,11 +78,7 @@ func saveMemorySwitch(configPath string, m MemoryConfig) (restore func(), err er
 		}
 		return restore, nil
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	if err := writeMemorySwitch(p, data); err != nil {
+	if err := writeMemorySwitch(p, off); err != nil {
 		return nil, err
 	}
 	return restore, nil
