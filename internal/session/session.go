@@ -22,13 +22,15 @@ var ErrNotFound = errors.New("session not found")
 var ErrClosed = errors.New("session store is closed")
 
 type Meta struct {
-	CreatedAt       time.Time `json:"-"`
-	ID              string    `json:"id"`
-	Title           string    `json:"title"`
-	Model           string    `json:"model"`
-	Provider        string    `json:"provider"`
-	CWD             string    `json:"cwd"`
-	Goal            string    `json:"goal"`
+	CreatedAt time.Time `json:"-"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Model     string    `json:"model"`
+	Provider  string    `json:"provider"`
+	CWD       string    `json:"cwd"`
+	Goal      string    `json:"goal"`
+	// GoalMemoryOff records that the goal text was written while memory was off.
+	GoalMemoryOff   bool      `json:"goal_memory_off,omitempty"`
 	ForkedFrom      string    `json:"forked_from"`
 	ForkSeq         int       `json:"fork_seq"`
 	Tags            []string  `json:"tags"`

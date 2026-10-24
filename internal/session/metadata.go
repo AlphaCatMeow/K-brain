@@ -20,7 +20,21 @@ func metaBefore(a, b Meta) bool {
 }
 
 func (s *Store) SetGoal(id, goal string) error {
-	return s.update(id, func(d *sessionData) error { d.Meta.Goal = goal; return nil })
+	return s.update(id, func(d *sessionData) error {
+		d.Meta.Goal = goal
+		if goal == "" {
+			d.Meta.GoalMemoryOff = false
+		}
+		return nil
+	})
+}
+
+// SetGoalMemory stores the goal with whether its text was written while memory was off.
+func (s *Store) SetGoalMemory(id, goal string, memoryOff bool) error {
+	return s.update(id, func(d *sessionData) error {
+		d.Meta.Goal, d.Meta.GoalMemoryOff = goal, memoryOff && goal != ""
+		return nil
+	})
 }
 func (s *Store) SetTodos(id, todos string) error {
 	return s.update(id, func(d *sessionData) error { d.Todos = todos; return nil })
