@@ -163,6 +163,11 @@ func (s *Store) writeLockedReview(args WriteArgs, allowDaily bool) (MutationResp
 	if err != nil {
 		return MutationResponse{}, err
 	}
+	if args.Scope == "global" {
+		// Hosts pass the current workspace even for global entries; it must
+		// not turn an existing global entry into a new one.
+		hash = ""
+	}
 	e := storedEntry{Meta: Meta{Slug: args.Slug, Scope: args.Scope, WorkdirHash: hash, MemoryType: args.MemoryType, Description: args.Description, Headline: args.Description, Unreviewed: true, CreatedAt: now, UpdatedAt: now}, body: args.Body, source: map[string]any{"trigger": args.Actor, "conversationId": args.ConversationID, "model": args.Model, "actor": args.Actor}}
 	if args.Unreviewed != nil {
 		e.Unreviewed = *args.Unreviewed
