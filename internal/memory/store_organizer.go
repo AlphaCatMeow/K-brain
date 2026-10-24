@@ -6,15 +6,11 @@ import (
 	"time"
 )
 
-// WipeEpoch returns how many times memory was wiped.
-func (s *Store) WipeEpoch() (uint64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, err := s.state()
-	if err != nil {
-		return 0, err
-	}
-	return state.WipeEpoch, nil
+// WipeEpoch returns how many times memory was wiped. It reads the in-process
+// counter, so it cannot fail; a wipe by another process sharing the root is
+// not seen.
+func (s *Store) WipeEpoch() uint64 {
+	return s.wipes.n.Load()
 }
 
 // OrganizerEpoch returns the current reset generation. A run from an older

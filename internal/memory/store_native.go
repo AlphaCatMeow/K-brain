@@ -117,6 +117,7 @@ func (s *Store) WipeAll() (map[string]any, error) {
 	if err := s.saveState(state); err != nil {
 		return nil, err
 	}
+	s.wipes.n.Store(state.WipeEpoch)
 	return map[string]any{"root": s.root, "isFresh": true, "isInCloud": false, "cloudProvider": nil, "organizerEpoch": state.OrganizerEpoch}, nil
 }
 
