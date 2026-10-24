@@ -62,6 +62,9 @@ type claim struct {
 	// inflight holds the messages of the running extraction, kept by Close
 	// so a cancelled extraction never writes after it.
 	inflight []ai.Message
+	// The store's wipe epoch when unjudged was first queued and when the
+	// running extraction started: a wipe in between discards them.
+	unjudgedEpoch, inflightEpoch uint64
 }
 
 func New(cfg Config) (*Runtime, error) {
@@ -167,6 +170,9 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	}
 	c.pending = &turn
 	c.parent = parent
+	if len(c.unjudged) == 0 {
+		c.unjudgedEpoch = r.epoch()
+	}
 	c.unjudged = append(c.unjudged, add...)
 	now := r.now()
 	if c.cancel != nil {
@@ -186,9 +192,10 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	c.last = now
 	ctx, cancel := context.WithCancel(parent)
 	c.cancel = cancel
-	c.inflight = judge
+	c.inflight, c.inflightEpoch = judge, c.unjudgedEpoch
+	epoch := c.unjudgedEpoch
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending, judge)
+	go r.extract(ctx, key, pending, judge, epoch)
 }
 
 // Abandoned keeps the user message of a stopped or failed turn for the
@@ -198,17 +205,26 @@ func (r *Runtime) Abandoned(sessionID string, user ai.Message) {
 	if sessionID == "" {
 		sessionID = "global"
 	}
-	r.hold(sessionID, []ai.Message{user})
+	r.hold(sessionID, []ai.Message{user}, r.epoch())
+}
+
+// epoch is the store's current wipe generation.
+func (r *Runtime) epoch() uint64 {
+	epoch, err := r.store.OrganizerEpoch()
+	if err != nil {
+		logf("memory extraction: read wipe epoch: %s", describeExtractionError(err))
+	}
+	return epoch
 }
 
 // holdUnlessClosed keeps messages of a failed extraction; after Close they
 // were already kept and the runtime must not write again.
-func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message) {
+func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message, epoch uint64) {
 	r.mu.Lock()
 	closed := r.closed
 	r.mu.Unlock()
 	if !closed {
-		r.hold(key, msgs)
+		r.hold(key, msgs, epoch)
 	}
 }
 
@@ -216,15 +232,20 @@ func (r *Runtime) holdUnlessClosed(key string, msgs []ai.Message) {
 // and so all that a held message needs to keep.
 const maxJudgedRunes = 2000
 
+// judgedText is the form of a user message the extractor judges and holds.
+func judgedText(m ai.Message) string {
+	return truncateRunes(strings.TrimSpace(m.TextContent()), maxJudgedRunes)
+}
+
 // hold persists user messages that still need judging.
-func (r *Runtime) hold(key string, msgs []ai.Message) {
+func (r *Runtime) hold(key string, msgs []ai.Message, epoch uint64) {
 	var held []memory.UnjudgedMessage
 	for _, m := range msgs {
-		if text := strings.TrimSpace(m.TextContent()); m.ID != "" && text != "" {
-			held = append(held, memory.UnjudgedMessage{ID: m.ID, Text: truncateRunes(text, maxJudgedRunes)})
+		if text := judgedText(m); m.ID != "" && text != "" {
+			held = append(held, memory.UnjudgedMessage{ID: m.ID, Text: text})
 		}
 	}
-	if err := r.store.HoldUnjudged(key, held); err != nil {
+	if err := r.store.HoldUnjudged(key, epoch, held); err != nil {
 		logf("memory extraction %s: hold unjudged messages: %s", key, describeExtractionError(err))
 	}
 }
@@ -267,12 +288,13 @@ func (r *Runtime) startPending(key string) {
 	c.last = r.now()
 	ctx, cancel := context.WithCancel(c.parent)
 	c.cancel = cancel
-	c.inflight = judge
+	c.inflight, c.inflightEpoch = judge, c.unjudgedEpoch
+	epoch := c.unjudgedEpoch
 	r.mu.Unlock()
-	go r.extract(ctx, key, pending, judge)
+	go r.extract(ctx, key, pending, judge, epoch)
 }
 
-func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message) {
+func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message, epoch uint64) {
 	defer func() { r.finishClaim(key) }()
 	existing := r.existingMemory(turn.Workdir)
 	messages := extractionMessages(turn, existing, judge)
@@ -285,7 +307,7 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 			logf("memory extraction %s: %s", key, describeExtractionError(err))
 		}
 		// Not judged: keep the messages for the next completed turn.
-		r.holdUnlessClosed(key, judge)
+		r.holdUnlessClosed(key, judge, epoch)
 		return
 	}
 	if plan == nil || len(plan.Decisions) == 0 {
@@ -295,10 +317,15 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	if !ok || ctx.Err() != nil {
 		return
 	}
+	if r.epoch() != epoch {
+		// Memory was wiped while this turn was being judged.
+		logf("memory extraction %s: memory wiped during extraction; plan dropped", key)
+		return
+	}
 	result, err := r.store.ApplyBatch(batch)
 	if err != nil {
 		logf("memory extraction %s: apply batch: %s", key, describeExtractionError(err))
-		r.holdUnlessClosed(key, judge)
+		r.holdUnlessClosed(key, judge, epoch)
 		return
 	}
 	for _, warning := range result.WarningDetails {
@@ -392,10 +419,14 @@ func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta, judge []a
 	if len(judge) == 0 {
 		judge = []ai.Message{turn.User}
 	}
+	judgedIDs := make(map[string]bool, len(judge))
 	judged := make(map[string]bool, len(judge))
 	latest := make([]string, 0, len(judge))
 	for _, m := range judge {
-		text := truncateRunes(m.TextContent(), maxJudgedRunes)
+		text := judgedText(m)
+		if m.ID != "" {
+			judgedIDs[m.ID] = true
+		}
 		judged[text] = true
 		latest = append(latest, text)
 	}
@@ -404,8 +435,8 @@ func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta, judge []a
 		if turn.History[i].Role != "user" {
 			continue
 		}
-		text := truncateRunes(turn.History[i].TextContent(), 2000)
-		if judged[text] {
+		text := judgedText(turn.History[i])
+		if judgedIDs[turn.History[i].ID] || judged[text] {
 			continue
 		}
 		earlier = append(earlier, text)
@@ -715,7 +746,12 @@ func truncateRunes(s string, n int) string {
 func (r *Runtime) Close() error {
 	r.mu.Lock()
 	r.closed = true
-	queued := map[string][]ai.Message{}
+	type kept struct {
+		key   string
+		msgs  []ai.Message
+		epoch uint64
+	}
+	var queued []kept
 	for key, c := range r.claims {
 		if c.cancel != nil {
 			c.cancel()
@@ -724,14 +760,17 @@ func (r *Runtime) Close() error {
 			c.timer.Stop()
 		}
 		// Queued or still running: keep them for the session's next runtime.
-		if msgs := append(append([]ai.Message(nil), c.inflight...), c.unjudged...); len(msgs) > 0 {
-			queued[key] = msgs
+		if len(c.inflight) > 0 {
+			queued = append(queued, kept{key, c.inflight, c.inflightEpoch})
+		}
+		if len(c.unjudged) > 0 {
+			queued = append(queued, kept{key, c.unjudged, c.unjudgedEpoch})
 		}
 		c.unjudged, c.inflight = nil, nil
 	}
 	r.mu.Unlock()
-	for key, msgs := range queued {
-		r.hold(key, msgs)
+	for _, k := range queued {
+		r.hold(k.key, k.msgs, k.epoch)
 	}
 	return nil
 }
