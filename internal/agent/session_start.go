@@ -48,6 +48,11 @@ func (a *Agent) RefreshMemory() {
 		return
 	}
 	block := memory.PromptBlock(memory.Installation(), memory.Session(a.SessionIDValue()))
+	if a.markdownMemoryReadOnly {
+		// Installation entries were imported into the runtime store; session
+		// notes stay with the conversation that wrote them.
+		block = memory.ReadOnlyPromptBlock(memory.Session(a.SessionIDValue()))
+	}
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
 	a.memoryBlock = block

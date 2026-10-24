@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -471,9 +472,12 @@ func startBackendProcessWithEnv(t *testing.T, binary, listen, configPath, sessio
 	}
 	cmdArgs := append([]string{"backend", "-listen", listen, "-config", configPath, "-session-dir", sessionDir}, args...)
 	cmd := exec.Command(binary, cmdArgs...)
-	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
+	// Without an explicit data root the backend would open, and migrate, the
+	// developer's real ~/.liveagent.
+	if os.Getenv("LIVEAGENT_HOME") == "" && !slices.ContainsFunc(env, func(v string) bool { return strings.HasPrefix(v, "LIVEAGENT_HOME=") }) {
+		env = append(env, "LIVEAGENT_HOME="+t.TempDir())
 	}
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = stdinReader
 	cmd.Stdout = output
 	cmd.Stderr = output

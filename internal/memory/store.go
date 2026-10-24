@@ -13,17 +13,29 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/config"
 )
 
 type Store struct {
-	root string
-	mu   *sync.Mutex
+	root  string
+	mu    *sync.Mutex
+	wipes *wipeCounter
 }
 
 var storeLocks sync.Map
+
+// wipeCounter is a root's WipeEpoch kept in memory, so reading it cannot
+// fail: a failed state read must never look like, or hide, a wipe. It is
+// loaded once per root and moves with every WipeAll in this process.
+type wipeCounter struct {
+	once sync.Once
+	n    atomic.Uint64
+}
+
+var storeWipes sync.Map
 
 type storedEntry struct {
 	Meta
@@ -57,7 +69,15 @@ func OpenStore(root string) (*Store, error) {
 		return nil, err
 	}
 	lock, _ := storeLocks.LoadOrStore(root, &sync.Mutex{})
-	s := &Store{root: root, mu: lock.(*sync.Mutex)}
+	wipes, _ := storeWipes.LoadOrStore(root, &wipeCounter{})
+	s := &Store{root: root, mu: lock.(*sync.Mutex), wipes: wipes.(*wipeCounter)}
+	s.wipes.once.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if state, err := s.state(); err == nil {
+			s.wipes.n.Store(state.WipeEpoch)
+		}
+	})
 	s.migrateLegacyProjectsOnce()
 	return s, nil
 }

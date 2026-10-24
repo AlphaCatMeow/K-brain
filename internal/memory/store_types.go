@@ -118,6 +118,8 @@ type UpdateArgs struct {
 	ConversationID string    `json:"conversationId,omitempty"`
 	Model          string    `json:"model,omitempty"`
 	Evidence       *Evidence `json:"evidence,omitempty"`
+	// Unreviewed is set by internal callers only (hidden extraction).
+	Unreviewed *bool `json:"-"`
 }
 type DeleteArgs struct {
 	ReadArgs
@@ -232,6 +234,20 @@ type storeState struct {
 	Runs           []OrganizeRun     `json:"runs"`
 	Audit          []json.RawMessage `json:"audit"`
 	OrganizerEpoch uint64            `json:"organizerEpoch,omitempty"`
+	// WipeEpoch counts WipeAll calls only: memory text read before a wipe is
+	// discarded rather than written back.
+	WipeEpoch uint64 `json:"wipeEpoch,omitempty"`
+	// MarkdownImported records that the one-time memory.md import finished;
+	// later edits to memory.md belong to the hosts that still use it.
+	MarkdownImported bool `json:"markdownImported,omitempty"`
+	// MarkdownImports lists memory.md entry hashes already imported, so a
+	// deletion in the store sticks. MarkdownPending holds the hash claimed for a
+	// write that has not been confirmed yet.
+	MarkdownImports []string `json:"markdownImports,omitempty"`
+	MarkdownPending []string `json:"markdownPending,omitempty"`
+	// Unjudged holds, per session, user messages the hidden extractor still
+	// has to judge (stopped or failed turns, unfinished extractions).
+	Unjudged map[string][]UnjudgedMessage `json:"unjudged,omitempty"`
 }
 
 type StoreError struct {

@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// WipeEpoch returns how many times memory was wiped. It reads the in-process
+// counter, so it cannot fail; a wipe by another process sharing the root is
+// not seen.
+func (s *Store) WipeEpoch() uint64 {
+	return s.wipes.n.Load()
+}
+
 // OrganizerEpoch returns the current reset generation. A run from an older
 // generation cannot be recreated after history or memory has been cleared.
 func (s *Store) OrganizerEpoch() (uint64, error) {

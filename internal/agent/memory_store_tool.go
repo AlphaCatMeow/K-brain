@@ -11,10 +11,27 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
+// memoryManagerSchema spells out the store's argument names: with an untyped
+// args object models guess key/content/"global/user" and fail repeatedly.
+const memoryManagerSchema = `{"type":"object","properties":{` +
+	`"operation":{"type":"string","enum":["list","read","search","write","update","delete","accept"]},` +
+	`"args":{"type":"object","properties":{` +
+	`"slug":{"type":"string","description":"Stable kebab-case id, e.g. user-reply-language"},` +
+	`"scope":{"type":"string","enum":["global","project"],"description":"global for facts about the user; project for this workspace only"},` +
+	`"memoryType":{"type":"string","enum":["user","feedback","project","reference"]},` +
+	`"description":{"type":"string","description":"One-line summary, at most 120 characters"},` +
+	`"body":{"type":"string","description":"The memory content"},` +
+	`"mode":{"type":"string","enum":["replace","append","merge"],"description":"update only"},` +
+	`"query":{"type":"string","description":"search only"},` +
+	`"limit":{"type":"integer","minimum":1},` +
+	`"reason":{"type":"string","description":"delete only"},` +
+	`"evidence":{"type":"object","properties":{"confidence":{"type":"string","enum":["high","medium","low"]},"sourceQuote":{"type":"string","description":"The user's own words"},"reasoning":{"type":"string"}}}` +
+	`}}},"required":["operation"]}`
+
 // memoryStoreTool exposes the bounded Markdown memory manager to an agent.
 func memoryStoreTool(a *Agent) tools.Tool {
 	return tools.Tool{
-		Def: ai.NewTool("memory_manager", "Manage durable LiveAgent-compatible memory for the current project. Use list, read, search, write, update, delete, or accept.", `{"type":"object","properties":{"operation":{"type":"string","enum":["list","read","search","write","update","delete","accept"]},"args":{"type":"object"}},"required":["operation"]}`),
+		Def: ai.NewTool("memory_manager", "Manage durable LiveAgent-compatible memory for the current project. Use list, read, search, write, update, delete, or accept. Write needs slug, scope, memoryType, description and body; read, update, delete and accept need slug and scope; search needs query.", memoryManagerSchema),
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var in struct {
 				Operation string          `json:"operation"`
