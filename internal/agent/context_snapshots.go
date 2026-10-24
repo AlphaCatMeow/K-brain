@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
@@ -30,17 +29,15 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 		// Retract memory that earlier turns carried; history keeps its snapshots for cache
 		// stability, so a newer snapshot must say they no longer apply. One notice is enough.
 		notice := memoryOffNotice
-		noticed := false
 		for _, source := range []string{savedMemorySource, runtimeMemorySource} {
-			previous, exists := retainedSnapshot(a.Messages, source)
-			noticed = noticed || (exists && previous == memoryOffNotice)
-			if exists && previous != memoryOffNotice && previous != "" {
+			if previous, exists := retainedSnapshot(a.Messages, source); exists && previous != memoryOffNotice && previous != "" {
 				snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: notice})
 				notice = ""
 			}
 		}
-		// A session that never carried memory still needs the instruction once.
-		if notice != "" && !noticed {
+		// A session that never carried memory, or whose last instruction was "on again",
+		// still needs the off instruction once.
+		if notice != "" && lastMemorySwitchInstruction(a.Messages) != memoryOffNotice {
 			snapshots = append(snapshots, ai.PromptSnapshot{Source: runtimeMemorySource, Text: notice})
 		}
 		return append(snapshots, MemoryOffSnapshot())
@@ -68,17 +65,25 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 		}
 		snapshots = append(snapshots, current)
 	}
-	// Without a memory runtime nothing above replaces the off instruction once memory is
-	// back on, so lift it explicitly.
-	for _, source := range []string{savedMemorySource, runtimeMemorySource} {
-		if slices.ContainsFunc(snapshots, func(s ai.PromptSnapshot) bool { return s.Source == source }) {
-			continue
-		}
-		if previous, exists := retainedSnapshot(a.Messages, source); exists && previous == memoryOffNotice {
-			snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: memoryOnNotice})
-		}
+	// Re-injected memory does not lift the off instruction, so say it once on a source of
+	// its own; the memory sources keep deduplicating against their own blocks.
+	if lastMemorySwitchInstruction(a.Messages) == memoryOffNotice {
+		snapshots = append(snapshots, ai.PromptSnapshot{Source: memorySwitchSource, Text: memoryOnNotice})
 	}
 	return snapshots
+}
+
+// lastMemorySwitchInstruction is the newest off or on-again instruction in History.
+func lastMemorySwitchInstruction(messages []ai.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		snapshots := messages[i].PromptSnapshots
+		for j := len(snapshots) - 1; j >= 0; j-- {
+			if text := snapshots[j].Text; text == memoryOffNotice || text == memoryOnNotice {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func retainedSnapshot(messages []ai.Message, source string) (string, bool) {
