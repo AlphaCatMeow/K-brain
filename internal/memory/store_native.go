@@ -112,7 +112,9 @@ func (s *Store) WipeAll() (map[string]any, error) {
 	}
 	state.Runs = nil
 	state.Unjudged = nil
-	state.WipeEpoch++
+	// Past both the counter and the stored value, so a stored value that was
+	// reset (a state write after a failed read) cannot repeat an old epoch.
+	state.WipeEpoch = max(state.WipeEpoch, s.wipes.n.Load()) + 1
 	state.OrganizerEpoch++
 	if err := s.saveState(state); err != nil {
 		return nil, err
