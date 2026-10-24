@@ -748,7 +748,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 			a.compacted = false
 			if a.memoryRuntime != nil && a.MemoryEnabled() {
 				memoryReported = true
-				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
+				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: withoutMemoryOffTurns(a.MessagesSnapshot())})
 			}
 			return msg.Content, nil
 		}

@@ -49,7 +49,7 @@ func TestToolAvailabilityAppliesMemorySwitch(t *testing.T) {
 	memoryTools := func(a *agent.Agent) []string {
 		var names []string
 		for _, tool := range a.AllTools() {
-			if agent.IsMemoryTool(tool.Def.Function.Name) {
+			if tool.Memory {
 				names = append(names, tool.Def.Function.Name)
 			}
 		}

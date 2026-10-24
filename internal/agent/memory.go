@@ -50,6 +50,7 @@ func memoryTools(a *Agent) []tools.Tool {
 	}
 	scopeProp := `"scope":{"type":"string","enum":["installation","session"],"description":"installation (default) = every session, remembers facts about the user; session = notes for this conversation only"}`
 	remember := tools.Tool{
+		Memory: true,
 		Def: ai.NewTool("remember",
 			"Save a durable fact as one bullet in a markdown memory file that is injected back into your context every turn. Use it when the user shares a lasting preference or fact about themselves (scope=installation), or to leave a note for this conversation (scope=session). Phrase it as a standalone statement. The files are plain markdown the user can edit directly — keep entries short.",
 			`{"type":"object","properties":{"text":{"type":"string","description":"The fact, phrased to stand on its own"},`+scopeProp+`},"required":["text"]}`),
@@ -72,6 +73,7 @@ func memoryTools(a *Agent) []tools.Tool {
 		},
 	}
 	forget := tools.Tool{
+		Memory: true,
 		Def: ai.NewTool("forget",
 			"Mark a saved memory entry done by its number (entries are numbered in the memory block of your context). Use it when a fact is stale or the user asks you to stop remembering something.",
 			`{"type":"object","properties":{"n":{"type":"number","description":"The entry number"},`+scopeProp+`},"required":["n"]}`),

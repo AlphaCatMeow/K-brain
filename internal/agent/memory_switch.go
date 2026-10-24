@@ -1,15 +1,19 @@
 package agent
 
-import "github.com/Stack-Cairn/K-brain/internal/tools"
+import (
+	"slices"
 
-const memoryOffNotice = "\n\n<memory>Memory is turned off. Earlier saved-memory and memory index snapshots no longer apply; do not rely on them.</memory>"
+	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/tools"
+)
 
-// memoryToolNames are the agent-facing memory tools: remember/forget (memory.md) and
-// memory_manager (registered by the agent and, with the same name, by MemoryRuntime).
-var memoryToolNames = map[string]bool{"remember": true, "forget": true, "memory_manager": true}
-
-// IsMemoryTool reports whether name is a memory tool the memory switch hides.
-func IsMemoryTool(name string) bool { return memoryToolNames[name] }
+const (
+	memoryOffNotice = "\n\n<memory>Memory is turned off. Earlier saved-memory and memory index snapshots no longer apply; do not rely on them.</memory>"
+	// memoryOffSource marks, with an empty snapshot, every user message created while
+	// memory is off. It is persisted with the message so the extractor never sees those
+	// turns, also after re-enabling or reloading the session.
+	memoryOffSource = "memory-off"
+)
 
 // WithMemoryEnabled sets the memory master switch at construction.
 func WithMemoryEnabled(enabled bool) Option {
@@ -29,15 +33,27 @@ func (a *Agent) SetMemoryEnabled(enabled bool) {
 
 func (a *Agent) MemoryEnabled() bool { return !a.memoryOff.Load() }
 
+// KnownTools are the tools a run may name in its options, including memory tools the
+// switch currently hides, so a run's validation does not depend on the switch.
+func (a *Agent) KnownTools() []tools.Tool {
+	a.toolsMu.Lock()
+	defer a.toolsMu.Unlock()
+	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+}
+
 func (a *Agent) withoutMemoryTools(all []tools.Tool) []tools.Tool {
 	if a.MemoryEnabled() {
 		return all
 	}
-	out := all[:0:0]
-	for _, tool := range all {
-		if !IsMemoryTool(tool.Def.Function.Name) {
-			out = append(out, tool)
-		}
-	}
-	return out
+	return slices.DeleteFunc(all, func(tool tools.Tool) bool { return tool.Memory })
+}
+
+// withoutMemoryOffTurns drops user messages created while memory was off from the
+// history handed to the extractor.
+func withoutMemoryOffTurns(history []ai.Message) []ai.Message {
+	return slices.DeleteFunc(history, func(m ai.Message) bool {
+		return m.Role == "user" && slices.ContainsFunc(m.PromptSnapshots, func(s ai.PromptSnapshot) bool {
+			return s.Source == memoryOffSource
+		})
+	})
 }

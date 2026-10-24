@@ -22,7 +22,7 @@ func (s *Server) replayRunLocked(rt *runtimeSession, in protocol.PromptRequest) 
 	}
 	matches := old.Kind != "compact" && old.RequestHash != "" && old.RequestHash == hashPrompt(in)
 	if !matches && old.Kind != "compact" && rt.agent != nil {
-		options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
+		options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.KnownTools())
 		if err == nil {
 			normalized := in
 			normalized.Options = &options
@@ -132,7 +132,7 @@ func (s *Server) startCanonicalRunWith(ctx context.Context, rt *runtimeSession, 
 		return fail(400, err.Error())
 	}
 	// Normalize after model selection so model-specific tools and MCP filters are current.
-	options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.AvailableTools())
+	options, err := normalizeRunOptions(in.Options, rt.agent.WorkingDir, rt.agent.KnownTools())
 	if err != nil {
 		return fail(400, err.Error())
 	}

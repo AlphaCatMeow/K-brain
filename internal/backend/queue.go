@@ -407,7 +407,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request, id string, 
 		writeJSONError(w, 429, "session queue capacity reached")
 		return
 	}
-	if _, err = normalizeRunOptions(submit.Request.Options, rt.workingDir(), rt.agent.AvailableTools()); err != nil {
+	if _, err = normalizeRunOptions(submit.Request.Options, rt.workingDir(), rt.agent.KnownTools()); err != nil {
 		writeJSONError(w, 400, err.Error())
 		return
 	}
@@ -509,7 +509,7 @@ func (s *Server) queueActionLocked(w http.ResponseWriter, rt *runtimeSession, in
 				fail(400, "invalid_payload", err.Error())
 				return
 			}
-			if _, err := normalizeRunOptions(request.Options, rt.workingDir(), rt.agent.AvailableTools()); err != nil {
+			if _, err := normalizeRunOptions(request.Options, rt.workingDir(), rt.agent.KnownTools()); err != nil {
 				fail(400, "invalid_payload", err.Error())
 				return
 			}

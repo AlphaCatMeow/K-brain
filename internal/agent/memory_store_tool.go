@@ -31,7 +31,8 @@ const memoryManagerSchema = `{"type":"object","properties":{` +
 // memoryStoreTool exposes the bounded Markdown memory manager to an agent.
 func memoryStoreTool(a *Agent) tools.Tool {
 	return tools.Tool{
-		Def: ai.NewTool("memory_manager", "Manage durable LiveAgent-compatible memory for the current project. Use list, read, search, write, update, delete, or accept. Write needs slug, scope, memoryType, description and body; read, update, delete and accept need slug and scope; search needs query.", memoryManagerSchema),
+		Memory: true,
+		Def:    ai.NewTool("memory_manager", "Manage durable LiveAgent-compatible memory for the current project. Use list, read, search, write, update, delete, or accept. Write needs slug, scope, memoryType, description and body; read, update, delete and accept need slug and scope; search needs query.", memoryManagerSchema),
 		Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var in struct {
 				Operation string          `json:"operation"`

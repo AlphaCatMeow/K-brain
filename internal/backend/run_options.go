@@ -104,7 +104,7 @@ func normalizeRunOptions(in *protocol.RunOptions, cwd string, available []tools.
 				return fmt.Errorf("options.tools contains duplicate or empty tool")
 			}
 			seen[name] = true
-			if name != "ExitPlanMode" && !agent.IsMemoryTool(name) && !slices.ContainsFunc(available, func(t tools.Tool) bool { return t.Def.Function.Name == name }) {
+			if name != "ExitPlanMode" && !slices.ContainsFunc(available, func(t tools.Tool) bool { return t.Def.Function.Name == name }) {
 				return fmt.Errorf("options.tools references unavailable tool %q", name)
 			}
 			return nil
