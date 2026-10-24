@@ -82,7 +82,7 @@ CLI 可用 `-config FILE -session-dir DIR` 指定配置与存储目录；省略�
 
 设置 PUT 接受 `{defaultProvider?,defaultModel?,providers?,deleteProviders?}`。供应商包含 `id/name/api/baseUrl/models`，`apiKey` 为仅写入字段：省略保留现值，`clearApiKey:true` 明确清除。GET 仅返回 `apiKeyConfigured` 并脱敏 URL。保存成功后才发布新配置；已运行中的回合继续使用原客户端，下一轮在原 Agent 上刷新模型配置，保留任务和历史。已删除模型的下一轮返回错误。同名模型在不同供应商下使用相同元数据；冲突配置会明确拒绝。直接修改配置文件后需重启后端加载；当前设置接口采用最后成功保存的配置，不提供多编辑者 revision 冲突检测。
 
-记忆总开关：GET 返回 `memory:{enabled}`（配置未写时为 `true`），PUT 接受 `memory:{enabled:true|false}`，持久化为配置文件的 `memory.enabled`。关闭后从下一轮起（已打开的会话也一样）：不再注入 memory.md 与记忆索引，并追加一条快照声明之前注入的记忆不再适用；隐藏提取器不运行；代理拿不到 `remember`、`forget`、`memory_manager`，运行选项里这三个名字的工具策略被忽略而不是报错。已存记忆不变，`/v1/memory/manage` 与记忆整理接口照常可用。TUI、ACP 与 `kn run` 读取同一配置。`/v1/health` 的 `capabilities.memory_switch: 1` 表示后端支持该开关，客户端据此决定是否显示。
+记忆总开关：GET 返回 `memory:{enabled}`（配置未写时为 `true`），PUT 接受 `memory:{enabled:true|false}`，持久化为配置文件的 `memory.enabled`。关闭后从下一轮起（已打开的会话也一样）：不再注入 memory.md 与记忆索引；每个会话收到一次提示，说明用户已关闭记忆、之前注入的记忆不再适用，并要求模型不以任何方式（包括写 memory.md 等文件）保存记忆，遇到"记住"类请求时告诉用户记忆已关闭；隐藏提取器不运行；代理拿不到 `remember`、`forget`、`memory_manager`，运行选项里这三个名字的工具策略被忽略而不是报错。已存记忆不变，`/v1/memory/manage` 与记忆整理接口照常可用。TUI、ACP 与 `kn run` 读取同一配置。`/v1/health` 的 `capabilities.memory_switch: 1` 表示后端支持该开关，客户端据此决定是否显示。
 
 浏览器设置缓存只保留必要的界面偏好，加载旧缓存时清理其中的供应商和连接凭据。`VITE_KBRAIN_TOKEN` 会进入前端构建产物，应按客户端访问令牌管理；面向多用户的远程部署需要独立的认证与权限设计。
 

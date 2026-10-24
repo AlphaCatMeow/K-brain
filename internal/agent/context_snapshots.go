@@ -29,11 +29,18 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 		// Retract memory that earlier turns carried; history keeps its snapshots for cache
 		// stability, so a newer snapshot must say they no longer apply. One notice is enough.
 		notice := memoryOffNotice
+		noticed := false
 		for _, source := range []string{savedMemorySource, runtimeMemorySource} {
-			if previous, exists := retainedSnapshot(a.Messages, source); exists && previous != memoryOffNotice && previous != "" {
+			previous, exists := retainedSnapshot(a.Messages, source)
+			noticed = noticed || (exists && previous == memoryOffNotice)
+			if exists && previous != memoryOffNotice && previous != "" {
 				snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: notice})
 				notice = ""
 			}
+		}
+		// A session that never carried memory still needs the instruction once.
+		if notice != "" && !noticed {
+			snapshots = append(snapshots, ai.PromptSnapshot{Source: runtimeMemorySource, Text: notice})
 		}
 		return append(snapshots, MemoryOffSnapshot())
 	}

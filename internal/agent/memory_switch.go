@@ -8,7 +8,9 @@ import (
 )
 
 const (
-	memoryOffNotice = "\n\n<memory>Memory is turned off. Earlier saved-memory and memory index snapshots no longer apply; do not rely on them.</memory>"
+	// memoryOffNotice is sent once per session while memory is off: it retracts memory
+	// earlier turns carried and tells the model not to keep memory any other way.
+	memoryOffNotice = "\n\n<memory>Memory is turned off by the user. Earlier saved-memory and memory index snapshots no longer apply; do not rely on them. Do not save memories in any way, including writing memory.md or other files. When asked to remember something, tell the user memory is turned off.</memory>"
 	// memoryOffSource marks, with an empty snapshot, every user message created while
 	// memory is off. It is persisted with the message so the extractor never sees those
 	// turns, also after re-enabling or reloading the session.

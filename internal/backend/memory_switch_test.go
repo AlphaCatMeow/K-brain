@@ -200,6 +200,27 @@ func TestMemorySwitchAppliesToOpenSessionOnNextTurn(t *testing.T) {
 	}
 }
 
+func TestMemorySwitchOffInstructsFreshSessionNotToSaveMemory(t *testing.T) {
+	f := newMemorySwitchFixture(t)
+	f.setEnabled(t, false)
+	sess := createTestSession(t, f.url)
+
+	seq, _ := f.turn(t, sess.ID, "off-1", "Remember that all skills live in one shared folder", 0)
+	_, context := f.client.lastRequest(t)
+	for _, want := range []string{"Memory is turned off", "memory.md", "tell the user memory is turned off"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("a session started while memory is off must be told not to save memory (missing %q): %q", want, context)
+		}
+	}
+	f.turn(t, sess.ID, "off-2", "And use pnpm for installs", seq)
+	f.client.mu.Lock()
+	requests := strings.Join(f.client.contexts, "\n")
+	f.client.mu.Unlock()
+	if n := strings.Count(requests, "Memory is turned off"); n != 1 {
+		t.Fatalf("the off instruction should be sent once per session while off, got %d", n)
+	}
+}
+
 func TestMemorySwitchDisabledIgnoresMemoryToolPolicies(t *testing.T) {
 	f := newMemorySwitchFixture(t)
 	f.setEnabled(t, false)
