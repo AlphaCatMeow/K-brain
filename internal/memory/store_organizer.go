@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// WipeEpoch returns how many times memory was wiped.
+func (s *Store) WipeEpoch() (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.state()
+	if err != nil {
+		return 0, err
+	}
+	return state.WipeEpoch, nil
+}
+
 // OrganizerEpoch returns the current reset generation. A run from an older
 // generation cannot be recreated after history or memory has been cleared.
 func (s *Store) OrganizerEpoch() (uint64, error) {

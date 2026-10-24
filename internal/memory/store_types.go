@@ -234,6 +234,9 @@ type storeState struct {
 	Runs           []OrganizeRun     `json:"runs"`
 	Audit          []json.RawMessage `json:"audit"`
 	OrganizerEpoch uint64            `json:"organizerEpoch,omitempty"`
+	// WipeEpoch counts WipeAll calls only: memory text read before a wipe is
+	// discarded rather than written back.
+	WipeEpoch uint64 `json:"wipeEpoch,omitempty"`
 	// MarkdownImported records that the one-time memory.md import finished;
 	// later edits to memory.md belong to the hosts that still use it.
 	MarkdownImported bool `json:"markdownImported,omitempty"`

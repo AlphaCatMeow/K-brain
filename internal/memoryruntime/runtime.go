@@ -170,8 +170,9 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	}
 	c.pending = &turn
 	c.parent = parent
-	if len(c.unjudged) == 0 {
-		c.unjudgedEpoch = r.epoch()
+	if epoch := r.epoch(); len(c.unjudged) == 0 || epoch != c.unjudgedEpoch {
+		// Messages queued before a wipe are dropped; the queue starts over.
+		c.unjudged, c.unjudgedEpoch = nil, epoch
 	}
 	c.unjudged = append(c.unjudged, add...)
 	now := r.now()
@@ -208,9 +209,9 @@ func (r *Runtime) Abandoned(sessionID string, user ai.Message) {
 	r.hold(sessionID, []ai.Message{user}, r.epoch())
 }
 
-// epoch is the store's current wipe generation.
+// epoch is the store's current wipe generation (WipeAll only).
 func (r *Runtime) epoch() uint64 {
-	epoch, err := r.store.OrganizerEpoch()
+	epoch, err := r.store.WipeEpoch()
 	if err != nil {
 		logf("memory extraction: read wipe epoch: %s", describeExtractionError(err))
 	}
