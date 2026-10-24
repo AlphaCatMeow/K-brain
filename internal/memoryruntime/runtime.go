@@ -235,11 +235,15 @@ func extractionMessages(turn agent.MemoryTurn) []ai.Message {
 	for i, j := 0, len(users)-1; i < j; i, j = i+1, j-1 {
 		users[i], users[j] = users[j], users[i]
 	}
-	content := "Extract only durable facts from these user turns.\n\n" + strings.Join(users, "\n---\n")
+	content := "Extract durable memory from these user turns.\n\n" + strings.Join(users, "\n---\n")
 	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: content}}
 }
 
-const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote. If there is no durable fact, do not submit a plan.`
+const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote.
+
+Durable memory is anything that should still apply in a later conversation: the user's lasting preferences and instructions for how to work or answer (language, format, tools, style; type user or feedback), facts about the user, project conventions (type project, scope project), and pointers to external resources (type reference). Anything the user explicitly asks you to remember is durable. Signal words include 记住, 以后, 总是, 每次, 不要, 别再, remember, from now on, always, never, prefer.
+
+Skip one-off task details, questions, secrets and credentials, raw code or logs, and facts derivable from the workspace. If nothing is durable, do not submit a plan.`
 
 func (r *Runtime) submit(ctx context.Context, model string, messages []ai.Message, retry bool) (*planEnvelope, error) {
 	client, resolved, err := r.resolve(ctx, model)
