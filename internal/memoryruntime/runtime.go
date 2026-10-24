@@ -150,6 +150,7 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	c.pending = &turn
 	c.parent = parent
 	c.unjudged = append(c.unjudged, turn.User)
+	c.unjudged = append(c.unjudged, steeredMessages(turn)...)
 	now := r.now()
 	if c.cancel != nil {
 		r.mu.Unlock()
@@ -170,6 +171,28 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	c.cancel = cancel
 	r.mu.Unlock()
 	go r.extract(ctx, key, pending, judge)
+}
+
+// steeredMessages returns user messages steered into the run after the turn's
+// own message; they are part of this turn and must be judged with it.
+func steeredMessages(turn agent.MemoryTurn) []ai.Message {
+	own := strings.TrimSpace(turn.User.TextContent())
+	for i := len(turn.History) - 1; i >= 0; i-- {
+		m := turn.History[i]
+		if m.Role != "user" {
+			continue
+		}
+		if (turn.User.ID != "" && m.ID == turn.User.ID) || strings.TrimSpace(m.TextContent()) == own {
+			var out []ai.Message
+			for _, later := range turn.History[i+1:] {
+				if later.Role == "user" && strings.TrimSpace(later.TextContent()) != "" {
+					out = append(out, later)
+				}
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 func (r *Runtime) startPending(key string) {
@@ -231,8 +254,16 @@ func (r *Runtime) submitRetrying(ctx context.Context, key string, messages []ai.
 		return plan, true, err
 	}
 	for _, delay := range extractionRetryDelays {
-		if err == nil || errors.As(err, &bad) || ctx.Err() != nil || permanentModelError(err) {
+		if err == nil || ctx.Err() != nil || permanentModelError(err) {
 			break
+		}
+		if errors.As(err, &bad) {
+			if nudge {
+				break
+			}
+			logf("memory extraction %s: %s; retrying", key, describeExtractionError(err))
+			plan, _, err = r.submitRetrying(ctx, key, messages, true)
+			return plan, true, err
 		}
 		logf("memory extraction %s: %s; retrying in %s", key, describeExtractionError(err), delay)
 		select {
@@ -275,7 +306,13 @@ func (r *Runtime) existingMemory(workdir string) []memory.Meta {
 		logf("memory extraction: list existing memory: %s", describeExtractionError(err))
 		return nil
 	}
-	return list.Entries
+	active := list.Entries[:0]
+	for _, e := range list.Entries {
+		if !e.Archived {
+			active = append(active, e)
+		}
+	}
+	return active
 }
 
 // maxPromptEntries bounds the existing-memory block; deduplication and the
