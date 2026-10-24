@@ -71,6 +71,7 @@ type Server struct {
 	eventDir             string
 	defaultCWD           string
 	filesystemRoots      []string
+	filesystemMu         sync.Mutex
 	memoryStore          *memory.Store
 	questionWait         time.Duration
 	memoryRuntimeFactory MemoryRuntimeFactory

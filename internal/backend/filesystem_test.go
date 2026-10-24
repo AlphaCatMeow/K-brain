@@ -36,11 +36,13 @@ func TestFilesystemRootConfinementAndText(t *testing.T) {
 	for _, input := range []filesystemInput{
 		{Action: "read_text", Workdir: project, Path: "../outside.txt"},
 		{Action: "read_text", Workdir: project, Path: "escape"},
+		{Action: "read_preview", Workdir: project, Path: "escape"},
+		{Action: "read_preview", Workdir: project, Path: "../outside.txt"},
 		{Action: "read_text", Workdir: project, Path: "binary"},
 		{Action: "read_text", Workdir: project, Path: root},
 		{Action: "list_dirs", Path: filepath.Dir(root)},
 		{Action: "list", Workdir: project, Depth: 100},
-		{Action: "delete", Workdir: project, Path: "readme.txt"},
+		{Action: "unsupported", Workdir: project, Path: "readme.txt"},
 	} {
 		if _, err := server.filesystem(request, input); err == nil {
 			t.Fatalf("accepted invalid operation: %+v", input)

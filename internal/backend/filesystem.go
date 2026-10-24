@@ -2,11 +2,13 @@ package backend
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,13 +20,18 @@ import (
 const filesystemReadLimit = 2 << 20
 
 type filesystemInput struct {
-	Action     string `json:"action"`
-	Workdir    string `json:"workdir"`
-	Path       string `json:"path"`
-	Depth      uint32 `json:"depth"`
-	Offset     uint32 `json:"offset"`
-	MaxResults uint32 `json:"max_results"`
-	ShowHidden bool   `json:"show_hidden"`
+	Action        string  `json:"action"`
+	Workdir       string  `json:"workdir"`
+	Path          string  `json:"path"`
+	Depth         uint32  `json:"depth"`
+	Offset        uint32  `json:"offset"`
+	MaxResults    uint32  `json:"max_results"`
+	ShowHidden    bool    `json:"show_hidden"`
+	Content       string  `json:"content"`
+	Mode          string  `json:"mode"`
+	ExpectedMtime *int64  `json:"expected_mtime_ms"`
+	ExpectedHash  *string `json:"expected_content_hash"`
+	ToPath        string  `json:"to_path"`
 }
 
 // filesystemRoot confines each operation, including symlink traversal, to an
@@ -78,7 +85,7 @@ func (s *Server) filesystem(r *http.Request, in filesystemInput) (any, error) {
 		}
 		return map[string]any{"roots": roots}, nil
 	}
-	if in.Action != "list_dirs" && in.Action != "list" && in.Action != "read_text" {
+	if in.Action != "list_dirs" && in.Action != "list" && in.Action != "read_text" && in.Action != "read_preview" && in.Action != "write_text" && in.Action != "mkdir" && in.Action != "rename" && in.Action != "delete" {
 		return nil, errors.New("unsupported filesystem action")
 	}
 	path := in.Path
@@ -109,7 +116,12 @@ func (s *Server) filesystem(r *http.Request, in filesystemInput) (any, error) {
 		defer workspace.Close()
 		root, rel = workspace, filepath.Clean(filepath.FromSlash(in.Path))
 	}
-	if in.Action == "read_text" {
+	if in.Action == "write_text" || in.Action == "mkdir" || in.Action == "rename" || in.Action == "delete" {
+		s.filesystemMu.Lock()
+		defer s.filesystemMu.Unlock()
+		return mutateFilesystem(root, rel, in)
+	}
+	if in.Action == "read_text" || in.Action == "read_preview" {
 		metadata, err := root.Stat(rel)
 		if err != nil {
 			return nil, err
@@ -133,10 +145,20 @@ func (s *Server) filesystem(r *http.Request, in filesystemInput) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(body) > filesystemReadLimit || !utf8.Valid(body) || strings.ContainsRune(string(body), 0) {
-			return nil, errors.New("file is not UTF-8 text or exceeds 2 MiB")
+		if len(body) > filesystemReadLimit {
+			return nil, errors.New("file exceeds 2 MiB")
 		}
 		hash := sha256.Sum256(body)
+		if in.Action == "read_preview" {
+			contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(in.Path)))
+			if contentType == "" {
+				contentType = http.DetectContentType(body)
+			}
+			return map[string]any{"path": filepath.ToSlash(filepath.Clean(in.Path)), "data": base64.StdEncoding.EncodeToString(body), "mime_type": contentType, "mtime_ms": info.ModTime().UnixMilli(), "content_hash": hex.EncodeToString(hash[:]), "size_bytes": len(body)}, nil
+		}
+		if !utf8.Valid(body) || strings.ContainsRune(string(body), 0) {
+			return nil, errors.New("file is not UTF-8 text or exceeds 2 MiB")
+		}
 		lines := 0
 		if len(body) > 0 {
 			lines = strings.Count(string(body), "\n")

@@ -32,9 +32,10 @@ type AgentTemplate struct {
 }
 
 type ProjectPrompt struct {
-	Workdir  string `json:"workdir"`
-	Prompt   string `json:"prompt"`
-	Strategy string `json:"strategy"`
+	Workdir       string `json:"workdir"`
+	SourceWorkdir string `json:"sourceWorkdir,omitempty"`
+	Prompt        string `json:"prompt"`
+	Strategy      string `json:"strategy"`
 }
 
 type PromptState struct {
@@ -307,11 +308,13 @@ func (s *PromptStore) Delete(id string, base *uint64) (PromptState, error) {
 }
 
 func (s *PromptStore) SetProject(project ProjectPrompt, base *uint64) (PromptState, error) {
+	sourceWorkdir := filepath.Clean(project.Workdir)
 	workdir, err := CanonicalWorkdir(project.Workdir)
 	if err != nil {
 		return PromptState{}, err
 	}
 	project.Workdir = workdir
+	project.SourceWorkdir = sourceWorkdir
 	if project.Strategy == "" {
 		project.Strategy = "append"
 	}
