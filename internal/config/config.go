@@ -169,6 +169,8 @@ type Config struct {
 
 	Browser BrowserConfig `json:"browser,omitzero"`
 
+	Memory MemoryConfig `json:"memory,omitzero"`
+
 	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
 	Computer   ComputerConfig    `json:"computer,omitzero"`
 	Sandbox    SandboxConfig     `json:"sandbox,omitzero"`
@@ -213,6 +215,15 @@ type ComputerConfig struct {
 
 	Enabled *bool `json:"enabled,omitempty"`
 }
+
+// MemoryConfig is the memory master switch. Off stops memory injection, hidden extraction
+// and the agent memory tools; stored memories and the memory management API stay available.
+type MemoryConfig struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// IsEnabled defaults to true so configurations written before the switch keep memory on.
+func (m MemoryConfig) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
 
 type BrowserConfig struct {
 	Mode string `json:"mode,omitempty"`

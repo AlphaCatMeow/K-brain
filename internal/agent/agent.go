@@ -183,6 +183,7 @@ type Agent struct {
 	memoryBlock        string
 	runtimeMemoryBlock string
 	memoryDisabled     bool
+	memoryOff          atomic.Bool
 	// markdownMemoryReadOnly is set once a memory runtime owns memory.
 	markdownMemoryReadOnly bool
 	memoryRuntime          MemoryRuntime
@@ -478,16 +479,16 @@ func (a *Agent) suggest(name string) []string {
 func (a *Agent) AvailableTools() []tools.Tool {
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
-	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+	return a.withoutMemoryTools(a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...)))
 }
 
 func (a *Agent) AllTools() []tools.Tool {
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
 	if a.RunToolsSet {
-		return append([]tools.Tool(nil), a.RunTools...)
+		return a.withoutMemoryTools(append([]tools.Tool(nil), a.RunTools...))
 	}
-	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+	return a.withoutMemoryTools(a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...)))
 }
 
 func (a *Agent) Turn(ctx context.Context, input string, ev Events) (string, error) {
@@ -558,7 +559,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		defer func() { turnErr = errors.Join(turnErr, closeComputer()) }()
 	}
 	a.RefreshMemory()
-	if a.memoryRuntime != nil {
+	if a.memoryRuntime != nil && a.MemoryEnabled() {
 		if block, err := a.memoryRuntime.Inject(ctx, a.WorkingDir); err == nil {
 			a.installRuntimeMemory(block)
 		}
@@ -606,7 +607,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	// propagates.
 	memoryReported := false
 	defer func() {
-		if !memoryReported && a.memoryRuntime != nil {
+		if !memoryReported && a.memoryRuntime != nil && a.MemoryEnabled() {
 			a.memoryRuntime.Abandoned(a.SessionIDValue(), userMessage)
 		}
 	}()
@@ -745,7 +746,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				}
 			}
 			a.compacted = false
-			if a.memoryRuntime != nil {
+			if a.memoryRuntime != nil && a.MemoryEnabled() {
 				memoryReported = true
 				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
 			}

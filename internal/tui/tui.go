@@ -671,7 +671,7 @@ func (m *model) resume(id string) error {
 	if ag, mn, pn, err := buildAgent(m.cfg, meta.Model, meta.Provider, m.sysPrompt); err == nil {
 		m.agent, m.modelName, m.provName = ag, mn, pn
 	} else {
-		m.agent = agent.New(m.agent.Client, m.agent.Model, m.agent.MaxTokens, m.sysPrompt, agent.WithExperimental(m.agent.Experimental()), agent.WithComputerConfig(m.cfg.Computer))
+		m.agent = agent.New(m.agent.Client, m.agent.Model, m.agent.MaxTokens, m.sysPrompt, agent.WithExperimental(m.agent.Experimental()), agent.WithComputerConfig(m.cfg.Computer), agent.WithMemoryEnabled(m.cfg.Memory.IsEnabled()))
 		m.agent.ModelName, m.agent.Provider = m.modelName, m.provName
 		m.agent.Vision = m.supportsVision()
 		m.agent.ContextLimit = m.contextLimitFor(m.provName, m.agent.Model)
@@ -909,7 +909,7 @@ func buildAgent(cfg *config.Config, modelName, provName, sysPrompt string) (*age
 		return nil, "", "", err
 	}
 
-	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sysPrompt, agent.WithExperimental(cfg.Experimental), agent.WithComputerConfig(cfg.Computer))
+	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sysPrompt, agent.WithExperimental(cfg.Experimental), agent.WithComputerConfig(cfg.Computer), agent.WithMemoryEnabled(cfg.Memory.IsEnabled()))
 	if err := ag.SetModel(route.AgentModel()); err != nil {
 		return nil, "", "", err
 	}

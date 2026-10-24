@@ -25,6 +25,18 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
 	var snapshots []ai.PromptSnapshot
+	if !a.MemoryEnabled() {
+		// Retract memory that earlier turns carried; history keeps its snapshots for cache
+		// stability, so a newer snapshot must say they no longer apply. One notice is enough.
+		notice := memoryOffNotice
+		for _, source := range []string{savedMemorySource, runtimeMemorySource} {
+			if previous, exists := retainedSnapshot(a.Messages, source); exists && previous != memoryOffNotice && previous != "" {
+				snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: notice})
+				notice = ""
+			}
+		}
+		return snapshots
+	}
 	for _, current := range []ai.PromptSnapshot{
 		{Source: savedMemorySource, Text: a.memoryBlock},
 		{Source: runtimeMemorySource, Text: a.runtimeMemoryBlock},

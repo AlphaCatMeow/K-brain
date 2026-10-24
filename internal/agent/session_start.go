@@ -44,7 +44,7 @@ func (a *Agent) runHook(ctx context.Context, event hooks.Event) error {
 }
 
 func (a *Agent) RefreshMemory() {
-	if a.memoryDisabled {
+	if a.memoryDisabled || !a.MemoryEnabled() {
 		return
 	}
 	block := memory.PromptBlock(memory.Installation(), memory.Session(a.SessionIDValue()))
