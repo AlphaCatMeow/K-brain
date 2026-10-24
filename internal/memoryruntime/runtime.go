@@ -121,7 +121,7 @@ func (r *Runtime) Tools(workdir func() string) []tools.Tool {
 func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	own := strings.TrimSpace(turn.User.TextContent())
 	judgeOwn := own != "" && !isAcknowledgement(own)
-	if r.extraction == "" || (!judgeOwn && len(turn.Abandoned) == 0) {
+	if r.extraction == "" {
 		return
 	}
 	// The backend cancels the run's context as soon as the run returns, right
@@ -144,16 +144,24 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	if c.pending != nil && (c.pending.User.ID == turn.User.ID || c.pending.User.TextContent() == turn.User.TextContent()) {
 		judgeOwn = false
 	}
-	if !judgeOwn && len(turn.Abandoned) == 0 {
+	queued := make(map[string]bool, len(c.unjudged))
+	for _, m := range c.unjudged {
+		queued[m.ID] = true
+	}
+	var add []ai.Message
+	for _, m := range r.unjudgedUserMessages(key, turn, judgeOwn) {
+		if m.ID == "" || !queued[m.ID] {
+			queued[m.ID] = true
+			add = append(add, m)
+		}
+	}
+	if len(add) == 0 {
 		r.mu.Unlock()
 		return
 	}
 	c.pending = &turn
 	c.parent = parent
-	c.unjudged = append(c.unjudged, turn.Abandoned...)
-	if judgeOwn {
-		c.unjudged = append(c.unjudged, turn.User)
-	}
+	c.unjudged = append(c.unjudged, add...)
 	now := r.now()
 	if c.cancel != nil {
 		r.mu.Unlock()
@@ -176,6 +184,80 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 	go r.extract(ctx, key, pending, judge)
 }
 
+// historyWindow bounds how many user messages one extraction judges.
+const historyWindow = 4
+
+// unjudgedUserMessages returns the user messages this turn must judge. When
+// History holds the session's recorded mark, that is every ID-carrying user
+// message after it, so a turn stopped or failed under an agent that was since
+// rebuilt (model switch, idle reap, restart) is not skipped; steered messages
+// carry no ID and stay context. Without a usable mark (new or pre-upgrade
+// session, compacted or edited History) it judges the last historyWindow
+// user messages. Existing-memory deduplication absorbs any re-judging.
+func (r *Runtime) unjudgedUserMessages(key string, turn agent.MemoryTurn, judgeOwn bool) []ai.Message {
+	mark, err := r.store.ExtractionMark(key)
+	if err != nil {
+		logf("memory extraction %s: read judged mark: %s", key, describeExtractionError(err))
+	}
+	var tail []ai.Message
+	found := false
+	if mark != "" {
+		for _, m := range turn.History {
+			if m.Role != "user" || m.ID == "" {
+				continue
+			}
+			if found {
+				tail = append(tail, m)
+			} else if m.ID == mark {
+				found = true
+			}
+		}
+	}
+	if !found {
+		// No usable mark: judge the last few user messages, as before marks.
+		tail = nil
+		for _, m := range turn.History {
+			if m.Role == "user" && m.ID != "" {
+				tail = append(tail, m)
+			}
+		}
+		tail = append(tail, turn.Abandoned...)
+	}
+	if judgeOwn {
+		// The turn's own message, even when History does not carry it.
+		present := false
+		for _, m := range tail {
+			if turn.User.ID != "" && m.ID == turn.User.ID {
+				present = true
+				break
+			}
+		}
+		if !present {
+			tail = append(tail, turn.User)
+		}
+	}
+	if len(tail) > historyWindow {
+		tail = tail[len(tail)-historyWindow:]
+	}
+	var out []ai.Message
+	seen := map[string]bool{}
+	for _, m := range tail {
+		if m.ID != "" && seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		if m.ID == turn.User.ID && !judgeOwn {
+			continue
+		}
+		text := strings.TrimSpace(m.TextContent())
+		if text == "" || isAcknowledgement(text) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 func (r *Runtime) startPending(key string) {
 	r.mu.Lock()
 	c := r.claims[key]
@@ -195,6 +277,14 @@ func (r *Runtime) startPending(key string) {
 
 func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn, judge []ai.Message) {
 	defer func() { r.finishClaim(key) }()
+	for i := len(judge) - 1; i >= 0; i-- {
+		if judge[i].ID != "" {
+			if err := r.store.SetExtractionMark(key, judge[i].ID); err != nil {
+				logf("memory extraction %s: record judged message: %s", key, describeExtractionError(err))
+			}
+			break
+		}
+	}
 	existing := r.existingMemory(turn.Workdir)
 	messages := extractionMessages(turn, existing, judge)
 	plan, nudged, err := r.submitRetrying(ctx, key, messages, false)

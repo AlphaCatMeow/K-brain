@@ -242,6 +242,9 @@ type storeState struct {
 	// write that has not been confirmed yet.
 	MarkdownImports []string `json:"markdownImports,omitempty"`
 	MarkdownPending []string `json:"markdownPending,omitempty"`
+	// ExtractionMarks records, per session, the last user message ID the
+	// hidden extractor judged, so later turns judge only what came after.
+	ExtractionMarks map[string]string `json:"extractionMarks,omitempty"`
 }
 
 type StoreError struct {
