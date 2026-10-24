@@ -75,17 +75,26 @@ func isMemoryOffMessage(m ai.Message) bool {
 // the switch has touched (memory is off now, or the message was written while off).
 // contextSnapshots already diffed against History including this message, so computed
 // holds only changes: a retraction, fresh memory, or nothing. The off marker is added
-// once and never removed. The persisted message, not the turn's local copy, is what
-// later turns and the extractor read.
+// once and never removed. The on-again instruction is written back whenever it was
+// computed. The persisted message, not the turn's local copy, is what later turns and
+// the extractor read.
 func markResumedMessage(resumed *ai.Message, computed []ai.PromptSnapshot, enabled bool) {
 	off := isMemoryOffMessage(*resumed)
-	if enabled && !off {
-		return
-	}
+	touched := !enabled || off
 	snapshots := slices.Clone(resumed.PromptSnapshots)
 	for _, s := range computed {
-		if s.Source == savedMemorySource || s.Source == runtimeMemorySource || (s.Source == memoryOffSource && !off) {
+		switch s.Source {
+		case memorySwitchSource:
+			// The on-again instruction follows the switch whatever the message saw.
 			snapshots = append(snapshots, s)
+		case savedMemorySource, runtimeMemorySource:
+			if touched {
+				snapshots = append(snapshots, s)
+			}
+		case memoryOffSource:
+			if !off {
+				snapshots = append(snapshots, s)
+			}
 		}
 	}
 	resumed.PromptSnapshots = snapshots
