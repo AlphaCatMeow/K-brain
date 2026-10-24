@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +13,20 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
+	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/memory"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
 type ModelResolver func(context.Context, string) (ai.Client, string, error)
+
+// logf writes extraction diagnostics to k-brain.log: hosts such as LiveAgent
+// drain and drop the backend's stderr.
+var logf = func(format string, args ...any) { config.LogEvent("memory", fmt.Sprintf(format, args...)) }
+
+// extractionRetryDelays spaces out retries of a failed extraction request;
+// busy providers often recover within a minute.
+var extractionRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second}
 
 type Config struct {
 	Store           *memory.Store
@@ -177,19 +185,13 @@ func (r *Runtime) startPending(key string) {
 func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn) {
 	defer func() { r.finishClaim(key) }()
 	messages := extractionMessages(turn)
-	plan, err := r.submit(ctx, r.extraction, messages, false)
-	if err != nil || plan == nil {
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			log.Printf("memory extraction %s: %s; retrying", key, describeExtractionError(err))
-		}
-		plan, err = r.submit(ctx, r.extraction, messages, true)
+	plan, err := r.submitRetrying(ctx, key, messages, false)
+	if err == nil && plan == nil && ctx.Err() == nil {
+		plan, err = r.submitRetrying(ctx, key, messages, true)
 	}
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("memory extraction %s: %s", key, describeExtractionError(err))
+			logf("memory extraction %s: %s", key, describeExtractionError(err))
 		}
 		return
 	}
@@ -202,12 +204,43 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	}
 	result, err := r.store.ApplyBatch(batch)
 	if err != nil {
-		log.Printf("memory extraction %s: apply batch: %s", key, describeExtractionError(err))
+		logf("memory extraction %s: apply batch: %s", key, describeExtractionError(err))
 		return
 	}
 	for _, warning := range result.WarningDetails {
-		log.Printf("memory extraction %s: decision %d (%s %s) not applied: %s", key, warning.DecisionIndex, warning.Op, warning.Slug, warning.Code)
+		logf("memory extraction %s: decision %d (%s %s) not applied: %s", key, warning.DecisionIndex, warning.Op, warning.Slug, warning.Code)
 	}
+}
+
+// submitRetrying retries failed model requests on extractionRetryDelays. A plan
+// the model got wrong is retried once by the caller with a nudge instead.
+func (r *Runtime) submitRetrying(ctx context.Context, key string, messages []ai.Message, nudge bool) (*planEnvelope, error) {
+	plan, err := r.submit(ctx, r.extraction, messages, nudge)
+	var bad planError
+	if err != nil && errors.As(err, &bad) && !nudge {
+		logf("memory extraction %s: %s; retrying", key, describeExtractionError(err))
+		return r.submit(ctx, r.extraction, messages, true)
+	}
+	for _, delay := range extractionRetryDelays {
+		if err == nil || errors.As(err, &bad) || ctx.Err() != nil || permanentModelError(err) {
+			break
+		}
+		logf("memory extraction %s: %s; retrying in %s", key, describeExtractionError(err), delay)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		plan, err = r.submit(ctx, r.extraction, messages, nudge)
+	}
+	return plan, err
+}
+
+// permanentModelError reports client errors a retry cannot fix (bad key,
+// exhausted quota); 429 rate limits are still retried.
+func permanentModelError(err error) bool {
+	var httpErr *ai.HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != 429
 }
 
 func (r *Runtime) finishClaim(key string) {
@@ -337,7 +370,7 @@ func parsePlan(raw string) (*planEnvelope, error) {
 			err = validateDecision(d)
 		}
 		if err != nil {
-			log.Printf("memory extraction: dropped plan decision %d: %v", i, err)
+			logf("memory extraction: dropped plan decision %d: %v", i, err)
 			continue
 		}
 		p.Decisions = append(p.Decisions, d)

@@ -34,9 +34,9 @@ func (l *lockedBuffer) String() string {
 func captureLog(t *testing.T) *lockedBuffer {
 	t.Helper()
 	buf := &lockedBuffer{}
-	prevOut, prevFlags := log.Writer(), log.Flags()
-	log.SetOutput(buf)
-	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+	previous := logf
+	logf = func(format string, args ...any) { log.New(buf, "", 0).Printf(format, args...) }
+	t.Cleanup(func() { logf = previous })
 	return buf
 }
 
