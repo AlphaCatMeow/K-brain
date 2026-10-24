@@ -119,7 +119,9 @@ func (r *Runtime) Tools(workdir func() string) []tools.Tool {
 }
 
 func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
-	if strings.TrimSpace(turn.User.TextContent()) == "" || isAcknowledgement(turn.User.TextContent()) || r.extraction == "" {
+	own := strings.TrimSpace(turn.User.TextContent())
+	judgeOwn := own != "" && !isAcknowledgement(own)
+	if r.extraction == "" || (!judgeOwn && len(turn.Abandoned) == 0) {
 		return
 	}
 	// The backend cancels the run's context as soon as the run returns, right
@@ -139,17 +141,19 @@ func (r *Runtime) Completed(parent context.Context, turn agent.MemoryTurn) {
 		c = &claim{}
 		r.claims[key] = c
 	}
-	if c.pending != nil && c.pending.User.ID == turn.User.ID {
-		r.mu.Unlock()
-		return
+	if c.pending != nil && (c.pending.User.ID == turn.User.ID || c.pending.User.TextContent() == turn.User.TextContent()) {
+		judgeOwn = false
 	}
-	if c.pending != nil && c.pending.User.TextContent() == turn.User.TextContent() {
+	if !judgeOwn && len(turn.Abandoned) == 0 {
 		r.mu.Unlock()
 		return
 	}
 	c.pending = &turn
 	c.parent = parent
-	c.unjudged = append(c.unjudged, turn.User)
+	c.unjudged = append(c.unjudged, turn.Abandoned...)
+	if judgeOwn {
+		c.unjudged = append(c.unjudged, turn.User)
+	}
 	now := r.now()
 	if c.cancel != nil {
 		r.mu.Unlock()
