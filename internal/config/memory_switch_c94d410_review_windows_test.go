@@ -10,9 +10,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Review probe (c94d410): a damaged switch file means off, but a switch file that exists
-// and cannot be read (here another handle holds an exclusive byte-range lock, as backup,
-// sync or AV tools can) means on, and the next save then deletes the file for good.
+// A switch file that exists but cannot be read (here another handle holds an exclusive
+// byte-range lock, as backup, sync or AV tools can) means off like a damaged one, so the
+// next save must not delete it.
 func TestReviewMemorySwitchUnreadableFileKeepsMemoryOff(t *testing.T) {
 	// The load and save logs resolve the data root; keep them out of the real one.
 	t.Setenv("LIVEAGENT_HOME", t.TempDir())

@@ -510,6 +510,10 @@ func Load() (*Config, error) {
 			var restored Config
 			if parseConfigJSONC(bak, &restored) == nil && (len(restored.Providers) > 0 || len(restored.Models) > 0) {
 				logf("config.load", "restored from .bak (%s)", restored.fingerprint())
+				// A memory value left in the empty config by earlier builds still counts.
+				if cfg.Memory.Enabled != nil {
+					restored.Memory = cfg.Memory
+				}
 				restored.loadMemorySwitch(p)
 				if len(restored.MCPServers) == 0 && len(cfg.MCPServers) > 0 {
 					restored.MCPServers = cfg.MCPServers
@@ -525,6 +529,10 @@ func Load() (*Config, error) {
 			def.Language = cfg.Language
 		}
 		def.MCPServers = cfg.MCPServers
+		// A memory value left in the empty config by earlier builds still counts.
+		if cfg.Memory.Enabled != nil {
+			def.Memory = cfg.Memory
+		}
 		def.loadMemorySwitch(p)
 		logf("config.load", "no usable .bak; regenerated defaults (%s), keeping %d mcp entries", def.fingerprint(), len(cfg.MCPServers))
 		return def, def.Save()
