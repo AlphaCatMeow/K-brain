@@ -33,7 +33,7 @@ func (c *busyThenPlanClient) Stream(_ context.Context, _ ai.Request, _ func(stri
 	if busy {
 		return ai.Message{}, ai.Usage{}, errors.New("API stream error: server_busy: Our servers are currently busy.")
 	}
-	onCall("1", "SubmitMemoryPlan", `{"decisions":[{"action":"write","slug":"user-shell","scope":"global","type":"user","description":"Uses Git Bash","body":"Give shell commands for bash."}]}`)
+	onCall("1", "SubmitMemoryPlan", `{"decisions":[{"action":"write","slug":"user-shell","scope":"global","type":"user","description":"Uses Git Bash","body":"Give shell commands for bash.","confidence":"high","source_quote":"the user said so"}]}`)
 	return ai.Message{Role: "assistant"}, ai.Usage{}, nil
 }
 

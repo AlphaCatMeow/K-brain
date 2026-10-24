@@ -13,7 +13,7 @@ import (
 // in the same batch; the model-written entry ends up reviewed.
 func TestExtractorCannotApproveItsOwnWrite(t *testing.T) {
 	client := &fixtureClient{payload: `{"decisions":[` +
-		`{"action":"write","slug":"user-pkg-manager","scope":"global","type":"user","description":"Uses pnpm","body":"User uses pnpm.","source_quote":"I use pnpm"},` +
+		`{"action":"write","slug":"user-pkg-manager","scope":"global","type":"user","description":"Uses pnpm","body":"User uses pnpm.","source_quote":"I use pnpm","confidence":"high","source_quote":"the user said so"},` +
 		`{"action":"accept","slug":"user-pkg-manager","scope":"global"}]}`}
 	rt, store := testRuntime(t, client)
 	rt.Completed(context.Background(), extractionTurn("I use pnpm"))

@@ -187,7 +187,8 @@ func (r *Runtime) startPending(key string) {
 
 func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn) {
 	defer func() { r.finishClaim(key) }()
-	messages := extractionMessages(turn)
+	existing := r.existingMemory(turn.Workdir)
+	messages := extractionMessages(turn, existing)
 	plan, err := r.submitRetrying(ctx, key, messages, false)
 	if err == nil && plan == nil && ctx.Err() == nil {
 		plan, err = r.submitRetrying(ctx, key, messages, true)
@@ -201,7 +202,7 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	if plan == nil || len(plan.Decisions) == 0 {
 		return
 	}
-	batch, ok := extractionBatch(plan.Decisions, turn)
+	batch, ok := extractionBatch(plan.Decisions, turn, existing)
 	if !ok || ctx.Err() != nil {
 		return
 	}
@@ -261,25 +262,73 @@ func (r *Runtime) finishClaim(key string) {
 	}
 }
 
-func extractionMessages(turn agent.MemoryTurn) []ai.Message {
-	users := make([]string, 0, 4)
-	for i := len(turn.History) - 1; i >= 0 && len(users) < 4; i-- {
-		if turn.History[i].Role == "user" {
-			users = append(users, truncateRunes(turn.History[i].TextContent(), 2000))
+// existingMemory lists the entries the extractor must reuse instead of
+// re-creating; a failed read only loses deduplication, not the turn.
+func (r *Runtime) existingMemory(workdir string) []memory.Meta {
+	overview, err := r.store.Overview(workdir)
+	if err != nil {
+		logf("memory extraction: list existing memory: %s", describeExtractionError(err))
+		return nil
+	}
+	var out []memory.Meta
+	for _, group := range [][]memory.Meta{overview.User, overview.Project, overview.Global} {
+		for _, e := range group {
+			if e.MemoryType != "daily" {
+				out = append(out, e)
+			}
 		}
 	}
-	for i, j := 0, len(users)-1; i < j; i, j = i+1, j-1 {
-		users[i], users[j] = users[j], users[i]
+	return out
+}
+
+func extractionMessages(turn agent.MemoryTurn, existing []memory.Meta) []ai.Message {
+	latest := truncateRunes(turn.User.TextContent(), 2000)
+	earlier := make([]string, 0, 3)
+	skippedLatest := false
+	for i := len(turn.History) - 1; i >= 0 && len(earlier) < 3; i-- {
+		if turn.History[i].Role != "user" {
+			continue
+		}
+		text := truncateRunes(turn.History[i].TextContent(), 2000)
+		if !skippedLatest && text == latest {
+			skippedLatest = true
+			continue
+		}
+		earlier = append(earlier, text)
 	}
-	content := "Extract durable memory from these user turns.\n\n" + strings.Join(users, "\n---\n")
-	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: content}}
+	for i, j := 0, len(earlier)-1; i < j; i, j = i+1, j-1 {
+		earlier[i], earlier[j] = earlier[j], earlier[i]
+	}
+	var b strings.Builder
+	b.WriteString("<existing-memory>\n")
+	if len(existing) == 0 {
+		b.WriteString("- (none)\n")
+	}
+	for _, e := range existing {
+		fmt.Fprintf(&b, "- %s (type=%s; scope=%s) %s\n", e.Slug, e.MemoryType, e.Scope, truncateRunes(e.Description, 160))
+	}
+	b.WriteString("</existing-memory>\n\n<earlier-user-messages context-only=\"true\">\n")
+	if len(earlier) == 0 {
+		b.WriteString("(none)\n")
+	}
+	for _, text := range earlier {
+		b.WriteString(text + "\n---\n")
+	}
+	b.WriteString("</earlier-user-messages>\n\n<latest-user-message>\n" + latest + "\n</latest-user-message>")
+	return []ai.Message{{Role: "system", Content: extractionPrompt}, {Role: "user", Content: b.String()}}
 }
 
 const extractionPrompt = `You are K-brain's silent memory extractor. Do not answer the user. Submit at most one SubmitMemoryPlan tool call, following its schema exactly. Each decision names an action: write (new memory: slug, scope, type, description, body), update (existing slug with changed fields), delete, or append_daily (body is one bullet for today's journal). Quote the user's own words in source_quote.
 
-Durable memory is anything that should still apply in a later conversation: the user's lasting preferences and instructions for how to work or answer (language, format, tools, style; type user or feedback), facts about the user, project conventions (type project, scope project), and pointers to external resources (type reference). Anything the user explicitly asks you to remember is durable. Signal words include 记住, 以后, 总是, 每次, 不要, 别再, remember, from now on, always, never, prefer.
+Judge only <latest-user-message>. <earlier-user-messages> is context for understanding it; anything in them was already handled on earlier turns, so never extract from them again.
 
-Skip one-off task details, questions, secrets and credentials, raw code or logs, and facts derivable from the workspace. If nothing is durable, do not submit a plan.`
+Durable memory is what should still apply in a later, unrelated conversation: the user's lasting preferences and instructions for how to work or answer (language, format, tools, style; type user or feedback), facts about the user, project conventions (type project, scope project), and pointers to external resources the user will keep using (type reference). Anything the user explicitly asks you to remember is durable. Signal words include 记住, 以后, 总是, 每次, 不要, 别再, remember, from now on, always, never, prefer.
+
+Skip: instructions for the current task only (which repo, URL, file or value to use this time), greetings, questions, one-off answers, facts derivable from the workspace, secrets and credentials, raw code or logs, and requests about memory itself. When in doubt, skip.
+
+Before writing, check <existing-memory>. If an entry already covers the fact, update that slug only when the latest message changes it, otherwise skip; never create a second entry for the same fact. Create a new slug only at high confidence, or medium with an unambiguous source_quote.
+
+Write description and body in the language the user writes in. If nothing qualifies, do not submit a plan.`
 
 func (r *Runtime) submit(ctx context.Context, model string, messages []ai.Message, retry bool) (*planEnvelope, error) {
 	client, resolved, err := r.resolve(ctx, model)
@@ -402,7 +451,19 @@ func decodeDecision(raw json.RawMessage) (memory.Decision, error) {
 	}
 	evidence := decodeEvidence(item.Evidence)
 	if evidence == nil && (item.Confidence != "" || item.SourceQuote != "" || item.Reasoning != "") {
-		evidence = &memory.Evidence{Confidence: item.Confidence, SourceQuote: item.SourceQuote, Reasoning: item.Reasoning}
+		evidence = &memory.Evidence{}
+	}
+	// Top-level fields fill what an evidence object or quote string left out.
+	if evidence != nil {
+		if evidence.Confidence == "" {
+			evidence.Confidence = item.Confidence
+		}
+		if evidence.SourceQuote == "" {
+			evidence.SourceQuote = item.SourceQuote
+		}
+		if evidence.Reasoning == "" {
+			evidence.Reasoning = item.Reasoning
+		}
 	}
 	return memory.Decision{Op: op, Slug: item.Slug, Scope: item.Scope, MemoryType: memoryType, Description: item.Description, Body: item.Body, Mode: item.Mode, Evidence: evidence}, nil
 }
@@ -435,7 +496,7 @@ const submitPlanSchema = `{"type":"object","properties":{"decisions":{"type":"ar
 	`"description":{"type":"string","description":"One-line summary, at most 120 characters"},` +
 	`"body":{"type":"string","description":"The memory content; for append_daily, one journal bullet"},` +
 	`"mode":{"type":"string","enum":["merge","replace"],"description":"update only"},` +
-	`"confidence":{"type":"string","enum":["high","medium","low"]},` +
+	`"confidence":{"type":"string","enum":["high","medium","low"],"description":"Required for write: a new memory needs high, or medium with source_quote"},` +
 	`"source_quote":{"type":"string","description":"The user's own words supporting this decision"},` +
 	`"reasoning":{"type":"string"}` +
 	`},"required":["action"]}}},"required":["decisions"]}`
@@ -444,8 +505,12 @@ func submitTool() ai.Tool {
 	return ai.NewTool("SubmitMemoryPlan", "Submit validated memory mutations for one atomic batch.", submitPlanSchema)
 }
 
-func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn) (memory.BatchArgs, bool) {
+func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn, existing []memory.Meta) (memory.BatchArgs, bool) {
 	batch := memory.BatchArgs{Workdir: turn.Workdir, ConversationID: turn.SessionID, Trigger: "extraction", Model: turn.Model}
+	known := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		known[e.Slug] = true
+	}
 	for _, d := range decisions {
 		if d.Op == "append_daily" {
 			if d.Body == nil || strings.TrimSpace(*d.Body) == "" {
@@ -459,9 +524,28 @@ func extractionBatch(decisions []memory.Decision, turn agent.MemoryTurn) (memory
 		if d.Scope == "project" && strings.TrimSpace(turn.Workdir) == "" {
 			continue
 		}
+		if d.Op == "upsert" && !known[d.Slug] && !strongNewMemory(d.Evidence) {
+			logf("memory extraction %s: skipped weak new memory %s", turn.SessionID, d.Slug)
+			continue
+		}
 		batch.Decisions = append(batch.Decisions, d)
 	}
 	return batch, len(batch.Decisions) > 0 || batch.DailyAppend != nil
+}
+
+// strongNewMemory gates new slugs: high confidence, or medium backed by the
+// user's own words. Weaker candidates may only update existing entries.
+func strongNewMemory(e *memory.Evidence) bool {
+	if e == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(e.Confidence)) {
+	case "high":
+		return true
+	case "medium":
+		return len([]rune(strings.TrimSpace(e.SourceQuote))) >= 5
+	}
+	return false
 }
 
 func validateDecision(d memory.Decision) error {

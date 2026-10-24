@@ -173,7 +173,7 @@ func TestCompletedAppliesPlanWrittenToAdvertisedSchema(t *testing.T) {
 
 // One malformed decision must not discard the valid ones in the same plan.
 func TestCompletedKeepsValidDecisionsBesideMalformedOnes(t *testing.T) {
-	client := &fixtureClient{payload: `{"decisions":[{"action":"write","key":"k","value":"v","evidence":"quote"},{"action":"write","slug":"user-style","scope":"global","type":"feedback","description":"Concise","body":"Keep answers short."}]}`}
+	client := &fixtureClient{payload: `{"decisions":[{"action":"write","key":"k","value":"v","evidence":"quote","confidence":"high","source_quote":"the user said so"},{"action":"write","slug":"user-style","scope":"global","type":"feedback","description":"Concise","body":"Keep answers short.","confidence":"high","source_quote":"the user said so"}]}`}
 	rt, store := testRuntime(t, client)
 	rt.Completed(context.Background(), agent.MemoryTurn{SessionID: "s", User: ai.Message{ID: "u1", Role: "user", Content: "keep answers short"}, History: []ai.Message{{Role: "user", Content: "keep answers short"}}})
 	waitFor(t, func() bool {

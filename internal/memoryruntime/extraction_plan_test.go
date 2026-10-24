@@ -60,7 +60,7 @@ func extractionTurn(text string) agent.MemoryTurn {
 // decision that is otherwise complete (slug/scope/type/description/body) must
 // not be thrown away only because that extra field is a string.
 func TestWriteWithStringEvidenceIsKept(t *testing.T) {
-	client := &fixtureClient{payload: `{"decisions":[{"action":"write","slug":"user-reply-language","scope":"global","type":"user","description":"Reply in Chinese","body":"Answer in Chinese.","evidence":"以后回答我都用中文"}]}`}
+	client := &fixtureClient{payload: `{"decisions":[{"action":"write","slug":"user-reply-language","scope":"global","type":"user","description":"Reply in Chinese","body":"Answer in Chinese.","evidence":"以后回答我都用中文","confidence":"high","source_quote":"the user said so"}]}`}
 	rt, store := testRuntime(t, client)
 	rt.Completed(context.Background(), extractionTurn("以后回答我都用中文，记住"))
 	ok := waitFor(t, func() bool {
