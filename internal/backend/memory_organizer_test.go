@@ -192,7 +192,7 @@ func TestMemoryOrganizerHTTPPersistence(t *testing.T) {
 	if err != nil || len(rejections["entries"].([]memory.Rejection)) != 1 {
 		t.Fatalf("rejections=%v err=%v", rejections, err)
 	}
-	if factories.Load() < 5 {
+	if factories.Load() != 3 {
 		t.Fatalf("requests reused runtime: %d", factories.Load())
 	}
 

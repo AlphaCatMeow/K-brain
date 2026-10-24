@@ -56,6 +56,20 @@ func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "memory store unavailable")
 		return
 	}
+	if in.Command == "memory_organizer" {
+		var args memoryOrganizerRequest
+		if err := json.Unmarshal(in.Args, &args); err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		result, err := s.executeMemoryOrganizer(r.Context(), args)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	result, err := s.memoryStore.Dispatch(in.Command, in.Args)
 	if err != nil {
 		status := http.StatusBadRequest

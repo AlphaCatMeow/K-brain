@@ -447,6 +447,14 @@ func (s *Store) applyBatchLocked(args BatchArgs) (BatchResponse, error) {
 			}
 			out.Updated = append(out.Updated, r.Slug)
 		case "delete":
+			if (args.Trigger == "organizer" || args.Trigger == "organizer-manual") && len(d.Preconditions) < 2 {
+				reject(i, d, storeError("stale_organizer_plan", "organizer plan lacks content checks; run the organizer again"))
+				continue
+			}
+			if e := s.checkEntryPreconditionsLocked(d.Preconditions); e != nil {
+				reject(i, d, e)
+				continue
+			}
 			r, e := s.deleteLocked(DeleteArgs{ReadArgs: ReadArgs{Slug: d.Slug, Scope: scope, Workdir: args.Workdir, WorkdirHash: d.WorkdirHash}, Reason: d.Reason, Actor: "batch"})
 			if e != nil {
 				reject(i, d, e)
@@ -484,4 +492,29 @@ func (s *Store) applyBatchLocked(args BatchArgs) (BatchResponse, error) {
 		}
 	}
 	return out, nil
+}
+
+// Check under the mutation lock so a reviewed plan cannot delete edited content.
+func (s *Store) checkEntryPreconditionsLocked(conditions []EntryPrecondition) error {
+	if len(conditions) == 0 {
+		return nil
+	}
+	entries, err := s.load()
+	if err != nil {
+		return err
+	}
+	for _, condition := range conditions {
+		entry, err := findEntry(entries, condition.ReadArgs)
+		if err != nil {
+			return err
+		}
+		result, err := readResult(entry, ReadArgs{Length: 10000})
+		if err != nil {
+			return err
+		}
+		if result.Window.Truncated || result.Body != condition.Body || result.Description != condition.Description {
+			return storeError("stale_organizer_plan", "memory changed after organizer review; run the organizer again")
+		}
+	}
+	return nil
 }

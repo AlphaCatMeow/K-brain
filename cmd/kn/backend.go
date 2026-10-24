@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,6 +38,17 @@ func backendCLI(args []string) error {
 	prepareStorage := fs.Bool("prepare-storage", false, "Initialize and validate storage, then exit without starting tools or model clients")
 	legacyDesktopDir := fs.String("legacy-desktop-dir", "", "Import legacy desktop data before opening storage (honors previous migration markers)")
 	sessionDir := fs.String("session-dir", "", "Session storage directory; defaults to project storage")
+	var filesystemRoots []string
+	fs.Func("filesystem-root", "Directory exposed for remote file browsing (repeatable; defaults to working directory)", func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return errors.New("filesystem root is required")
+		}
+		path, err := filepath.Abs(value)
+		if err == nil {
+			filesystemRoots = append(filesystemRoots, path)
+		}
+		return err
+	})
 	memoryOrganizerInterval := fs.Duration("memory-organizer-interval", 24*time.Hour, "interval for backend memory organizer runs; 0 uses 24h")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: kn backend [-listen address] [-parent-stdio] [-token bearer-token]")
@@ -186,6 +198,7 @@ func backendCLI(args []string) error {
 		MCP:                     liveMCP,
 		Prompts:                 promptStore,
 		DefaultCWD:              cwd(),
+		FilesystemRoots:         filesystemRoots,
 	})
 	if err != nil {
 		return err
