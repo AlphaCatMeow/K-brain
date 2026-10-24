@@ -48,12 +48,41 @@ func (a *Agent) withoutMemoryTools(all []tools.Tool) []tools.Tool {
 	return slices.DeleteFunc(all, func(tool tools.Tool) bool { return tool.Memory })
 }
 
+// MemoryOffSnapshot marks a user message created while memory is off. Every path that
+// adds a user message to History while off must attach it.
+func MemoryOffSnapshot() ai.PromptSnapshot { return ai.PromptSnapshot{Source: memoryOffSource} }
+
+func (a *Agent) memoryOffMarks() []ai.PromptSnapshot {
+	if a.MemoryEnabled() {
+		return nil
+	}
+	return []ai.PromptSnapshot{MemoryOffSnapshot()}
+}
+
+func isMemoryOffMessage(m ai.Message) bool {
+	return m.Role == "user" && slices.ContainsFunc(m.PromptSnapshots, func(s ai.PromptSnapshot) bool {
+		return s.Source == memoryOffSource
+	})
+}
+
+// markResumedMessage gives a resumed or edited History message, while memory is off,
+// the retraction and off marker this turn computed; the persisted message, not the
+// turn's local copy, is what later turns and the extractor read.
+func markResumedMessage(resumed *ai.Message, computed []ai.PromptSnapshot) {
+	if isMemoryOffMessage(*resumed) {
+		return
+	}
+	snapshots := slices.Clone(resumed.PromptSnapshots)
+	for _, s := range computed {
+		if s.Source == savedMemorySource || s.Source == runtimeMemorySource || s.Source == memoryOffSource {
+			snapshots = append(snapshots, s)
+		}
+	}
+	resumed.PromptSnapshots = snapshots
+}
+
 // withoutMemoryOffTurns drops user messages created while memory was off from the
 // history handed to the extractor.
 func withoutMemoryOffTurns(history []ai.Message) []ai.Message {
-	return slices.DeleteFunc(history, func(m ai.Message) bool {
-		return m.Role == "user" && slices.ContainsFunc(m.PromptSnapshots, func(s ai.PromptSnapshot) bool {
-			return s.Source == memoryOffSource
-		})
-	})
+	return slices.DeleteFunc(history, isMemoryOffMessage)
 }

@@ -597,9 +597,14 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if resumeID == "" {
 		a.Messages = append(a.Messages, msg)
 	} else {
+		if !a.MemoryEnabled() {
+			markResumedMessage(&a.Messages[len(a.Messages)-1], userMessage.PromptSnapshots)
+		}
 		msg = a.Messages[len(a.Messages)-1]
 	}
 	a.msgsMu.Unlock()
+	// The History copy of this turn's user message; the loop below reuses msg.
+	writtenOff := isMemoryOffMessage(msg)
 	// A cancelled, failed or plan-exit turn keeps its user message in History,
 	// which later turns treat as context only. The runtime holds it for the
 	// next completed turn: a resume reports it once and an edit can still
@@ -607,7 +612,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	// propagates.
 	memoryReported := false
 	defer func() {
-		if !memoryReported && a.memoryRuntime != nil && a.MemoryEnabled() {
+		if !memoryReported && a.memoryRuntime != nil && a.MemoryEnabled() && !writtenOff {
 			a.memoryRuntime.Abandoned(a.SessionIDValue(), userMessage)
 		}
 	}()
@@ -733,7 +738,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				ev.OnSteer(s.text)
 			}
 			now := time.Now()
-			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts, SentAt: &now})
+			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts, SentAt: &now, PromptSnapshots: a.memoryOffMarks()})
 		}
 		if len(steered) > 0 {
 			a.msgsMu.Unlock()
@@ -746,7 +751,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				}
 			}
 			a.compacted = false
-			if a.memoryRuntime != nil && a.MemoryEnabled() {
+			// A message written while memory was off stays out of extraction, also when
+			// it is resumed after memory is back on.
+			if a.memoryRuntime != nil && a.MemoryEnabled() && !writtenOff {
 				memoryReported = true
 				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: withoutMemoryOffTurns(a.MessagesSnapshot())})
 			}

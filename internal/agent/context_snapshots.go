@@ -35,7 +35,7 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 				notice = ""
 			}
 		}
-		return append(snapshots, ai.PromptSnapshot{Source: memoryOffSource})
+		return append(snapshots, MemoryOffSnapshot())
 	}
 	for _, current := range []ai.PromptSnapshot{
 		{Source: savedMemorySource, Text: a.memoryBlock},
