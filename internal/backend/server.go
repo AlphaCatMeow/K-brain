@@ -47,6 +47,7 @@ type Options struct {
 	Token                   string
 	Models                  []protocol.ModelRef
 	DefaultCWD              string
+	FilesystemRoots         []string
 	Settings                *SettingsStore
 	Prompts                 *resources.PromptStore
 	MemoryRoot              string
@@ -69,6 +70,7 @@ type Server struct {
 	prompts              *resources.PromptStore
 	eventDir             string
 	defaultCWD           string
+	filesystemRoots      []string
 	memoryStore          *memory.Store
 	questionWait         time.Duration
 	memoryRuntimeFactory MemoryRuntimeFactory
@@ -179,10 +181,14 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		image: opts.Image,
-		store: opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
+		image:           opts.Image,
+		filesystemRoots: append([]string(nil), opts.FilesystemRoots...),
+		store:           opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
 		settings: opts.Settings, usage: NewProviderUsageService(opts.Settings), prompts: opts.Prompts,
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
+	}
+	if len(server.filesystemRoots) == 0 && opts.DefaultCWD != "" {
+		server.filesystemRoots = []string{opts.DefaultCWD}
 	}
 	cron.promptExecutor = server.executeCronPromptCanonical
 	cron.loopResults = server.deliverLoopResults
@@ -313,6 +319,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
 		s.handleModels(w)
+		return
+	}
+	if r.URL.Path == "/v1/fs" {
+		s.handleFilesystem(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/skills") {
