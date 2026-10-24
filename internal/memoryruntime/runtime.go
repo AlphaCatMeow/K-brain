@@ -309,12 +309,7 @@ func (r *Runtime) extract(ctx context.Context, key string, turn agent.MemoryTurn
 	if !ok || ctx.Err() != nil {
 		return
 	}
-	if r.store.WipeEpoch() != epoch {
-		// Memory was wiped while this turn was being judged.
-		logf("memory extraction %s: memory wiped during extraction; plan dropped", key)
-		return
-	}
-	result, err := r.store.ApplyBatch(batch)
+	result, err := r.store.ApplyExtractionBatch(batch, epoch)
 	if err != nil {
 		logf("memory extraction %s: apply batch: %s", key, describeExtractionError(err))
 		r.holdUnlessClosed(key, judge, epoch)

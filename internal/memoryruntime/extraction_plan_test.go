@@ -113,6 +113,7 @@ func TestExtractionLogDoesNotPrintProviderErrorBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupRuntime(t, rt)
 	rt.Completed(context.Background(), extractionTurn("I prefer pnpm"))
 	waitFor(t, func() bool { return strings.Count(buf.String(), "memory extraction") >= 2 })
 	if strings.Contains(buf.String(), "sk-proj-AbCdEf123456") {

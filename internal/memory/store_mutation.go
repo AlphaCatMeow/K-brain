@@ -382,6 +382,22 @@ func (s *Store) Accept(args ReadArgs) (MutationResponse, error) {
 func (s *Store) ApplyBatch(args BatchArgs) (BatchResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.applyBatchLocked(args)
+}
+
+// ApplyExtractionBatch discards plans from before a wipe under the same lock
+// that protects both the wipe and every batch mutation.
+func (s *Store) ApplyExtractionBatch(args BatchArgs, epoch uint64) (BatchResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.wipes.n.Load() != epoch {
+		return BatchResponse{}, storeError("stale_extraction", "memory wiped during extraction; plan dropped")
+	}
+	args.Trigger = "extraction"
+	return s.applyBatchLocked(args)
+}
+
+func (s *Store) applyBatchLocked(args BatchArgs) (BatchResponse, error) {
 	out := BatchResponse{}
 	var unreviewed *bool
 	if args.Trigger == "extraction" {

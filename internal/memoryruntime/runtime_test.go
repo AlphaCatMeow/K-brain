@@ -55,7 +55,27 @@ func testRuntime(t *testing.T, client ai.Client) (*Runtime, *memory.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cleanupRuntime(t, rt)
 	return rt, store
+}
+
+func cleanupRuntime(t *testing.T, rt *Runtime) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = rt.Close()
+		if !waitFor(t, func() bool {
+			rt.mu.Lock()
+			defer rt.mu.Unlock()
+			for _, c := range rt.claims {
+				if c.cancel != nil {
+					return false
+				}
+			}
+			return true
+		}) {
+			t.Error("extraction did not stop before runtime cleanup")
+		}
+	})
 }
 func TestInjectUsesCanonicalOverview(t *testing.T) {
 	rt, store := testRuntime(t, &fixtureClient{})
