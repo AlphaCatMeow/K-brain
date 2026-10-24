@@ -3,6 +3,7 @@ package backend
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,13 +13,18 @@ import (
 // Review probe: repeated values and memory combined with another settings field.
 func TestReviewMemorySwitchPutSequences(t *testing.T) {
 	f := newMemorySwitchFixture(t)
+	// Off is persisted only in the switch file; config.json never carries the key.
 	hasKey := func() bool {
 		t.Helper()
 		data, err := os.ReadFile(f.configPath)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return strings.Contains(string(data), `"memory"`)
+		if strings.Contains(string(data), `"memory"`) {
+			t.Fatalf("config.json carries the memory key:\n%s", data)
+		}
+		_, err = os.Stat(filepath.Join(filepath.Dir(f.configPath), "memory-switch.json"))
+		return err == nil
 	}
 	f.setEnabled(t, true)
 	f.setEnabled(t, true)

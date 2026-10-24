@@ -3,14 +3,15 @@ package backend
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Stack-Cairn/K-brain/internal/config"
 )
 
-// Releases without the memory switch reject an unknown "memory" key and refuse
-// to start, so turning memory back on must leave the file as an older release wrote it.
+// Releases without the memory switch reject an unknown "memory" key and refuse to start,
+// so config.json must look as an older release wrote it whether memory is on or off.
 func TestMemorySwitchOnLeavesConfigReadableByOlderReleases(t *testing.T) {
 	f := newMemorySwitchFixture(t)
 	topLevel := func() map[string]json.RawMessage {
@@ -39,8 +40,11 @@ func TestMemorySwitchOnLeavesConfigReadableByOlderReleases(t *testing.T) {
 	}
 
 	f.setEnabled(t, false)
-	if _, ok := topLevel()["memory"]; !ok {
-		t.Fatal("memory off was not persisted")
+	if raw, ok := topLevel()["memory"]; ok {
+		t.Fatalf("memory off wrote %s; older releases would refuse this config", raw)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(f.configPath), "memory-switch.json")); err != nil {
+		t.Fatalf("memory off left no switch file: %v", err)
 	}
 	cfg, err := config.LoadFile(f.configPath)
 	if err != nil {

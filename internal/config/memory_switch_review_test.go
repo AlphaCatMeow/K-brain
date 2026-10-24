@@ -8,11 +8,13 @@ import (
 )
 
 // Review probe: the default Save path (LIVEAGENT_HOME/config.json), a hand-written
-// explicit "on", and the empty object all end up without a "memory" key.
+// explicit "on", and the empty object all end up without a "memory" key; only off
+// leaves the switch file.
 func TestReviewMemorySwitchSaveLoadRoundTrips(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LIVEAGENT_HOME", home)
 	p := filepath.Join(home, "config.json")
+	side := filepath.Join(home, memorySwitchFileName)
 	read := func() string {
 		t.Helper()
 		data, err := os.ReadFile(p)
@@ -25,14 +27,14 @@ func TestReviewMemorySwitchSaveLoadRoundTrips(t *testing.T) {
 	for _, tc := range []struct {
 		name, memory string
 		enabled      bool
-		kept         bool
 	}{
-		{"explicit on", `,"memory":{"enabled":true}}`, true, false},
-		{"empty object", `,"memory":{}}`, true, false},
-		{"null", `,"memory":null}`, true, false},
-		{"off", `,"memory":{"enabled":false}}`, false, true},
-		{"absent", `}`, true, false},
+		{"explicit on", `,"memory":{"enabled":true}}`, true},
+		{"empty object", `,"memory":{}}`, true},
+		{"null", `,"memory":null}`, true},
+		{"off", `,"memory":{"enabled":false}}`, false},
+		{"absent", `}`, true},
 	} {
+		_ = os.Remove(side)
 		if err := os.WriteFile(p, []byte(base+tc.memory), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -46,8 +48,11 @@ func TestReviewMemorySwitchSaveLoadRoundTrips(t *testing.T) {
 		if err := cfg.Save(); err != nil {
 			t.Fatalf("%s: save: %v", tc.name, err)
 		}
-		if got := strings.Contains(read(), `"memory"`); got != tc.kept {
-			t.Fatalf("%s: memory key kept=%v want %v:\n%s", tc.name, got, tc.kept, read())
+		if strings.Contains(read(), `"memory"`) {
+			t.Fatalf("%s: config.json kept the memory key:\n%s", tc.name, read())
+		}
+		if _, err := os.Stat(side); (err == nil) == tc.enabled {
+			t.Fatalf("%s: switch file present=%v want %v", tc.name, err == nil, !tc.enabled)
 		}
 		again, err := Load()
 		if err != nil || again.Memory.IsEnabled() != tc.enabled {

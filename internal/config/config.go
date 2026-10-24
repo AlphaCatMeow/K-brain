@@ -169,6 +169,8 @@ type Config struct {
 
 	Browser BrowserConfig `json:"browser,omitzero"`
 
+	// Memory is persisted in memorySwitchFileName, never in config.json; the key is still
+	// read so values written by earlier builds of the switch carry over.
 	Memory MemoryConfig `json:"memory,omitzero"`
 
 	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
@@ -224,10 +226,6 @@ type MemoryConfig struct {
 
 // IsEnabled defaults to true so configurations written before the switch keep memory on.
 func (m MemoryConfig) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
-
-// IsZero lets omitzero drop the default (on) switch: releases without it reject an
-// unknown "memory" key, so only an explicit off is written to disk.
-func (m MemoryConfig) IsZero() bool { return m.IsEnabled() }
 
 type BrowserConfig struct {
 	Mode string `json:"mode,omitempty"`
@@ -493,6 +491,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		cfg := Default()
+		cfg.loadMemorySwitch(p)
 		logf("config.load", "missing file, writing defaults (%s)", cfg.fingerprint())
 		return cfg, cfg.Save()
 	}
@@ -511,6 +510,7 @@ func Load() (*Config, error) {
 			var restored Config
 			if parseConfigJSONC(bak, &restored) == nil && (len(restored.Providers) > 0 || len(restored.Models) > 0) {
 				logf("config.load", "restored from .bak (%s)", restored.fingerprint())
+				restored.loadMemorySwitch(p)
 				if len(restored.MCPServers) == 0 && len(cfg.MCPServers) > 0 {
 					restored.MCPServers = cfg.MCPServers
 				}
@@ -525,9 +525,11 @@ func Load() (*Config, error) {
 			def.Language = cfg.Language
 		}
 		def.MCPServers = cfg.MCPServers
+		def.loadMemorySwitch(p)
 		logf("config.load", "no usable .bak; regenerated defaults (%s), keeping %d mcp entries", def.fingerprint(), len(cfg.MCPServers))
 		return def, def.Save()
 	}
+	cfg.loadMemorySwitch(p)
 	logf("config.load", "ok (%s)", cfg.fingerprint())
 	return &cfg, nil
 }
@@ -563,12 +565,19 @@ func (c *Config) Save() error {
 	} else {
 		logf("config.save", "first write (%s)", c.fingerprint())
 	}
+	restoreMemory, err := saveMemorySwitch(p, c.Memory)
+	if err != nil {
+		logf("config.save", "memory switch save failed: %v", err)
+		return err
+	}
 	staging, err := os.OpenFile(p+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
+		restoreMemory()
 		logf("config.save", "write tmp failed: %v", err)
 		return err
 	}
 	if err := replaceConfigFile(staging, p, data); err != nil {
+		restoreMemory()
 		logf("config.save", "atomic save failed: %v", err)
 		return err
 	}
@@ -583,6 +592,7 @@ func (c *Config) Save() error {
 func marshalConfig(c *Config) ([]byte, error) {
 	wire := *c
 	wire.Models = nil
+	wire.Memory = MemoryConfig{}
 	wire.Providers = piProviders(c)
 	var image json.RawMessage
 	if c.imageConfigInvalid && c.Image == nil {
