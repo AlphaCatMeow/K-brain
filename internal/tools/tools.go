@@ -21,6 +21,9 @@ type Tool struct {
 	Def       ai.Tool
 	Run       func(ctx context.Context, args json.RawMessage) (string, error)
 	NoInherit bool
+	// Memory marks K-brain's own memory tools, which the memory switch hides; a
+	// client tool that happens to share a name is not one of them.
+	Memory bool
 }
 
 type InteractiveRunner interface {

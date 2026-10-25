@@ -134,6 +134,8 @@ type Agent struct {
 	contextRequested atomic.Bool
 	contextNoticeMu  sync.Mutex
 	contextNotice    string
+	// contextNoticeOff: the notice quotes a user message written while memory was off.
+	contextNoticeOff bool
 	running          atomic.Bool
 	turnMu           sync.Mutex
 	waitReg          *waitRegistry
@@ -183,6 +185,7 @@ type Agent struct {
 	memoryBlock        string
 	runtimeMemoryBlock string
 	memoryDisabled     bool
+	memoryOff          atomic.Bool
 	// markdownMemoryReadOnly is set once a memory runtime owns memory.
 	markdownMemoryReadOnly bool
 	memoryRuntime          MemoryRuntime
@@ -478,16 +481,16 @@ func (a *Agent) suggest(name string) []string {
 func (a *Agent) AvailableTools() []tools.Tool {
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
-	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+	return a.withoutMemoryTools(a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...)))
 }
 
 func (a *Agent) AllTools() []tools.Tool {
 	a.toolsMu.Lock()
 	defer a.toolsMu.Unlock()
 	if a.RunToolsSet {
-		return append([]tools.Tool(nil), a.RunTools...)
+		return a.withoutMemoryTools(append([]tools.Tool(nil), a.RunTools...))
 	}
-	return a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...))
+	return a.withoutMemoryTools(a.modeTools(append(append(append([]tools.Tool(nil), a.Tools...), a.mcpTools...), a.pluginTools...)))
 }
 
 func (a *Agent) Turn(ctx context.Context, input string, ev Events) (string, error) {
@@ -558,7 +561,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		defer func() { turnErr = errors.Join(turnErr, closeComputer()) }()
 	}
 	a.RefreshMemory()
-	if a.memoryRuntime != nil {
+	if a.memoryRuntime != nil && a.MemoryEnabled() {
 		if block, err := a.memoryRuntime.Inject(ctx, a.WorkingDir); err == nil {
 			a.installRuntimeMemory(block)
 		}
@@ -583,6 +586,9 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if snapshot, ok := turnSnapshot(ctx); ok {
 		userMessage.PromptSnapshots = append(userMessage.PromptSnapshots, snapshot)
 	}
+	if memoryOffAuthored(ctx) && !isMemoryOffMessage(userMessage) {
+		userMessage.PromptSnapshots = append(userMessage.PromptSnapshots, MemoryOffSnapshot())
+	}
 	// The snapshot belongs to this turn only; subagents, workflow agents and background
 	// tasks started by its tools inherit ctx and must not receive it.
 	ctx = withoutTurnSnapshot(ctx)
@@ -596,9 +602,12 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	if resumeID == "" {
 		a.Messages = append(a.Messages, msg)
 	} else {
+		markResumedMessage(&a.Messages[len(a.Messages)-1], userMessage.PromptSnapshots, a.MemoryEnabled())
 		msg = a.Messages[len(a.Messages)-1]
 	}
 	a.msgsMu.Unlock()
+	// The History copy of this turn's user message; the loop below reuses msg.
+	writtenOff := isMemoryOffMessage(msg)
 	// A cancelled, failed or plan-exit turn keeps its user message in History,
 	// which later turns treat as context only. The runtime holds it for the
 	// next completed turn: a resume reports it once and an edit can still
@@ -606,7 +615,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 	// propagates.
 	memoryReported := false
 	defer func() {
-		if !memoryReported && a.memoryRuntime != nil {
+		if !memoryReported && a.memoryRuntime != nil && a.MemoryEnabled() && !writtenOff {
 			a.memoryRuntime.Abandoned(a.SessionIDValue(), userMessage)
 		}
 	}()
@@ -630,9 +639,13 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 		if err := a.maybeCompactForRequest(ctx, ev); err != nil {
 			return "", err
 		}
-		if notice := a.takeContextNotice(); notice != "" {
+		if notice, quotesOff := a.takeContextNotice(); notice != "" {
 			now := time.Now()
-			message := ai.Message{Role: "user", Content: notice, SentAt: &now, PromptContext: a.todoContext(), PromptSnapshots: a.contextSnapshots()}
+			snapshots := a.contextSnapshots()
+			if quotesOff && a.MemoryEnabled() {
+				snapshots = append(snapshots, MemoryOffSnapshot())
+			}
+			message := ai.Message{Role: "user", Content: notice, SentAt: &now, PromptContext: a.todoContext(), PromptSnapshots: snapshots}
 			a.msgsMu.Lock()
 			a.Messages = append(a.Messages, message)
 			a.msgsMu.Unlock()
@@ -732,7 +745,7 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				ev.OnSteer(s.text)
 			}
 			now := time.Now()
-			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts, SentAt: &now})
+			a.Messages = append(a.Messages, ai.Message{Role: "user", Content: s.text, Parts: s.parts, SentAt: &now, PromptSnapshots: a.memoryOffMarks()})
 		}
 		if len(steered) > 0 {
 			a.msgsMu.Unlock()
@@ -745,9 +758,11 @@ func (a *Agent) turnPending(ctx context.Context, input string, parts []ai.Conten
 				}
 			}
 			a.compacted = false
-			if a.memoryRuntime != nil {
+			// A message written while memory was off stays out of extraction, also when
+			// it is resumed after memory is back on.
+			if a.memoryRuntime != nil && a.MemoryEnabled() && !writtenOff {
 				memoryReported = true
-				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: a.MessagesSnapshot()})
+				a.memoryRuntime.Completed(ctx, MemoryTurn{SessionID: a.SessionIDValue(), Workdir: a.WorkingDir, Model: a.ModelName, User: userMessage, History: withoutMemoryOffTurns(a.MessagesSnapshot())})
 			}
 			return msg.Content, nil
 		}
@@ -768,12 +783,13 @@ func (a *Agent) requestNewContext() {
 }
 
 func (a *Agent) resetContextMessages(notice bool) {
-	lastUser := ""
+	lastUser, lastUserOff := "", false
 	a.msgsMu.Lock()
 	if len(a.Messages) > 0 {
 		for i := len(a.Messages) - 1; i >= 0; i-- {
 			if a.Messages[i].Role == "user" {
 				lastUser = truncateField(a.Messages[i].TextContent(), 8000)
+				lastUserOff = isMemoryOffMessage(a.Messages[i])
 				break
 			}
 		}
@@ -789,16 +805,17 @@ func (a *Agent) resetContextMessages(notice bool) {
 		if lastUser != "" {
 			a.contextNotice += "\n\nCurrent task:\n" + lastUser
 		}
+		a.contextNoticeOff = lastUser != "" && lastUserOff
 		a.contextNoticeMu.Unlock()
 	}
 }
 
-func (a *Agent) takeContextNotice() string {
+func (a *Agent) takeContextNotice() (string, bool) {
 	a.contextNoticeMu.Lock()
 	defer a.contextNoticeMu.Unlock()
-	n := a.contextNotice
-	a.contextNotice = ""
-	return n
+	n, off := a.contextNotice, a.contextNoticeOff
+	a.contextNotice, a.contextNoticeOff = "", false
+	return n, off
 }
 
 const (

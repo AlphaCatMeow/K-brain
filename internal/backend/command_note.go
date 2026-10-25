@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
@@ -60,8 +61,11 @@ func (s *Server) handleCommandNote(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 	now := time.Now()
-	messages := append(rt.agent.MessagesSnapshot(),
-		ai.Message{ID: commandNoteID(), Role: "user", Content: command, Authored: true, SentAt: &now},
+	note := ai.Message{ID: commandNoteID(), Role: "user", Content: command, Authored: true, SentAt: &now}
+	if !s.memoryEnabledNow(rt) {
+		note.PromptSnapshots = []ai.PromptSnapshot{agent.MemoryOffSnapshot()}
+	}
+	messages := append(rt.agent.MessagesSnapshot(), note,
 		ai.Message{ID: commandNoteID(), Role: "assistant", Content: result, StopReason: ai.StopReasonStop},
 	)
 	previous := rt.agent.MessagesSnapshot()

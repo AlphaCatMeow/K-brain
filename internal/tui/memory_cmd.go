@@ -44,7 +44,11 @@ func (m *model) memoryCommand(args []string) {
 	}
 
 	var b strings.Builder
-	b.WriteString(dimStyle.Render("memory — injected into every turn · /memory <n> [session] marks done · edit the files directly:"))
+	if m.agent != nil && !m.agent.MemoryEnabled() {
+		b.WriteString(dimStyle.Render("memory is off — not injected; turn it back on in LiveAgent's memory settings · /memory <n> [session] marks done · edit the files directly:"))
+	} else {
+		b.WriteString(dimStyle.Render("memory — injected into every turn · /memory <n> [session] marks done · edit the files directly:"))
+	}
 	found := false
 	for _, s := range scopes {
 		entries := s.Entries()

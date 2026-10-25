@@ -14,6 +14,8 @@ type cfgSyncMsg struct {
 	mod      time.Time
 	theme    string
 	language *string
+	// loaded carries the memory switch with the disk state Load saw; nil skips it.
+	loaded *config.Config
 }
 
 type cfgSyncTick struct{}
@@ -39,7 +41,9 @@ func (m *model) cfgSync() (tea.Model, tea.Cmd) {
 		return m, m.watchConfig()
 	}
 	return m, tea.Sequence(
-		func() tea.Msg { return cfgSyncMsg{mod: fi.ModTime(), theme: cfg.Theme, language: &cfg.Language} },
+		func() tea.Msg {
+			return cfgSyncMsg{mod: fi.ModTime(), theme: cfg.Theme, language: &cfg.Language, loaded: cfg}
+		},
 		m.watchConfig(),
 	)
 }
@@ -53,6 +57,22 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		m.menu = nil
 		m.refreshVP()
 	}
+	if m.cfg != nil && msg.loaded != nil {
+		// The switch is changed in LiveAgent; follow it like theme and language.
+		on := msg.loaded.Memory.IsEnabled()
+		changed := m.cfg.Memory.IsEnabled() != on
+		m.cfg.AdoptMemory(msg.loaded)
+		if changed {
+			// Like the backend, the agent takes the switch at a turn boundary: tools this
+			// turn already offered the model keep working. Only an agent turn waits, since
+			// only it ends with turnDoneMsg; /review and goal formulation do not run one.
+			if m.agent != nil && m.agent.TurnRunning() {
+				m.memoryPending = &on
+			} else {
+				m.applyMemorySwitch(on)
+			}
+		}
+	}
 	if _, pinned := m.cfgExtra["theme"]; pinned {
 		return
 	}
@@ -60,5 +80,18 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		m.cfg.Theme = msg.theme
 		m.themeHow = m.applyTheme(msg.theme)
 		m.refreshVP()
+	}
+}
+
+// applyMemorySwitch hands the switch LiveAgent set to the agent and says so.
+func (m *model) applyMemorySwitch(on bool) {
+	m.memoryPending = nil
+	if m.agent != nil {
+		m.agent.SetMemoryEnabled(on)
+	}
+	if on {
+		m.append(dimStyle.Render("◐ memory was turned back on in LiveAgent"))
+	} else {
+		m.append(dimStyle.Render(memoryOffNotice))
 	}
 }

@@ -9,6 +9,9 @@ type queueEntry struct {
 	CreatedAt         int64                  `json:"createdAt"`
 	DraftJSON         string                 `json:"draftJson"`
 	UploadedFilesJSON string                 `json:"uploadedFilesJson"`
+	// MemoryOff records that the message was queued while memory was off; it stays out
+	// of extraction even when it runs after memory is back on.
+	MemoryOff bool `json:"memoryOff,omitempty"`
 }
 
 type queueReceipt struct {

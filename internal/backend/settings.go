@@ -88,12 +88,21 @@ type settingsModel struct {
 type settingsProjection struct {
 	AIApproval      config.AIApprovalConfig `json:"aiApproval"`
 	Computer        config.ComputerConfig   `json:"computer"`
+	Memory          settingsMemory          `json:"memory"`
 	Version         string                  `json:"version"`
 	Mode            string                  `json:"mode"`
 	DefaultModel    string                  `json:"defaultModel"`
 	DefaultProvider string                  `json:"defaultProvider"`
 	Providers       []settingsProvider      `json:"providers"`
 	Models          []settingsModel         `json:"models"`
+}
+
+// settingsMemory projects the memory master switch with its default resolved.
+type settingsMemory struct {
+	Enabled bool `json:"enabled"`
+}
+type settingsMemoryUpdate struct {
+	Enabled *bool `json:"enabled"`
 }
 type settingsModelUpdate struct {
 	Provider         string    `json:"provider,omitempty"`
@@ -143,6 +152,7 @@ type settingsProviderUpdate struct {
 type settingsUpdate struct {
 	AIApproval      *config.AIApprovalConfig `json:"aiApproval,omitempty"`
 	Computer        *config.ComputerConfig   `json:"computer,omitempty"`
+	Memory          *settingsMemoryUpdate    `json:"memory,omitempty"`
 	DefaultModel    *string                  `json:"defaultModel,omitempty"`
 	DefaultProvider *string                  `json:"defaultProvider,omitempty"`
 	Providers       []settingsProviderUpdate `json:"providers,omitempty"`
@@ -164,6 +174,7 @@ func publicBaseURL(raw string) string {
 func projectSettings(cfg *config.Config) settingsProjection {
 	out := settingsProjection{Version: protocol.Version, Mode: "kbrain", DefaultModel: cfg.DefaultModel, DefaultProvider: cfg.DefaultProvider, Providers: []settingsProvider{}, Models: []settingsModel{}}
 	out.Computer = cfg.Computer
+	out.Memory = settingsMemory{Enabled: cfg.Memory.IsEnabled()}
 	out.AIApproval = cfg.AIApproval
 	if out.AIApproval.Mode == "" {
 		out.AIApproval.Mode = "off"
@@ -280,6 +291,13 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 			return fmt.Errorf("computer.command executable cannot be empty")
 		}
 		cfg.Computer = computer
+	}
+	if update.Memory != nil {
+		if update.Memory.Enabled == nil {
+			return fmt.Errorf("memory.enabled is required")
+		}
+		enabled := *update.Memory.Enabled
+		cfg.Memory.Enabled = &enabled
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = map[string]config.Provider{}
@@ -441,6 +459,15 @@ func nextProviderOrder(cfg *config.Config, providers []settingsProviderUpdate, p
 	return order
 }
 
+// memoryEnabledNow is the current memory switch for input that arrives between runs
+// (queued messages, command notes); the agent applies the switch only at a run boundary.
+func (s *Server) memoryEnabledNow(rt *runtimeSession) bool {
+	if s.settings == nil {
+		return rt.agent == nil || rt.agent.MemoryEnabled()
+	}
+	return s.settings.Snapshot().Memory.IsEnabled()
+}
+
 // Refresh only at the next idle run boundary; SetModel preserves tasks and history.
 func (s *Server) refreshSettingsLocked(rt *runtimeSession) error {
 	if s.settings == nil {
@@ -458,6 +485,7 @@ func (s *Server) refreshSettingsLocked(rt *runtimeSession) error {
 	if rt.settingsRevision == revision {
 		return nil
 	}
+	rt.agent.SetMemoryEnabled(cfg.Memory.IsEnabled())
 	fresh, err := s.factory(context.Background(), rt.agent.WorkingDir, protocol.ModelRef{Provider: rt.agent.Provider, Model: rt.agent.ModelName})
 	if err != nil {
 		return fmt.Errorf("could not refresh model configuration")

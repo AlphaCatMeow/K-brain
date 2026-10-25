@@ -25,6 +25,23 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 	a.msgsMu.Lock()
 	defer a.msgsMu.Unlock()
 	var snapshots []ai.PromptSnapshot
+	if !a.MemoryEnabled() {
+		// Retract memory that earlier turns carried; history keeps its snapshots for cache
+		// stability, so a newer snapshot must say they no longer apply. One notice is enough.
+		notice := memoryOffNotice
+		for _, source := range []string{savedMemorySource, runtimeMemorySource} {
+			if previous, exists := retainedSnapshot(a.Messages, source); exists && previous != memoryOffNotice && previous != "" {
+				snapshots = append(snapshots, ai.PromptSnapshot{Source: source, Text: notice})
+				notice = ""
+			}
+		}
+		// A session that never carried memory, or whose last instruction was "on again",
+		// still needs the off instruction once.
+		if notice != "" && lastMemorySwitchInstruction(a.Messages) != memoryOffNotice {
+			snapshots = append(snapshots, ai.PromptSnapshot{Source: runtimeMemorySource, Text: notice})
+		}
+		return append(snapshots, MemoryOffSnapshot())
+	}
 	for _, current := range []ai.PromptSnapshot{
 		{Source: savedMemorySource, Text: a.memoryBlock},
 		{Source: runtimeMemorySource, Text: a.runtimeMemoryBlock},
@@ -48,7 +65,25 @@ func (a *Agent) contextSnapshots() []ai.PromptSnapshot {
 		}
 		snapshots = append(snapshots, current)
 	}
+	// Re-injected memory does not lift the off instruction, so say it once on a source of
+	// its own; the memory sources keep deduplicating against their own blocks.
+	if lastMemorySwitchInstruction(a.Messages) == memoryOffNotice {
+		snapshots = append(snapshots, ai.PromptSnapshot{Source: memorySwitchSource, Text: memoryOnNotice})
+	}
 	return snapshots
+}
+
+// lastMemorySwitchInstruction is the newest off or on-again instruction in History.
+func lastMemorySwitchInstruction(messages []ai.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		snapshots := messages[i].PromptSnapshots
+		for j := len(snapshots) - 1; j >= 0; j-- {
+			if text := snapshots[j].Text; text == memoryOffNotice || text == memoryOnNotice {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func retainedSnapshot(messages []ai.Message, source string) (string, bool) {

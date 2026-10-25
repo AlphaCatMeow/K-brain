@@ -153,7 +153,9 @@ type menu struct {
 type model struct {
 	promptCatalog promptCatalog
 
-	cfg           *config.Config
+	cfg *config.Config
+	// memoryPending is a memory switch LiveAgent set during a turn, applied when it ends.
+	memoryPending *bool
 	agent         *agent.Agent
 	modelName     string
 	provName      string
@@ -532,6 +534,9 @@ func Run(cfg *config.Config, modelName, provName, sysPrompt, resumeID string, ca
 	return m.sessionID, err
 }
 
+// memoryOffNotice tells a TUI user why memory tools are gone; only LiveAgent can switch it.
+const memoryOffNotice = "◐ memory is off — remember, forget and memory_manager are unavailable, saved memories are not loaded and nothing new is saved; turn memory back on in LiveAgent's memory settings"
+
 // startupReport records the counts the startup card summarises and appends only
 // the per-item problems, which are diagnostics the card has no room for.
 func (m *model) startupReport() {
@@ -542,6 +547,10 @@ func (m *model) startupReport() {
 	} else if inTmuxEnv() && !tmuxExtKeysCheck() {
 
 		m.append(dimStyle.Render("◐ shift+enter needs tmux extended-keys on — k-brain couldn't set it; add `set -s extended-keys on` to ~/.tmux.conf (meanwhile ctrl+j / alt+enter insert newlines)"))
+	}
+	// The memory switch is shared with LiveAgent and cannot be changed here.
+	if m.cfg != nil && !m.cfg.Memory.IsEnabled() {
+		m.append(dimStyle.Render(memoryOffNotice))
 	}
 	sk, problems := skills.ScanDetailed(skills.DefaultDirs()...)
 	var b strings.Builder
@@ -671,7 +680,7 @@ func (m *model) resume(id string) error {
 	if ag, mn, pn, err := buildAgent(m.cfg, meta.Model, meta.Provider, m.sysPrompt); err == nil {
 		m.agent, m.modelName, m.provName = ag, mn, pn
 	} else {
-		m.agent = agent.New(m.agent.Client, m.agent.Model, m.agent.MaxTokens, m.sysPrompt, agent.WithExperimental(m.agent.Experimental()), agent.WithComputerConfig(m.cfg.Computer))
+		m.agent = agent.New(m.agent.Client, m.agent.Model, m.agent.MaxTokens, m.sysPrompt, agent.WithExperimental(m.agent.Experimental()), agent.WithComputerConfig(m.cfg.Computer), agent.WithMemoryEnabled(m.cfg.Memory.IsEnabled()))
 		m.agent.ModelName, m.agent.Provider = m.modelName, m.provName
 		m.agent.Vision = m.supportsVision()
 		m.agent.ContextLimit = m.contextLimitFor(m.provName, m.agent.Model)
@@ -899,7 +908,7 @@ func (m *model) setGoal(goal string) {
 	m.goal = goal
 	m.goalRounds = 0
 	if m.store != nil && m.sessionID != "" {
-		_ = m.store.SetGoal(m.sessionID, goal)
+		_ = m.store.SetGoalMemory(m.sessionID, goal, !m.cfg.Memory.IsEnabled())
 	}
 }
 
@@ -909,7 +918,7 @@ func buildAgent(cfg *config.Config, modelName, provName, sysPrompt string) (*age
 		return nil, "", "", err
 	}
 
-	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sysPrompt, agent.WithExperimental(cfg.Experimental), agent.WithComputerConfig(cfg.Computer))
+	ag := agent.New(route.Client, route.APIModel, route.MaxOutput, sysPrompt, agent.WithExperimental(cfg.Experimental), agent.WithComputerConfig(cfg.Computer), agent.WithMemoryEnabled(cfg.Memory.IsEnabled()))
 	if err := ag.SetModel(route.AgentModel()); err != nil {
 		return nil, "", "", err
 	}
@@ -1987,6 +1996,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushCurrent()
 		m.clearQueuedTools()
 		m.busy = false
+		if m.memoryPending != nil {
+			m.applyMemorySwitch(*m.memoryPending)
+		}
 		m.cancel = nil
 		m.interrupt1 = false
 

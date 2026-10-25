@@ -169,6 +169,15 @@ type Config struct {
 
 	Browser BrowserConfig `json:"browser,omitzero"`
 
+	// Memory is persisted in the memorySwitchSuffix file, never in config.json; the key is still
+	// read so values written by earlier builds of the switch carry over.
+	Memory MemoryConfig `json:"memory,omitzero"`
+	// memoryDisk is the switch file as of this config's last Load or Save. Save leaves the
+	// switch alone when Memory still matches it, so a process saving an unrelated setting
+	// from a stale copy never undoes a switch another process set.
+	memoryDisk     memoryDiskState
+	memoryDiskPath string
+
 	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
 	Computer   ComputerConfig    `json:"computer,omitzero"`
 	Sandbox    SandboxConfig     `json:"sandbox,omitzero"`
@@ -213,6 +222,15 @@ type ComputerConfig struct {
 
 	Enabled *bool `json:"enabled,omitempty"`
 }
+
+// MemoryConfig is the memory master switch. Off stops memory injection, hidden extraction
+// and the agent memory tools; stored memories and the memory management API stay available.
+type MemoryConfig struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// IsEnabled defaults to true so configurations written before the switch keep memory on.
+func (m MemoryConfig) IsEnabled() bool { return m.Enabled == nil || *m.Enabled }
 
 type BrowserConfig struct {
 	Mode string `json:"mode,omitempty"`
@@ -478,6 +496,7 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		cfg := Default()
+		cfg.loadMemorySwitch(p)
 		logf("config.load", "missing file, writing defaults (%s)", cfg.fingerprint())
 		return cfg, cfg.Save()
 	}
@@ -496,6 +515,11 @@ func Load() (*Config, error) {
 			var restored Config
 			if parseConfigJSONC(bak, &restored) == nil && (len(restored.Providers) > 0 || len(restored.Models) > 0) {
 				logf("config.load", "restored from .bak (%s)", restored.fingerprint())
+				// A memory value left in the empty config by earlier builds still counts.
+				if cfg.Memory.Enabled != nil {
+					restored.Memory = cfg.Memory
+				}
+				restored.loadMemorySwitch(p)
 				if len(restored.MCPServers) == 0 && len(cfg.MCPServers) > 0 {
 					restored.MCPServers = cfg.MCPServers
 				}
@@ -510,9 +534,15 @@ func Load() (*Config, error) {
 			def.Language = cfg.Language
 		}
 		def.MCPServers = cfg.MCPServers
+		// A memory value left in the empty config by earlier builds still counts.
+		if cfg.Memory.Enabled != nil {
+			def.Memory = cfg.Memory
+		}
+		def.loadMemorySwitch(p)
 		logf("config.load", "no usable .bak; regenerated defaults (%s), keeping %d mcp entries", def.fingerprint(), len(cfg.MCPServers))
 		return def, def.Save()
 	}
+	cfg.loadMemorySwitch(p)
 	logf("config.load", "ok (%s)", cfg.fingerprint())
 	return &cfg, nil
 }
@@ -548,12 +578,22 @@ func (c *Config) Save() error {
 	} else {
 		logf("config.save", "first write (%s)", c.fingerprint())
 	}
+	restoreMemory := func() {}
+	if c.memoryStateForPath(p).needsWrite(c.Memory) {
+		restoreMemory, err = saveMemorySwitch(p, c.Memory)
+		if err != nil {
+			logf("config.save", "memory switch save failed: %v", err)
+			return err
+		}
+	}
 	staging, err := os.OpenFile(p+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
+		restoreMemory()
 		logf("config.save", "write tmp failed: %v", err)
 		return err
 	}
 	if err := replaceConfigFile(staging, p, data); err != nil {
+		restoreMemory()
 		logf("config.save", "atomic save failed: %v", err)
 		return err
 	}
@@ -562,12 +602,15 @@ func (c *Config) Save() error {
 		_ = os.Remove(p + ".bak")
 		c.allowEmptySave = false
 	}
+	c.memoryDisk = memoryDiskFor(c.Memory)
+	c.memoryDiskPath = canonicalMemoryConfigPath(p)
 	return nil
 }
 
 func marshalConfig(c *Config) ([]byte, error) {
 	wire := *c
 	wire.Models = nil
+	wire.Memory = MemoryConfig{}
 	wire.Providers = piProviders(c)
 	var image json.RawMessage
 	if c.imageConfigInvalid && c.Image == nil {

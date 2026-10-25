@@ -12,11 +12,25 @@ func (c *Config) SaveFile(filename string) error {
 	if err != nil {
 		return err
 	}
+	restoreMemory := func() {}
+	if c.memoryStateForPath(filename).needsWrite(c.Memory) {
+		restoreMemory, err = saveMemorySwitch(filename, c.Memory)
+		if err != nil {
+			return err
+		}
+	}
 	f, err := os.CreateTemp(filepath.Dir(filename), ".config-*")
 	if err != nil {
+		restoreMemory()
 		return err
 	}
-	return replaceConfigFile(f, filename, data)
+	if err := replaceConfigFile(f, filename, data); err != nil {
+		restoreMemory()
+		return err
+	}
+	c.memoryDisk = memoryDiskFor(c.Memory)
+	c.memoryDiskPath = canonicalMemoryConfigPath(filename)
+	return nil
 }
 
 // replaceConfigFile syncs the complete staging file before publishing it.
@@ -54,5 +68,6 @@ func LoadFile(path string) (*Config, error) {
 	if err := parseConfigJSONC(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	cfg.loadMemorySwitch(path)
 	return &cfg, nil
 }

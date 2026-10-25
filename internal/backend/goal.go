@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/goalloop"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
@@ -29,9 +30,12 @@ var errGoalRoundStale = errors.New("goal changed before the round was accepted")
 type goalRuntime struct {
 	loaded bool
 	text   string
-	status string
-	round  int
-	reason string
+	// memoryOff: the goal text was written while memory was off, so its rounds stay out
+	// of memory extraction even after memory is turned back on.
+	memoryOff bool
+	status    string
+	round     int
+	reason    string
 	// nonce is drawn on every set and resume and names its continuation rounds, so their
 	// request ids never collide with run records persisted before a reload.
 	nonce string
@@ -107,7 +111,7 @@ func (s *Server) ensureGoalLoadedLocked(rt *runtimeSession) {
 	rt.goal.loaded = true
 	rt.goal.status = "none"
 	if meta, _, err := s.store.Load(rt.id); err == nil && strings.TrimSpace(meta.Goal) != "" {
-		rt.goal.text = meta.Goal
+		rt.goal.text, rt.goal.memoryOff = meta.Goal, meta.GoalMemoryOff
 		rt.goal.status, rt.goal.reason = "paused", "restored"
 	}
 }
@@ -211,12 +215,13 @@ func (s *Server) updateGoal(w http.ResponseWriter, rt *runtimeSession, raw strin
 		writeJSONError(w, http.StatusConflict, "no goal to update")
 		return
 	}
-	if err := s.store.SetGoal(rt.id, goal); err != nil {
+	memoryOff := rt.goal.memoryOff || !s.memoryEnabledNow(rt)
+	if err := s.store.SetGoalMemory(rt.id, goal, memoryOff); err != nil {
 		rt.mu.Unlock()
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rt.goal.text = goal
+	rt.goal.text, rt.goal.memoryOff = goal, memoryOff
 	rt.goal.revision++
 	state := s.goalStateLocked(rt)
 	rt.mu.Unlock()
@@ -312,13 +317,17 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 		if in.Action == "resume" && rt.goal.text != goal {
 			return nil, http.StatusConflict, errors.New("goal changed before resume was accepted")
 		}
+		memoryOff := rt.goal.memoryOff
 		if in.Action == "set" {
-			if err := s.store.SetGoal(rt.id, goal); err != nil {
+			// Admission runs after this run's settings refresh, so the agent's switch is the
+			// one that marks this round's History message.
+			memoryOff = !rt.agent.MemoryEnabled()
+			if err := s.store.SetGoalMemory(rt.id, goal, memoryOff); err != nil {
 				return nil, http.StatusInternalServerError, err
 			}
 		}
 		previous := rt.goal
-		rt.goal = goalRuntime{loaded: true, text: goal, status: "active", nonce: newGoalNonce(), roundRequestID: run.ClientRequestID, started: time.Now()}
+		rt.goal = goalRuntime{loaded: true, text: goal, memoryOff: memoryOff, status: "active", nonce: newGoalNonce(), roundRequestID: run.ClientRequestID, started: time.Now()}
 		state = s.goalStateLocked(rt)
 		if rt.runID == "" {
 			rt.runID = "recovery"
@@ -326,7 +335,7 @@ func (s *Server) startGoal(w http.ResponseWriter, rt *runtimeSession, in protoco
 		_ = rt.publishEventLocked(rt.runID, protocol.EventGoalUpdated, state)
 		return func() {
 			if in.Action == "set" {
-				_ = s.store.SetGoal(rt.id, previous.text)
+				_ = s.store.SetGoalMemory(rt.id, previous.text, previous.memoryOff)
 			}
 			rt.goal = previous
 		}, 0, nil
@@ -473,7 +482,7 @@ func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protoco
 			rt.mu.Unlock()
 			return
 		}
-		goal, revision := rt.goal.text, rt.goal.revision
+		goal, revision, memoryOff := rt.goal.text, rt.goal.revision, rt.goal.memoryOff
 		rt.mu.Unlock()
 		run := protocol.PromptRequest{
 			ConversationID: rt.id, ClientRequestID: next.clientRequestID, Prompt: next.prompt,
@@ -492,7 +501,13 @@ func (s *Server) continueGoal(rt *runtimeSession, runID string, previous protoco
 			rt.goal.runRevision, rt.goal.roundRequestID = revision, next.clientRequestID
 			return func() { rt.goal.runRevision, rt.goal.roundRequestID = prevRevision, prevRequest }, 0, nil
 		}
-		_, status, err := s.startCanonicalRunWith(context.Background(), rt, run, admit)
+		// Rounds repeat the goal text as the user message; text written while memory was
+		// off stays out of extraction.
+		roundCtx := context.Background()
+		if memoryOff {
+			roundCtx = agent.WithMemoryOffAuthored(roundCtx)
+		}
+		_, status, err := s.startCanonicalRunWith(roundCtx, rt, run, admit)
 		if err == nil && status == http.StatusAccepted {
 			return
 		}

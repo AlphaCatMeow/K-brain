@@ -315,7 +315,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {

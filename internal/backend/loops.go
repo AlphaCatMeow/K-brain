@@ -244,6 +244,8 @@ func (s *Server) createSessionLoop(w http.ResponseWriter, r *http.Request, rt *r
 		SelectedModel: &CronModelRef{CustomProviderID: selected.Provider, Model: selected.Model},
 		Reasoning:     reasoning,
 		Workdir:       workdir,
+		// A loop prompt the user writes while memory is off stays out of extraction.
+		MemoryOff: !s.memoryEnabledNow(rt),
 	}
 	if err := s.cron.store.addSessionLoop(task, rt.id); err != nil {
 		writeJSONError(w, http.StatusUnprocessableEntity, err.Error())

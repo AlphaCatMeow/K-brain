@@ -30,6 +30,19 @@ func turnSnapshot(ctx context.Context) (ai.PromptSnapshot, bool) {
 	return snapshot, ok && snapshot.Text != ""
 }
 
+type memoryOffAuthoredKey struct{}
+
+// WithMemoryOffAuthored marks the turn's user message as written while memory was off,
+// for input that waited (a queued message) until after memory was turned back on.
+func WithMemoryOffAuthored(ctx context.Context) context.Context {
+	return context.WithValue(ctx, memoryOffAuthoredKey{}, true)
+}
+
+func memoryOffAuthored(ctx context.Context) bool {
+	off, _ := ctx.Value(memoryOffAuthoredKey{}).(bool)
+	return off
+}
+
 func WithUserMessageID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, userMessageIDKey{}, id)
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func memoryManagerTool(store *memory.Store, workdir func() string) tools.Tool {
-	return tools.Tool{Def: ai.NewTool("memory_manager", "List, read, search, or propose a memory mutation. Mutations are applied through the canonical memory store.", `{"type":"object","properties":{"action":{"type":"string","enum":["list","read","search","write","update","delete","accept"]},"args":{"type":"object"}},"required":["action"]}`), Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
+	return tools.Tool{Memory: true, Def: ai.NewTool("memory_manager", "List, read, search, or propose a memory mutation. Mutations are applied through the canonical memory store.", `{"type":"object","properties":{"action":{"type":"string","enum":["list","read","search","write","update","delete","accept"]},"args":{"type":"object"}},"required":["action"]}`), Run: func(ctx context.Context, raw json.RawMessage) (string, error) {
 		var in struct {
 			Action string          `json:"action"`
 			Args   json.RawMessage `json:"args"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/protocol"
 )
 
@@ -69,7 +70,11 @@ func (s *Server) executeCronPromptCanonical(ctx context.Context, task *CronTask,
 		HookPolicy:  "backend",
 		HookScopeID: id,
 	}
-	accepted, status, err := s.startCanonicalRun(withUnattendedRun(ctx), rt, in)
+	runCtx := withUnattendedRun(ctx)
+	if task.MemoryOff {
+		runCtx = agent.WithMemoryOffAuthored(runCtx)
+	}
+	accepted, status, err := s.startCanonicalRun(runCtx, rt, in)
 	if err != nil {
 		return false, err.Error()
 	}

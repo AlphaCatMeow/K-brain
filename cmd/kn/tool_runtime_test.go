@@ -45,6 +45,26 @@ func TestToolRuntimeInitializationAndDisabledTools(t *testing.T) {
 	}
 }
 
+func TestToolAvailabilityAppliesMemorySwitch(t *testing.T) {
+	memoryTools := func(a *agent.Agent) []string {
+		var names []string
+		for _, tool := range a.AllTools() {
+			if tool.Memory {
+				names = append(names, tool.Def.Function.Name)
+			}
+		}
+		return names
+	}
+	if on := agent.New(nil, "fixture", 100, "test", withToolAvailability(&config.Config{})); !on.MemoryEnabled() || len(memoryTools(on)) == 0 {
+		t.Fatal("memory must stay enabled when the configuration has no memory switch")
+	}
+	disabled := false
+	off := agent.New(nil, "fixture", 100, "test", withToolAvailability(&config.Config{Memory: config.MemoryConfig{Enabled: &disabled}}))
+	if off.MemoryEnabled() || len(memoryTools(off)) != 0 {
+		t.Fatalf("memory switch off still offers %v", memoryTools(off))
+	}
+}
+
 func TestToolRuntimeBrowserExecRealChrome(t *testing.T) {
 	bin := os.Getenv("K_BRAIN_TEST_BROWSER_BIN")
 	if bin == "" {
