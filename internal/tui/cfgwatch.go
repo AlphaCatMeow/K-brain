@@ -64,8 +64,9 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		m.cfg.AdoptMemory(msg.loaded)
 		if changed {
 			// Like the backend, the agent takes the switch at a turn boundary: tools this
-			// turn already offered the model keep working.
-			if m.agent != nil && (m.busy || m.agent.TurnRunning()) {
+			// turn already offered the model keep working. Only an agent turn waits, since
+			// only it ends with turnDoneMsg; /review and goal formulation do not run one.
+			if m.agent != nil && m.agent.TurnRunning() {
 				m.memoryPending = &on
 			} else {
 				m.applyMemorySwitch(on)
