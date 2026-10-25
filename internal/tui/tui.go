@@ -153,7 +153,9 @@ type menu struct {
 type model struct {
 	promptCatalog promptCatalog
 
-	cfg           *config.Config
+	cfg *config.Config
+	// memoryPending is a memory switch LiveAgent set during a turn, applied when it ends.
+	memoryPending *bool
 	agent         *agent.Agent
 	modelName     string
 	provName      string
@@ -1994,6 +1996,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushCurrent()
 		m.clearQueuedTools()
 		m.busy = false
+		if m.memoryPending != nil {
+			m.applyMemorySwitch(*m.memoryPending)
+		}
 		m.cancel = nil
 		m.interrupt1 = false
 

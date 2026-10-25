@@ -63,13 +63,12 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		changed := m.cfg.Memory.IsEnabled() != on
 		m.cfg.AdoptMemory(msg.loaded)
 		if changed {
-			if m.agent != nil {
-				m.agent.SetMemoryEnabled(on)
-			}
-			if on {
-				m.append(dimStyle.Render("◐ memory was turned back on in LiveAgent"))
+			// Like the backend, the agent takes the switch at a turn boundary: tools this
+			// turn already offered the model keep working.
+			if m.agent != nil && (m.busy || m.agent.TurnRunning()) {
+				m.memoryPending = &on
 			} else {
-				m.append(dimStyle.Render(memoryOffNotice))
+				m.applyMemorySwitch(on)
 			}
 		}
 	}
@@ -80,5 +79,18 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		m.cfg.Theme = msg.theme
 		m.themeHow = m.applyTheme(msg.theme)
 		m.refreshVP()
+	}
+}
+
+// applyMemorySwitch hands the switch LiveAgent set to the agent and says so.
+func (m *model) applyMemorySwitch(on bool) {
+	m.memoryPending = nil
+	if m.agent != nil {
+		m.agent.SetMemoryEnabled(on)
+	}
+	if on {
+		m.append(dimStyle.Render("◐ memory was turned back on in LiveAgent"))
+	} else {
+		m.append(dimStyle.Render(memoryOffNotice))
 	}
 }

@@ -20,8 +20,16 @@ func memorySwitchPath(configPath string) string { return configPath + memorySwit
 func (c *Config) loadMemorySwitch(configPath string) {
 	data, err := os.ReadFile(memorySwitchPath(configPath))
 	if os.IsNotExist(err) {
-		// No file means on; a legacy "memory" value differs and moves on the next save.
 		c.memoryDisk = memoryDiskState{known: true, on: true}
+		// A legacy off value moves into the switch file now, so every process that loads
+		// it sees the same disk state and none can later undo a switch set elsewhere.
+		// If the write fails it moves on the next save instead.
+		if !c.Memory.IsEnabled() {
+			if off, err := json.MarshalIndent(MemoryConfig{Enabled: new(bool)}, "", "  "); err == nil &&
+				writeMemorySwitch(memorySwitchPath(configPath), off) == nil {
+				c.memoryDisk = memoryDiskState{known: true, on: false, file: true}
+			}
+		}
 		return
 	}
 	m, ok := decodeMemorySwitch(data, err)
