@@ -32,11 +32,12 @@ func (c *Config) loadMemorySwitch(configPath string) {
 	c.memoryDisk = memoryDiskState{known: true, on: m.IsEnabled(), file: true}
 }
 
-// AdoptMemory takes a switch value another process saved, so this config shows it and
-// a later Save does not write it back.
-func (c *Config) AdoptMemory(m MemoryConfig) {
-	c.Memory = m
-	c.memoryDisk = memoryDiskFor(m)
+// AdoptMemory takes the switch from a freshly loaded config, with the disk state that load
+// observed, so this config shows it and a later Save writes it only when the disk needs it
+// (a legacy config.json value still moves into the switch file).
+func (c *Config) AdoptMemory(from *Config) {
+	c.Memory = from.Memory
+	c.memoryDisk = from.memoryDisk
 }
 
 // memoryDiskState is what this config last saw of the switch file.

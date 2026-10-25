@@ -14,7 +14,8 @@ type cfgSyncMsg struct {
 	mod      time.Time
 	theme    string
 	language *string
-	memory   config.MemoryConfig
+	// loaded carries the memory switch with the disk state Load saw; nil skips it.
+	loaded *config.Config
 }
 
 type cfgSyncTick struct{}
@@ -41,7 +42,7 @@ func (m *model) cfgSync() (tea.Model, tea.Cmd) {
 	}
 	return m, tea.Sequence(
 		func() tea.Msg {
-			return cfgSyncMsg{mod: fi.ModTime(), theme: cfg.Theme, language: &cfg.Language, memory: cfg.Memory}
+			return cfgSyncMsg{mod: fi.ModTime(), theme: cfg.Theme, language: &cfg.Language, loaded: cfg}
 		},
 		m.watchConfig(),
 	)
@@ -56,15 +57,16 @@ func (m *model) applyCfgSync(msg cfgSyncMsg) {
 		m.menu = nil
 		m.refreshVP()
 	}
-	if m.cfg != nil {
+	if m.cfg != nil && msg.loaded != nil {
 		// The switch is changed in LiveAgent; follow it like theme and language.
-		changed := m.cfg.Memory.IsEnabled() != msg.memory.IsEnabled()
-		m.cfg.AdoptMemory(msg.memory)
+		on := msg.loaded.Memory.IsEnabled()
+		changed := m.cfg.Memory.IsEnabled() != on
+		m.cfg.AdoptMemory(msg.loaded)
 		if changed {
 			if m.agent != nil {
-				m.agent.SetMemoryEnabled(msg.memory.IsEnabled())
+				m.agent.SetMemoryEnabled(on)
 			}
-			if msg.memory.IsEnabled() {
+			if on {
 				m.append(dimStyle.Render("◐ memory was turned back on in LiveAgent"))
 			} else {
 				m.append(dimStyle.Render(memoryOffNotice))
