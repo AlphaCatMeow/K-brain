@@ -20,6 +20,8 @@ func memorySwitchPath(configPath string) string { return configPath + memorySwit
 func (c *Config) loadMemorySwitch(configPath string) {
 	data, err := os.ReadFile(memorySwitchPath(configPath))
 	if os.IsNotExist(err) {
+		// No file means on; a legacy "memory" value differs and moves on the next save.
+		c.memoryDisk = memoryDiskState{known: true, on: true}
 		return
 	}
 	m, ok := decodeMemorySwitch(data, err)
@@ -27,6 +29,32 @@ func (c *Config) loadMemorySwitch(configPath string) {
 		logf("config.load", "unreadable memory switch file, keeping memory off")
 	}
 	c.Memory = m
+	c.memoryDisk = memoryDiskState{known: true, on: m.IsEnabled(), file: true}
+}
+
+// AdoptMemory takes a switch value another process saved, so this config shows it and
+// a later Save does not write it back.
+func (c *Config) AdoptMemory(m MemoryConfig) {
+	c.Memory = m
+	c.memoryDisk = memoryDiskFor(m)
+}
+
+// memoryDiskState is what this config last saw of the switch file.
+type memoryDiskState struct {
+	known bool // false for a config that was never loaded or saved
+	on    bool
+	file  bool
+}
+
+// memoryDiskFor is the state a successful save of m leaves: a file only while off.
+func memoryDiskFor(m MemoryConfig) memoryDiskState {
+	return memoryDiskState{known: true, on: m.IsEnabled(), file: !m.IsEnabled()}
+}
+
+// needsWrite reports whether saving m must touch the switch file: always when the disk
+// state is unknown, when m differs from it, and to clear a leftover file that says on.
+func (d memoryDiskState) needsWrite(m MemoryConfig) bool {
+	return !d.known || d.on != m.IsEnabled() || m.IsEnabled() && d.file
 }
 
 // decodeMemorySwitch reads a switch file that exists. Only an off switch is ever written,

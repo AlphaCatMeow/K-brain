@@ -172,6 +172,10 @@ type Config struct {
 	// Memory is persisted in the memorySwitchSuffix file, never in config.json; the key is still
 	// read so values written by earlier builds of the switch carry over.
 	Memory MemoryConfig `json:"memory,omitzero"`
+	// memoryDisk is the switch file as of this config's last Load or Save. Save leaves the
+	// switch alone when Memory still matches it, so a process saving an unrelated setting
+	// from a stale copy never undoes a switch another process set.
+	memoryDisk memoryDiskState
 
 	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
 	Computer   ComputerConfig    `json:"computer,omitzero"`
@@ -573,10 +577,13 @@ func (c *Config) Save() error {
 	} else {
 		logf("config.save", "first write (%s)", c.fingerprint())
 	}
-	restoreMemory, err := saveMemorySwitch(p, c.Memory)
-	if err != nil {
-		logf("config.save", "memory switch save failed: %v", err)
-		return err
+	restoreMemory := func() {}
+	if c.memoryDisk.needsWrite(c.Memory) {
+		restoreMemory, err = saveMemorySwitch(p, c.Memory)
+		if err != nil {
+			logf("config.save", "memory switch save failed: %v", err)
+			return err
+		}
 	}
 	staging, err := os.OpenFile(p+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -594,6 +601,7 @@ func (c *Config) Save() error {
 		_ = os.Remove(p + ".bak")
 		c.allowEmptySave = false
 	}
+	c.memoryDisk = memoryDiskFor(c.Memory)
 	return nil
 }
 

@@ -532,6 +532,9 @@ func Run(cfg *config.Config, modelName, provName, sysPrompt, resumeID string, ca
 	return m.sessionID, err
 }
 
+// memoryOffNotice tells a TUI user why memory tools are gone; only LiveAgent can switch it.
+const memoryOffNotice = "◐ memory is off — remember, forget and memory_manager are unavailable, saved memories are not loaded and nothing new is saved; turn memory back on in LiveAgent's memory settings"
+
 // startupReport records the counts the startup card summarises and appends only
 // the per-item problems, which are diagnostics the card has no room for.
 func (m *model) startupReport() {
@@ -545,7 +548,7 @@ func (m *model) startupReport() {
 	}
 	// The memory switch is shared with LiveAgent and cannot be changed here.
 	if m.cfg != nil && !m.cfg.Memory.IsEnabled() {
-		m.append(dimStyle.Render("◐ memory is off — saved memories are not loaded and remember/forget are unavailable; turn memory back on in LiveAgent's memory settings"))
+		m.append(dimStyle.Render(memoryOffNotice))
 	}
 	sk, problems := skills.ScanDetailed(skills.DefaultDirs()...)
 	var b strings.Builder
