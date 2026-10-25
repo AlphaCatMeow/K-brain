@@ -543,6 +543,10 @@ func (m *model) startupReport() {
 
 		m.append(dimStyle.Render("◐ shift+enter needs tmux extended-keys on — k-brain couldn't set it; add `set -s extended-keys on` to ~/.tmux.conf (meanwhile ctrl+j / alt+enter insert newlines)"))
 	}
+	// The memory switch is shared with LiveAgent and cannot be changed here.
+	if m.cfg != nil && !m.cfg.Memory.IsEnabled() {
+		m.append(dimStyle.Render("◐ memory is off — saved memories are not loaded and remember/forget are unavailable; turn memory back on in LiveAgent's memory settings"))
+	}
 	sk, problems := skills.ScanDetailed(skills.DefaultDirs()...)
 	var b strings.Builder
 
