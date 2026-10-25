@@ -18,6 +18,7 @@ func memorySwitchPath(configPath string) string { return configPath + memorySwit
 // loadMemorySwitch applies the switch file. Without one, a "memory" value left in
 // config.json by earlier builds of the switch still counts and moves here on the next save.
 func (c *Config) loadMemorySwitch(configPath string) {
+	c.memoryDiskPath = canonicalMemoryConfigPath(configPath)
 	data, err := os.ReadFile(memorySwitchPath(configPath))
 	if os.IsNotExist(err) {
 		c.memoryDisk = memoryDiskState{known: true, on: true}
@@ -46,6 +47,22 @@ func (c *Config) loadMemorySwitch(configPath string) {
 func (c *Config) AdoptMemory(from *Config) {
 	c.Memory = from.Memory
 	c.memoryDisk = from.memoryDisk
+	c.memoryDiskPath = from.memoryDiskPath
+}
+
+func canonicalMemoryConfigPath(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return absolute
+}
+
+func (c *Config) memoryStateForPath(path string) memoryDiskState {
+	if c.memoryDiskPath != canonicalMemoryConfigPath(path) {
+		return memoryDiskState{}
+	}
+	return c.memoryDisk
 }
 
 // memoryDiskState is what this config last saw of the switch file.

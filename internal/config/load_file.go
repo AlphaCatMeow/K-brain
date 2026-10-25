@@ -12,9 +12,12 @@ func (c *Config) SaveFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	restoreMemory, err := saveMemorySwitch(filename, c.Memory)
-	if err != nil {
-		return err
+	restoreMemory := func() {}
+	if c.memoryStateForPath(filename).needsWrite(c.Memory) {
+		restoreMemory, err = saveMemorySwitch(filename, c.Memory)
+		if err != nil {
+			return err
+		}
 	}
 	f, err := os.CreateTemp(filepath.Dir(filename), ".config-*")
 	if err != nil {
@@ -25,6 +28,8 @@ func (c *Config) SaveFile(filename string) error {
 		restoreMemory()
 		return err
 	}
+	c.memoryDisk = memoryDiskFor(c.Memory)
+	c.memoryDiskPath = canonicalMemoryConfigPath(filename)
 	return nil
 }
 

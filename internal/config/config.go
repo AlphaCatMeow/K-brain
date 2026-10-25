@@ -175,7 +175,8 @@ type Config struct {
 	// memoryDisk is the switch file as of this config's last Load or Save. Save leaves the
 	// switch alone when Memory still matches it, so a process saving an unrelated setting
 	// from a stale copy never undoes a switch another process set.
-	memoryDisk memoryDiskState
+	memoryDisk     memoryDiskState
+	memoryDiskPath string
 
 	AIApproval AIApprovalConfig  `json:"aiApproval,omitzero"`
 	Computer   ComputerConfig    `json:"computer,omitzero"`
@@ -578,7 +579,7 @@ func (c *Config) Save() error {
 		logf("config.save", "first write (%s)", c.fingerprint())
 	}
 	restoreMemory := func() {}
-	if c.memoryDisk.needsWrite(c.Memory) {
+	if c.memoryStateForPath(p).needsWrite(c.Memory) {
 		restoreMemory, err = saveMemorySwitch(p, c.Memory)
 		if err != nil {
 			logf("config.save", "memory switch save failed: %v", err)
@@ -602,6 +603,7 @@ func (c *Config) Save() error {
 		c.allowEmptySave = false
 	}
 	c.memoryDisk = memoryDiskFor(c.Memory)
+	c.memoryDiskPath = canonicalMemoryConfigPath(p)
 	return nil
 }
 
