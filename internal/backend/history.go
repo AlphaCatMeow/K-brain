@@ -142,10 +142,49 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := protocol.SessionPage{Version: protocol.Version, TotalCount: result.Total, Sessions: []protocol.SessionSummary{}}
-	for _, meta := range result.Sessions {
-		out.Sessions = append(out.Sessions, summary(meta, len(s.store.RawMessages(meta.ID))))
+	for i, meta := range result.Sessions {
+		out.Sessions = append(out.Sessions, summary(meta, result.MessageCounts[i]))
 	}
 	writeJSON(w, 200, out)
+}
+
+// sessionsExist confirms many sessions from file metadata alone; the session list
+// and per-id lookups both read whole transcripts.
+func (s *Server) sessionsExist(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return
+	}
+	if len(in.IDs) > session.MaxExistsIDs {
+		writeJSONError(w, 400, fmt.Sprintf("at most %d ids per request", session.MaxExistsIDs))
+		return
+	}
+	found, err := s.store.Exists(in.IDs)
+	if err != nil {
+		mutationError(w, err)
+		return
+	}
+	existing := []string{}
+	s.mu.Lock()
+	for _, id := range in.IDs {
+		if !found[id] {
+			continue
+		}
+		found[id] = false // report each id once
+		if rt := s.sessions[id]; rt != nil {
+			rt.mu.Lock()
+			deleted := rt.deleted
+			rt.mu.Unlock()
+			if deleted {
+				continue
+			}
+		}
+		existing = append(existing, id)
+	}
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"existing": existing})
 }
 
 func (s *Server) updateSession(w http.ResponseWriter, r *http.Request, id string) {

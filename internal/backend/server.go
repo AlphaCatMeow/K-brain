@@ -315,7 +315,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "image_model_toggle": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "image_model_toggle": 1, "session_exists": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -404,6 +404,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/v1/mcp" || strings.HasPrefix(r.URL.Path, "/v1/mcp/") {
 		s.handleMCP(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/exists" {
+		s.sessionsExist(w, r)
 		return
 	}
 	if r.URL.Path == "/v1/sessions" {
