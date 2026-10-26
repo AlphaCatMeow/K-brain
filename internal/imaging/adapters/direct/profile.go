@@ -54,6 +54,31 @@ func ProtocolProfile(adapter string) Profile {
 	}
 	return p
 }
+
+// ProfileForBaseURL names the vendor dialect behind an OpenAI-compatible base URL.
+// Only exact official endpoints qualify; proxies keep the standard OpenAI contract.
+func ProfileForBaseURL(base string) string {
+	switch base {
+	case "https://rolldek.com/v1", "https://api-cn.rolldek.com/v1":
+		return "rolldek"
+	case "https://apihub.agnes-ai.com/v1", "https://api.agnes-ai.cn/v1":
+		return "agnes"
+	}
+	return ""
+}
+
+var agnesSizes = []string{"1K", "2K", "3K", "4K"}
+var agnesRatios = []string{"1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"}
+
+// AgnesParameters is the tiered size/ratio contract of Agnes Image; exact pixel
+// sizes are normalized server-side, so only tiers are offered. Keys reuse the
+// Google names clients already render; the request maps them to size/ratio.
+func AgnesParameters() []imaging.ParameterSpec {
+	size, ratio := enumSpec("imageSize", agnesSizes...), enumSpec("aspectRatio", agnesRatios...)
+	size.Label, ratio.Label = "Size", "Aspect ratio"
+	return []imaging.ParameterSpec{ratio, size}
+}
+
 func enumSpec(key string, values ...string) imaging.ParameterSpec {
 	p := imaging.ParameterSpec{Key: key, Label: key, Type: "string"}
 	for _, v := range values {

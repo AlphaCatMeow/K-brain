@@ -31,6 +31,19 @@ type openAIRequest struct {
 	Compression    *int   `json:"output_compression,omitempty"`
 	Background     string `json:"background,omitempty"`
 }
+
+// Agnes takes inputs and the response format under extra_body, never top level.
+type agnesRequest struct {
+	Model        string `json:"model"`
+	Prompt       string `json:"prompt"`
+	Size         string `json:"size"`
+	Ratio        string `json:"ratio,omitempty"`
+	ReturnBase64 bool   `json:"return_base64,omitempty"`
+	ExtraBody    *struct {
+		Image          []string `json:"image,omitempty"`
+		ResponseFormat string   `json:"response_format"`
+	} `json:"extra_body,omitempty"`
+}
 type inlineData struct {
 	MIME string `json:"mimeType"`
 	Data string `json:"data"`
@@ -100,6 +113,9 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 	}
 	switch a.id {
 	case OpenAIID:
+		if a.profile == "agnes" {
+			return a.agnesRequest(r, inputs, mask)
+		}
 		b := openAIRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, N: 1}
 		if a.profile == "rolldek" {
 			if r.Request.Operation == imaging.OperationMask || len(r.Request.Parameters) != 0 {
@@ -204,6 +220,41 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 		return "/images/generations", b, nil
 	}
 	return "", nil, unsupported()
+}
+
+func (a *Adapter) agnesRequest(r imaging.ExecuteRequest, inputs []imaging.ImageContent, mask *imaging.ImageContent) (string, any, error) {
+	if mask != nil {
+		return "", nil, unsupported()
+	}
+	b := agnesRequest{Model: r.Target.RemoteID, Prompt: r.Request.Prompt, Size: "1K"}
+	var err error
+	for k, v := range r.Request.Parameters {
+		switch k {
+		case "imageSize":
+			b.Size, err = enum(v, agnesSizes...)
+		case "aspectRatio":
+			b.Ratio, err = enum(v, agnesRatios...)
+		default:
+			err = badInput()
+		}
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	// Base64 keeps results local: text-to-image uses return_base64, image inputs
+	// need extra_body.response_format instead.
+	if len(inputs) == 0 {
+		b.ReturnBase64 = true
+		return "/images/generations", b, nil
+	}
+	b.ExtraBody = &struct {
+		Image          []string `json:"image,omitempty"`
+		ResponseFormat string   `json:"response_format"`
+	}{ResponseFormat: "b64_json"}
+	for _, in := range inputs {
+		b.ExtraBody.Image = append(b.ExtraBody.Image, dataURL(in))
+	}
+	return "/images/generations", b, nil
 }
 
 func endpointID(s string) bool {
@@ -326,7 +377,7 @@ func (a *Adapter) inputs(ctx context.Context, r imaging.ExecuteRequest) ([]imagi
 		}
 		// Check encoded size before opening/allocating. The final JSON size is
 		// checked separately (including text, escapes and structural overhead).
-		if a.id == OpenAIID {
+		if a.id == OpenAIID && a.profile != "agnes" {
 			budget += asset.Bytes + 512 // Multipart file bytes plus conservative part overhead.
 		} else {
 			budget += int64(base64.StdEncoding.EncodedLen(int(asset.Bytes))) + 64

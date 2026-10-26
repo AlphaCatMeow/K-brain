@@ -145,9 +145,7 @@ func resolveImageAdapter(ctx context.Context, manager *backend.ImageSettingsMana
 		o.Profile = "rolldek"
 		adapter, err = direct.NewOpenAI(o)
 	case direct.OpenAIID:
-		if connection.BaseURL == "https://rolldek.com/v1" || connection.BaseURL == "https://api-cn.rolldek.com/v1" {
-			o.Profile = "rolldek"
-		}
+		o.Profile = direct.ProfileForBaseURL(connection.BaseURL)
 		adapter, err = direct.NewOpenAI(o)
 	case direct.GoogleID:
 		adapter, err = direct.NewGoogle(o)

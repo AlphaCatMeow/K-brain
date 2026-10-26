@@ -97,9 +97,9 @@ func (a *Adapter) response(ctx context.Context, b []byte) (imaging.RemoteResult,
 		}
 	} else if item.URL != "" {
 		// GPT Image's selected profile returns base64, not the old DALL-E URL
-		// response format. Ark and RollDek explicitly support URL results; the
+		// response format. Ark, RollDek and Agnes explicitly support URL results; the
 		// official OpenAI profile remains base64-only.
-		if (a.id != VolcengineID && a.profile != "rolldek") || !outputURL(item.URL) {
+		if (a.id != VolcengineID && a.profile == "") || !outputURL(item.URL) {
 			return unknown()
 		}
 		mime := ""
