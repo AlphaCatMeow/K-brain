@@ -159,7 +159,13 @@ func (m *ImageSettingsManager) providerImageTargetsLocked() ([]imaging.ImageTarg
 			target := imaging.ImageTarget{Source: "provider", ProviderID: pid, ModelID: mid, ID: providerImageID("it_provider_", pid, mid), Name: name, ConnectionID: connectionID, Adapter: adapter, AdapterVersion: direct.Version, Kind: "model", RemoteID: mid, Enabled: true, Capabilities: providerImageCapabilities(adapter), Parameters: direct.ModelParameters(adapter, mid), VerificationState: &imaging.VerificationSummary{State: "provider_configured"}}
 			if adapter == direct.OpenAIID {
 				base, _ := providerImageBaseURL(p, adapter)
-				if base == "https://rolldek.com/v1" || base == "https://api-cn.rolldek.com/v1" {
+				switch direct.ProfileForBaseURL(base) {
+				case "agnes":
+					// One JSON generations route with inputs as data URIs; no mask support.
+					target.Parameters = direct.AgnesParameters()
+					target.Capabilities.Operations = []imaging.Operation{imaging.OperationGenerate, imaging.OperationReference, imaging.OperationEdit}
+					target.Capabilities.OutputFormats = []string{"png"}
+				case "rolldek":
 					// RollDek takes no tuning parameters. Edits and reference images go through
 					// the standard multipart /images/edits route; masks stay off until verified.
 					target.Parameters = []imaging.ParameterSpec{}

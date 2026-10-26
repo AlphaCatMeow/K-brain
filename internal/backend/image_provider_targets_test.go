@@ -442,6 +442,33 @@ func TestProviderImageRollDekAllowsEditAndReferenceWithoutParameters(t *testing.
 	}
 }
 
+func TestProviderImageAgnesExposesTierAndRatioParameters(t *testing.T) {
+	for _, base := range []string{"https://apihub.agnes-ai.com/v1", "https://api.agnes-ai.cn/v1/"} {
+		cfg := config.Default()
+		cfg.Providers["agnes"] = config.Provider{Name: "Agnes", API: "openai-completions", BaseURL: base, APIKey: "fake", Models: []config.PiModel{{ID: "agnes-image-2.5-flash"}}}
+		cfg.Models["agnes-image-2.5-flash"] = config.Model{Providers: []string{"agnes"}}
+		manager, _ := imageProviderManager(t, cfg)
+		targets, err := manager.ListImageTargets(imageTestScope())
+		if err != nil || len(targets) != 1 || !targets[0].Enabled || targets[0].Adapter != direct.OpenAIID {
+			t.Fatalf("%s targets=%#v err=%v", base, targets, err)
+		}
+		c, params := targets[0].Capabilities, targets[0].Parameters
+		want := []imaging.Operation{imaging.OperationGenerate, imaging.OperationReference, imaging.OperationEdit}
+		if !reflect.DeepEqual(c.Operations, want) || len(params) != 2 || params[0].Key != "aspectRatio" || params[1].Key != "imageSize" || !reflect.DeepEqual(params[1].Enum, []any{"1K", "2K", "3K", "4K"}) {
+			t.Fatalf("%s Agnes capabilities=%#v parameters=%#v", base, c, params)
+		}
+	}
+	// A proxy in front of Agnes keeps the standard OpenAI contract.
+	cfg := config.Default()
+	cfg.Providers["proxy"] = config.Provider{API: "openai-completions", BaseURL: "https://proxy.example/v1", APIKey: "fake", Models: []config.PiModel{{ID: "agnes-image-2.5-flash"}}}
+	cfg.Models["agnes-image-2.5-flash"] = config.Model{Providers: []string{"proxy"}}
+	manager, _ := imageProviderManager(t, cfg)
+	targets, _ := manager.ListImageTargets(imageTestScope())
+	if len(targets) != 1 || len(targets[0].Parameters) == 0 || targets[0].Parameters[0].Key != "size" {
+		t.Fatalf("proxy target=%#v", targets)
+	}
+}
+
 func TestProviderImageRevisionIgnoresChatOnlyProviderSettings(t *testing.T) {
 	revision := func(mutate func(*config.Provider)) uint64 {
 		cfg := config.Default()

@@ -78,7 +78,7 @@ func newAdapter(id string, o Options) (*Adapter, error) {
 	if o.HTTPClient == nil || o.SecretResolver == nil || strings.TrimSpace(o.SecretRef) == "" {
 		return nil, failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent)
 	}
-	if o.Profile != "" && (o.Profile != "rolldek" || id != OpenAIID || (u.Hostname() != "rolldek.com" && u.Hostname() != "api-cn.rolldek.com") || u.Scheme != "https" || u.Port() != "") {
+	if o.Profile != "" && (id != OpenAIID || ProfileForBaseURL(o.BaseURL) != o.Profile) {
 		return nil, failure(imaging.CodeInvalidInput, imaging.DeliveryNotSent)
 	}
 	l := o.Limits
