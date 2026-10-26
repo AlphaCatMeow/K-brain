@@ -356,7 +356,14 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settingsModel, 0, len(models))
 	for _, m := range models {
-		out = append(out, settingsModel{Provider: id, ID: m.ID, ContextWindow: m.ContextLength, MaxOutputTokens: m.MaxCompletionTokens, MaxOutputToken: m.MaxCompletionTokens, InputModalities: m.InputModalities, OutputModalities: m.OutputModalities, Vision: m.SupportsVision()})
+		mv := settingsModel{Provider: id, ID: m.ID, ContextWindow: m.ContextLength, MaxOutputTokens: m.MaxCompletionTokens, MaxOutputToken: m.MaxCompletionTokens, InputModalities: m.InputModalities, OutputModalities: m.OutputModalities, Vision: m.SupportsVision()}
+		// Same result as GET /v1/settings for a stored model; a new one uses discovery metadata.
+		meta := config.Model{OutputModalities: m.OutputModalities}
+		if shared, ok := cfg.Models[m.ID]; ok && slices.Contains(shared.Providers, id) {
+			meta = shared.ForProvider(id)
+		}
+		_, mv.ImageModel = imageModelAdapter(p, m.ID, meta)
+		out = append(out, mv)
 	}
 	writeJSON(w, 200, map[string]any{"version": protocol.Version, "provider": id, "models": out})
 }

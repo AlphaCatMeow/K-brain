@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,6 +84,7 @@ func NewImageSettingsManager(store *SettingsStore, secretPath string, opts Image
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	m.pruneEmptyProviderConnectionsLocked()
 	raw, err := os.ReadFile(m.secretPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return m, nil
@@ -117,16 +119,7 @@ func (m *ImageSettingsManager) currentLocked() imaging.ImageSettings {
 	}
 	s := imaging.CloneSettings(*m.store.cfg.Image)
 	for i := range s.Targets {
-		t := &s.Targets[i]
-		t.VerificationState = nil
-		if t.Verification.BindingDigest != "" {
-			digest, err := m.imageBindingDigestLocked(context.Background(), s, *t)
-			if err != nil || digest != t.Verification.BindingDigest {
-				t.Verification = imaging.TargetVerification{}
-				t.Enabled = false
-				t.VerificationState = &imaging.VerificationSummary{State: "stale", Reason: "binding_changed"}
-			}
-		}
+		s.Targets[i].VerificationState = nil
 	}
 	return s
 }
@@ -146,22 +139,6 @@ func (m *ImageSettingsManager) publicLocked(scope imaging.Scope) imaging.ImageSe
 					c.CredentialConfigured = false
 				}
 			}
-		}
-	}
-	for i := range s.Targets {
-		t := &s.Targets[i]
-		if t.VerificationState != nil && t.VerificationState.State == "stale" {
-			t.Enabled = false
-		}
-		if imaging.ValidateVerificationProfile(imaging.SnapshotTarget(*t)) != nil && !t.Verification.ContractComplete {
-			reason := "unsupported_profile"
-			if t.Adapter == "jimeng-image" {
-				reason = "signing_evidence_missing"
-			}
-			if strings.HasPrefix(t.Adapter, "google-") || t.Adapter == "runninghub-workflow" {
-				reason = "contract_incomplete"
-			}
-			t.VerificationState = &imaging.VerificationSummary{State: "blocked", Reason: reason}
 		}
 	}
 	return imaging.PublicSettings(s)
@@ -661,4 +638,34 @@ func (r *imageProviderSecretResolver) ResolveSecret(ctx context.Context, scope i
 		return "", imageError(imaging.CodeAuthRequired)
 	}
 	return r.value, nil
+}
+
+// pruneEmptyProviderConnectionsLocked drops provider_ref connections that no
+// target uses. Provider models now reach Image Studio directly, so such a
+// connection has no remaining purpose. Connections with targets are kept.
+// Best effort: a failed save leaves the old settings and retries next start.
+func (m *ImageSettingsManager) pruneEmptyProviderConnectionsLocked() {
+	image := m.store.cfg.Image
+	if image == nil {
+		return
+	}
+	used := map[string]bool{}
+	for _, t := range image.Targets {
+		used[t.ConnectionID] = true
+	}
+	next := imaging.CloneSettings(*image)
+	next.Connections = slices.DeleteFunc(next.Connections, func(c imaging.ImageConnection) bool {
+		return c.Binding.Kind == "provider_ref" && !used[c.ID]
+	})
+	if len(next.Connections) == len(image.Connections) || m.store.save == nil {
+		return
+	}
+	next.Revision++
+	candidate := m.store.cfg.Snapshot()
+	candidate.Image = &next
+	if m.store.save(candidate.Snapshot()) != nil {
+		return
+	}
+	m.store.cfg = candidate
+	m.store.revision++
 }

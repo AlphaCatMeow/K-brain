@@ -98,7 +98,9 @@ func TestImageRuntimeNativeAdapterToDurableAsset(t *testing.T) {
 func TestImageRuntimeGoogleProviderAuthentication(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers["google-test"] = config.Provider{API: "google-generative-ai", BaseURL: "https://example.invalid/v1beta", APIKey: "fake-image-key"}
-	cfg.Image = &imaging.ImageSettings{Connections: []imaging.ImageConnection{{ID: "ic_google", Name: "google", Enabled: true, MaxConcurrent: 1, Binding: imaging.ConnectionBinding{Kind: "provider_ref", ProviderID: "google-test"}}}}
+	// A target keeps the provider_ref connection: startup prunes unused ones.
+	target := imaging.ImageTarget{ID: "it_google", Name: "google", ConnectionID: "ic_google", Adapter: direct.GoogleID, AdapterVersion: direct.Version, Kind: "model", RemoteID: "gemini-2.5-flash-image", Revision: 1, Capabilities: imaging.TargetCapabilities{Operations: []imaging.Operation{imaging.OperationGenerate}, MaxCount: 1, OutputFormats: []string{"png"}}, Parameters: []imaging.ParameterSpec{}}
+	cfg.Image = &imaging.ImageSettings{Connections: []imaging.ImageConnection{{ID: "ic_google", Name: "google", Enabled: true, MaxConcurrent: 1, Binding: imaging.ConnectionBinding{Kind: "provider_ref", ProviderID: "google-test"}}}, Targets: []imaging.ImageTarget{target}}
 	runtime, err := openImageRuntime(context.Background(), t.TempDir(), backend.NewSettingsStore(cfg, func(*config.Config) error { return nil }), true)
 	if err != nil {
 		t.Fatal(err)

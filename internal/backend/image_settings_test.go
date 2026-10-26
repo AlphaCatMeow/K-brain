@@ -262,11 +262,18 @@ func TestImageSettingsTrustedEvidenceReloadAndPublicRoundTrip(t *testing.T) {
 	}
 	got.Targets[0].RemoteID = "changed"
 	got.Targets[0].Verification = target.Verification
-	if _, err = m.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{ExpectedRevision: 5, Connections: got.Connections, Targets: got.Targets}); err == nil {
+	// Enabling no longer needs evidence, but forged evidence is still never stored.
+	if _, err = m.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{ExpectedRevision: 5, Connections: got.Connections, Targets: got.Targets}); err != nil {
+		t.Fatalf("altered target rejected: %v", err)
+	}
+	if m.store.cfg.Image.Targets[0].Verification.ContractComplete {
 		t.Fatal("caller forged evidence for altered target")
 	}
 	fresh, _, _ := imageTestManager(t, func(*config.Config) error { return nil })
-	if _, err = fresh.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{Connections: []imaging.ImageConnection{imageTestConnection()}, Targets: []imaging.ImageTarget{target}}); err == nil {
+	if _, err = fresh.UpdateImageSettings(ctx, scope, imaging.ImageSettingsUpdate{Connections: []imaging.ImageConnection{imageTestConnection()}, Targets: []imaging.ImageTarget{target}}); err != nil {
+		t.Fatalf("new enabled target rejected: %v", err)
+	}
+	if fresh.store.cfg.Image.Targets[0].Verification.ContractComplete {
 		t.Fatal("caller supplied live evidence accepted")
 	}
 	oldProjection, _ := json.Marshal(projectSettings(s.Snapshot()))

@@ -30,39 +30,40 @@ func imageModelAdapter(p config.Provider, id string, m config.Model) (string, bo
 	if m.ImageAdapter == "disabled" {
 		return "", false
 	}
-	if m.ImageAdapter != "" {
+	// "enabled" is the user's explicit opt-in; the protocol still follows the provider API.
+	if m.ImageAdapter != "" && m.ImageAdapter != imageAdapterEnabled {
 		return m.ImageAdapter, true
 	}
-	// Explicit output metadata wins over name heuristics. Vision is input-only.
-	if len(m.OutputModalities) > 0 && !slices.Contains(m.OutputModalities, "image") {
-		return "", false
+	known := direct.ImageModelAdapter(id)
+	if m.ImageAdapter != imageAdapterEnabled {
+		// Explicit output metadata wins over name heuristics. Vision is input-only.
+		if len(m.OutputModalities) > 0 && !slices.Contains(m.OutputModalities, "image") {
+			return "", false
+		}
+		// Default guess, editable per model in provider settings.
+		if known == "" && !slices.Contains(m.OutputModalities, "image") && !strings.Contains(strings.ToLower(id), "image") {
+			return "", false
+		}
 	}
 	// These known image APIs require different request/response contracts.
 	if strings.HasPrefix(id, "dall-e-") || strings.HasPrefix(id, "imagen-") {
 		return "", true
 	}
-	known := direct.ImageModelAdapter(id)
-	if known == "" && (id == "gpt-image-2.5" || id == "gpt-image-2-high") {
-		if base, ok := providerImageBaseURL(p, direct.OpenAIID); ok && (base == "https://rolldek.com/v1" || base == "https://api-cn.rolldek.com/v1") {
-			known = direct.OpenAIID
-		}
-	}
-	if len(m.OutputModalities) == 0 && known == "" {
-		return "", false
-	}
 	switch strings.TrimSpace(p.API) {
 	case "", "openai-completions", "openai-responses":
-		if known == "" || known == direct.OpenAIID {
+		// Never guess a Google proxy contract behind an OpenAI-compatible endpoint.
+		if known != direct.GoogleID {
 			return direct.OpenAIID, true
 		}
 	case "google-generative-ai", "google-gemini":
-		// Imagen uses a different protocol; output=image alone cannot claim generateContent support.
-		if known == direct.GoogleID || (strings.HasPrefix(id, "gemini-") && slices.Contains(m.OutputModalities, "image")) {
+		if known != direct.OpenAIID {
 			return direct.GoogleID, true
 		}
 	}
 	return "", true // Identified as an image model, but its protocol is unsupported.
 }
+
+const imageAdapterEnabled = "enabled"
 
 func providerImageBaseURL(p config.Provider, adapter string) (string, bool) {
 	u, err := url.Parse(p.BaseURL)

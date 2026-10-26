@@ -325,8 +325,9 @@ func TestImageVerificationDurableLifecycle(t *testing.T) {
 			if got := f.get(r.ID); got.State != "stale" {
 				t.Fatal("rotation preserved evidence")
 			}
-			if _, err := f.m.ResolveTarget(context.Background(), imageTestScope(), "it_test"); err == nil {
-				t.Fatal("rotated target remained executable")
+			// Receipts still go stale, but they no longer gate execution.
+			if _, err := f.m.ResolveTarget(context.Background(), imageTestScope(), "it_test"); err != nil {
+				t.Fatalf("rotation disabled target: %v", err)
 			}
 			// Rotating back to the original literal must still invalidate old evidence.
 			_, _ = f.m.WriteImageSecret(context.Background(), imageTestScope(), imaging.ImageSecretInput{ConnectionID: "ic_test", Purpose: "apiKey", Value: "fixture-key"})
