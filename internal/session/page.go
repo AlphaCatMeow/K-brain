@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 )
@@ -30,8 +29,11 @@ type PageOptions struct {
 
 type Page struct {
 	Sessions []Meta
-	Next     *PageCursor
-	Total    int
+	// MessageCounts[i] is the stored message count of Sessions[i], read with the
+	// page so callers never reload a transcript just to count its messages.
+	MessageCounts []int
+	Next          *PageCursor
+	Total         int
 }
 
 func (s *Store) ListPage(ctx context.Context, options PageOptions) (Page, error) {
@@ -55,7 +57,11 @@ func (s *Store) listPageContext(ctx context.Context, options PageOptions) (Page,
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
-	metas := make([]Meta, 0)
+	type entry struct {
+		meta  Meta
+		count int
+	}
+	entries := make([]entry, 0)
 	total := 0
 	err := s.withLock(func() error {
 		if err := ctx.Err(); err != nil {
@@ -92,20 +98,24 @@ func (s *Store) listPageContext(ctx context.Context, options PageOptions) (Page,
 					continue
 				}
 			}
-			metas = append(metas, meta)
+			entries = append(entries, entry{meta: meta, count: len(d.Messages)})
 		}
 		return ctx.Err()
 	})
 	if err != nil {
 		return Page{}, err
 	}
-	sort.Slice(metas, func(i, j int) bool {
-		return metaBefore(metas[i], metas[j])
+	sort.Slice(entries, func(i, j int) bool {
+		return metaBefore(entries[i].meta, entries[j].meta)
 	})
-	metas = metas[min(options.Offset, len(metas)):]
-	page := Page{Sessions: metas, Total: total}
-	if len(metas) > options.Limit {
-		page.Sessions = slices.Clone(metas[:options.Limit])
+	entries = entries[min(options.Offset, len(entries)):]
+	hasMore := len(entries) > options.Limit
+	entries = entries[:min(options.Limit, len(entries))]
+	page := Page{Sessions: make([]Meta, len(entries)), MessageCounts: make([]int, len(entries)), Total: total}
+	for i, e := range entries {
+		page.Sessions[i], page.MessageCounts[i] = e.meta, e.count
+	}
+	if hasMore {
 		last := page.Sessions[len(page.Sessions)-1]
 		page.Next = &PageCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}

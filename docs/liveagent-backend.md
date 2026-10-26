@@ -60,6 +60,7 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | POST | `/v1/mcp/tools/call` | 通过 Go manager 执行 MCP tool call |
 | POST | `/v1/text/generate` | 无状态辅助文本生成；canonical `messages` 仅允许文本与 system/developer/user/assistant，后端不转发 tools |
 | GET / POST | `/v1/sessions` | 列出 / 创建会话 |
+| POST | `/v1/sessions/exists` | 传 `{"ids":[...]}`（最多 5000 个），返回 `{"existing":[...]}`；只看文件是否存在、不读会话内容，`capabilities.session_exists` 表示支持 |
 | GET | `/v1/sessions/{id}` | 消息、子代理任务与最近事件序号 |
 | PATCH | `/v1/sessions/{id}` | 持久化 title、pinned、archived 或 model |
 | DELETE | `/v1/sessions/{id}` | 删除会话与运行日志，活动运行/子任务返回 409 |
