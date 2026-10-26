@@ -226,10 +226,8 @@ func assetGCRetained(data storeData, now time.Time, options AssetGCOptions) (map
 	busy := false
 	for id, job := range data.Jobs {
 		active := assetGCJobBusy(job.Value.Status)
-		unknown := job.Value.Status == JobResultUnknown
 		for _, item := range job.Value.Items {
 			active = active || assetGCJobBusy(item.Status)
-			unknown = unknown || item.Status == JobResultUnknown
 		}
 		for _, item := range data.Executions[id].Items {
 			// A cancelled or slow worker can still be saving output after its
@@ -237,7 +235,10 @@ func assetGCRetained(data storeData, now time.Time, options AssetGCOptions) (map
 			active = active || item.LeaseOwner != ""
 		}
 		busy = busy || active
-		retained := active || unknown || job.DeletedAt == nil || now.Before(job.DeletedAt.Add(options.TombstoneRetention))
+		// A live job keeps its files, including unknown work that may still be
+		// reconciled. A deleted job can no longer be reconciled, so unknown work then
+		// follows the same tombstone retention as any finished job.
+		retained := active || job.DeletedAt == nil || now.Before(job.DeletedAt.Add(options.TombstoneRetention))
 		liveJobs[id] = retained
 		ids := jobAssetIDs(job.Value)
 		for _, event := range data.Events[id] {
