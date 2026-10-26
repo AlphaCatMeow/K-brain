@@ -59,9 +59,12 @@ func (s *Store) UpdateProject(ctx context.Context, scope Scope, id, title string
 	}
 	return out, nil
 }
+
+// result_unknown is terminal: no worker owns the job (the lease check below covers a
+// worker still exiting), and reconciling reopens it as running before any lookup.
 func projectJobBusy(status JobStatus) bool {
 	switch status {
-	case JobSucceeded, JobPartialSucceeded, JobFailed, JobCancelled:
+	case JobSucceeded, JobPartialSucceeded, JobFailed, JobCancelled, JobResultUnknown:
 		return false
 	default:
 		return true
