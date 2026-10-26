@@ -29,8 +29,9 @@ func TestImageReviewStaleTargetDoesNotBlockOtherTargets(t *testing.T) {
 	store.mu.Lock()
 	store.cfg.Image.Targets[0].Verification.BindingDigest = "stale-after-credential-rotation"
 	store.mu.Unlock()
-	if _, err = m.ResolveTarget(context.Background(), imageTestScope(), a.ID); err == nil {
-		t.Fatal("stale target remained executable")
+	// Verification no longer gates execution: stale evidence leaves the target usable.
+	if _, err = m.ResolveTarget(context.Background(), imageTestScope(), a.ID); err != nil {
+		t.Fatalf("stale evidence disabled target: %v", err)
 	}
 	public, err := m.ImageSettings(imageTestScope())
 	if err != nil {

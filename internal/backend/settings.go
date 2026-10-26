@@ -82,8 +82,10 @@ type settingsModel struct {
 	MaxOutputToken   int      `json:"maxOutputToken,omitempty"`
 	OutputModalities []string `json:"outputModalities,omitempty"`
 	ImageAdapter     string   `json:"imageAdapter,omitempty"`
-	InputModalities  []string `json:"inputModalities,omitempty"`
-	Vision           bool     `json:"vision,omitempty"`
+	// ImageModel is the effective, read-only image toggle (explicit choice or default guess).
+	ImageModel      bool     `json:"imageModel"`
+	InputModalities []string `json:"inputModalities,omitempty"`
+	Vision          bool     `json:"vision,omitempty"`
 }
 type settingsProjection struct {
 	AIApproval      config.AIApprovalConfig `json:"aiApproval"`
@@ -116,8 +118,10 @@ type settingsModelUpdate struct {
 	MaxOutputToken   *int      `json:"maxOutputToken,omitempty"`
 	OutputModalities *[]string `json:"outputModalities,omitempty"`
 	ImageAdapter     *string   `json:"imageAdapter,omitempty"`
-	InputModalities  *[]string `json:"inputModalities,omitempty"`
-	Vision           *bool     `json:"vision,omitempty"`
+	// ImageModel is read-only; accepted so a GET payload can be PUT back unchanged.
+	ImageModel      *bool     `json:"imageModel,omitempty"`
+	InputModalities *[]string `json:"inputModalities,omitempty"`
+	Vision          *bool     `json:"vision,omitempty"`
 }
 type settingsProviderUpdate struct {
 	CacheCapabilities      *ai.CacheCapabilities `json:"cacheCapabilities,omitempty"`
@@ -189,6 +193,7 @@ func projectSettings(cfg *config.Config) settingsProjection {
 			}
 			m := shared.ForProvider(id)
 			mv := settingsModel{Provider: id, ID: modelID, Name: m.Name, DisplayName: m.DisplayName, OwnedBy: m.OwnedBy, LimitsSource: m.LimitsSource, ContextWindow: m.Context, MaxOutputTokens: m.MaxOut, MaxOutputToken: m.MaxOut, InputModalities: slices.Clone(m.InputModalities), OutputModalities: slices.Clone(m.OutputModalities), ImageAdapter: m.ImageAdapter, Vision: m.Vision}
+			_, mv.ImageModel = imageModelAdapter(p, modelID, m)
 			// Provider settings must expose disabled models so editing and saving a
 			// provider cannot delete them. The top-level catalog remains active-only.
 			pv.Models = append(pv.Models, mv)
@@ -376,7 +381,7 @@ func applySettings(cfg *config.Config, update settingsUpdate) error {
 				}
 				if item.ImageAdapter != nil {
 					switch *item.ImageAdapter {
-					case "", "disabled", "openai-images", "google-generate-content-image":
+					case "", "disabled", imageAdapterEnabled, "openai-images", "google-generate-content-image":
 						m.ImageAdapter = *item.ImageAdapter
 					default:
 						return fmt.Errorf("unsupported image adapter")

@@ -32,11 +32,11 @@ func TestConfigValidation(t *testing.T) {
 		{"unknown disabled", func(s *ImageSettings) { s.Targets[0].Adapter = "future-protocol" }, true},
 		{"brand is not protocol", func(s *ImageSettings) { s.Targets[0].Adapter = "openai"; s.Targets[0].Enabled = true }, false},
 		{"unknown enabled", func(s *ImageSettings) { s.Targets[0].Adapter = "future-protocol"; s.Targets[0].Enabled = true }, false},
-		{"known unverified enabled", func(s *ImageSettings) { s.Targets[0].Enabled = true }, false},
+		{"known unverified enabled", func(s *ImageSettings) { s.Targets[0].Enabled = true }, true},
 		{"contract only enabled", func(s *ImageSettings) {
 			s.Targets[0].Enabled = true
 			s.Targets[0].Verification = TargetVerification{ContractComplete: true}
-		}, false},
+		}, true},
 		{"verified enabled", func(s *ImageSettings) {
 			v := &s.Targets[0]
 			v.Enabled = true

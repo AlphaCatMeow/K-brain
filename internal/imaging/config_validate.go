@@ -134,23 +134,13 @@ func validateSettings(s ImageSettings, providerExists func(string) bool) error {
 			if t.Adapter == "google-interactions-image" || t.Adapter == "runninghub-workflow" || t.Adapter == "jimeng-image" {
 				return invalid("adapter contract or signing verification is incomplete")
 			}
-			if (t.Adapter == "google-generate-content-image" || t.Adapter == "runninghub-model") && (t.Verification.BindingDigest == "" || t.Verification.JobID == "") {
-				return invalid("target requires durable verification-job evidence")
-			}
-			if t.Verification.BindingDigest != "" {
-				if err := ValidateVerificationProfile(SnapshotTarget(t)); err != nil {
-					return err
-				}
-			}
+			// Enabling no longer requires verification evidence; a misconfigured
+			// target fails its job with the provider's error instead.
 			if !KnownAdapter(t.Adapter) {
 				return invalid("enabled target uses an unknown adapter")
 			}
 			if !c.Enabled {
 				return invalid("enabled target uses a disabled connection")
-			}
-			v := t.Verification
-			if !v.ContractComplete || v.LiveVerifiedAt.IsZero() || v.ConnectionID != t.ConnectionID || v.AdapterVersion != t.AdapterVersion || v.TargetRevision != t.Revision {
-				return invalid("enabled target requires current contract and live verification")
 			}
 		}
 	}
