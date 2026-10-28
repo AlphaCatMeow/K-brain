@@ -229,3 +229,5 @@ PR #60 的首轮运行 `40620223448`（提交 `482fd2d`）已进入终态：macO
 仅文档提交 `a0cbc8f` 的下一轮 [40621444022](https://github.com/Stack-Cairn/K-brain/actions/runs/40621444022) 中，Windows/macOS 和两组 Linux race30 都通过；Linux 完整测试新增一项失败：`internal/tui.TestRunningTaskViewReplaysThenStreams` 在 `tasks_test.go:503` 等待 pre-open SSE 文本 5 秒超时。浏览器包本轮通过，未再发生 sandbox 失败。首败日志 `%TEMP%/kbrain-pr60-ci-a0cbc8f-failed.log`。
 
 该 TUI 包相对 `0dad9fd` 没有源码修改；相同生产源码的上一轮完整测试已通过。因此不修改业务或扩大测试超时，也不通过重试覆盖这次失败。下一轮 workflow 在同一 Linux runner 上，对只读 clean `0dad9fd` 与当前源码分别执行精确用例 `-count=30` 并保留输出，当前用例仍是必须通过的检查；完整套件将 package 并发限制为 2，避免浏览器进程与测试内可执行文件构建在小 runner 上同时争用资源，全部原测试保持执行。资源竞争目前是待验证原因，不视为已经定位。
+
+诊断提交 `aaf2c0a` 的运行 `40622088793` 中 Windows/macOS 通过，精确对照步骤完成；Linux 完整套件从 `02:39:38Z` 起超过 10 分钟仍未结束。进行中 job 日志接口返回 `BlobNotFound`，尚不能定位阻塞包。已请求取消这轮并保留取消事实，不将其写成成功。后续 workflow 对完整套件启用 `go test -json` 实时输出、每包 10 分钟超时以及 `always()` 上传日志；当前失败后才对 clean 基线运行完整套件。原完整测试范围、Chromium sandbox 和 race30 要求均保留。
