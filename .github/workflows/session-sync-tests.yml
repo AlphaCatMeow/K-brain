@@ -9,6 +9,7 @@ on:
       - 'internal/acp/**'
       - 'internal/agent/parallel_test.go'
       - 'internal/backend/**'
+      - 'internal/privacy/**'
       - 'internal/protocol/**'
       - 'internal/session/**'
       - 'internal/tui/**'
@@ -21,6 +22,7 @@ on:
       - 'internal/acp/**'
       - 'internal/agent/parallel_test.go'
       - 'internal/backend/**'
+      - 'internal/privacy/**'
       - 'internal/protocol/**'
       - 'internal/session/**'
       - 'internal/tui/**'
@@ -69,6 +71,8 @@ jobs:
             'internal/backend/session_sync_test.go',
             'internal/backend/session_sync_review_test.go',
             'internal/agent/parallel_test.go',
+            'internal/privacy/gateway.go',
+            'internal/privacy/gateway_stream_test.go',
             'internal/protocol/protocol.go',
             'internal/session/metadata.go',
             'internal/session/page.go',
@@ -76,7 +80,8 @@ jobs:
             'internal/session/summary.go',
             'internal/session/summary_test.go',
             'internal/session/summary_review_test.go',
-            'internal/session/transcript.go'
+            'internal/session/transcript.go',
+            'internal/tui/tasks_test.go'
           )
           $bad = gofmt -l $files
           if ($LASTEXITCODE -ne 0) { throw 'gofmt execution failed' }
@@ -86,12 +91,14 @@ jobs:
         run: |
           go build ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go vet ./internal/session ./internal/backend ./internal/protocol ./internal/acp ./internal/tui ./cmd/kn
+          go vet ./internal/session ./internal/backend ./internal/protocol ./internal/acp ./internal/privacy ./internal/tui ./cmd/kn
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Session, protocol and integration tests
         shell: pwsh
         run: |
           go test ./internal/session ./internal/protocol -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/privacy -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -99,7 +106,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./cmd/kn -run 'TestSessionsCLI' -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test ./internal/tui -run 'TestCtrlCBusyInterruptsNotQuits' -count=1
+          go test ./internal/tui -run 'Test(CtrlCBusyInterruptsNotQuits|RunningTaskViewReplaysThenStreams(WithPrivacy)?)$' -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare Linux browser sandbox and display
         if: runner.os == 'Linux'
@@ -171,6 +178,12 @@ jobs:
       - name: Race blocking task subscriber fixture (30x)
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: go test -race ./internal/agent -run '^TestBroadcastBlockingSubscriberCannotDeadlock$' -count=30 -timeout 5m
+      - name: Race privacy streaming restoration (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/privacy -count=30 -timeout 5m
+      - name: Race task history and live streaming (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams(WithPrivacy)?$' -count=30 -timeout 5m
       - name: Race backend synchronization (30x)
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: go test -race ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=30 -timeout 30m

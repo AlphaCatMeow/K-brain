@@ -430,7 +430,7 @@ func (t *Transport) roundTripResponse(req *http.Request, values map[string]strin
 	}
 	resp.ContentLength = -1
 	resp.Header.Del("Content-Length")
-	resp.Body = &restoreReader{src: resp.Body, values: values, maxToken: maxTokenLength(values)}
+	resp.Body = &restoreReader{src: resp.Body, values: values}
 	return resp, nil
 }
 
@@ -466,21 +466,11 @@ func restoreRequestBody(req *http.Request, body []byte) {
 	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 }
 
-func maxTokenLength(values map[string]string) int {
-	n := 0
-	for token := range values {
-		if len(token) > n {
-			n = len(token)
-		}
-	}
-	return n
-}
-
 type restoreReader struct {
 	src      io.ReadCloser
 	values   map[string]string
 	ordered  []string
-	maxToken int
+	initials string
 	pending  []byte
 	ready    []byte
 	done     bool
@@ -489,10 +479,19 @@ type restoreReader struct {
 }
 
 func (r *restoreReader) Read(dst []byte) (int, error) {
+	if len(dst) == 0 {
+		return 0, nil
+	}
 	if len(r.ordered) == 0 {
 		r.ordered = make([]string, 0, len(r.values))
 		for token := range r.values {
+			if token == "" {
+				continue
+			}
 			r.ordered = append(r.ordered, token)
+			if !strings.ContainsRune(r.initials, rune(token[0])) {
+				r.initials += string(token[0])
+			}
 		}
 		sort.Slice(r.ordered, func(i, j int) bool { return len(r.ordered[i]) > len(r.ordered[j]) })
 	}
@@ -523,52 +522,43 @@ func (r *restoreReader) Read(dst []byte) (int, error) {
 				r.err = err
 			}
 		}
-		keep := 0
-		if !r.done && r.maxToken > 1 {
-			keep = r.maxToken - 1
-			if keep > len(r.pending) {
-				keep = len(r.pending)
-			}
-		}
-		if len(r.pending) <= keep {
-			continue
-		}
-		cut := len(r.pending) - keep
-		if !r.done {
-			cut = r.safeCut(cut)
-			if cut == 0 {
-				continue
-			}
-		}
-		out := string(r.pending[:cut])
-		for _, token := range r.ordered {
-			out = strings.ReplaceAll(out, token, r.values[token])
-		}
-		r.pending = append([]byte(nil), r.pending[cut:]...)
-		r.ready = []byte(out)
+		r.restorePending()
 		if len(r.ready) > 0 {
 			return r.emit(dst)
 		}
 	}
 }
 
-func (r *restoreReader) safeCut(cut int) int {
-	for _, token := range r.ordered {
-		start := cut - len(token) + 1
-		if start < 0 {
-			start = 0
+func (r *restoreReader) restorePending() {
+	var out strings.Builder
+	text := string(r.pending)
+	cut := 0
+scan:
+	for cut < len(text) {
+		next := strings.IndexAny(text[cut:], r.initials)
+		if next < 0 {
+			out.WriteString(text[cut:])
+			cut = len(text)
+			break
 		}
-		for i := start; i < cut; i++ {
-			part := r.pending[i:cut]
-			if len(part) < len(token) && strings.HasPrefix(token, string(part)) {
-				if i < cut {
-					cut = i
-				}
-				break
+		out.WriteString(text[cut : cut+next])
+		cut += next
+		for _, token := range r.ordered {
+			if strings.HasPrefix(text[cut:], token) {
+				out.WriteString(r.values[token])
+				cut += len(token)
+				continue scan
+			}
+			// Retain only a possible incomplete token, never an unrelated event tail.
+			if !r.done && strings.HasPrefix(token, text[cut:]) {
+				break scan
 			}
 		}
+		out.WriteByte(text[cut])
+		cut++
 	}
-	return cut
+	r.pending = append(r.pending[:0], r.pending[cut:]...)
+	r.ready = []byte(out.String())
 }
 
 func (r *restoreReader) emit(dst []byte) (int, error) {

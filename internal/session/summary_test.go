@@ -352,7 +352,13 @@ func TestSummaryChangesCoalescesWaiterWakeups(t *testing.T) {
 		t.Fatal(err)
 	}
 	iterations := 0
-	store.summaryWaitObserver = func() { iterations++ }
+	waiting := make(chan struct{})
+	store.summaryWaitObserver = func() {
+		iterations++
+		if iterations == 1 {
+			close(waiting)
+		}
+	}
 	resultCh := make(chan SummaryChangeResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -360,11 +366,22 @@ func TestSummaryChangesCoalescesWaiterWakeups(t *testing.T) {
 		resultCh <- result
 		errCh <- err
 	}()
-	time.Sleep(5 * time.Millisecond)
-	for index := range 50 {
-		if err := store.SetTitle(id, fmt.Sprintf("coalesced-%d", index)); err != nil {
-			t.Fatal(err)
+	<-waiting
+	// Keep the burst atomic to the waiter; disk latency may exceed the window.
+	if err := store.withLock(func() error {
+		for index := range 50 {
+			data, err := store.read(id)
+			if err != nil {
+				return err
+			}
+			data.Meta.Title = fmt.Sprintf("coalesced-%d", index)
+			if err := store.write(data); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	result := <-resultCh
 	if err := <-errCh; err != nil {

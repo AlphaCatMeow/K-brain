@@ -1,6 +1,6 @@
 # 会话摘要同步实现验证记录
 
-> 状态：本地实现与真实自动化已完成（2026-10-28），最终开发产物为 final4；PR #60 的 CI 修复提交 `b4f5508` 已通过三平台检查，后续仅证据文档更新仍需核对最终 head 的检查。本文区分模块、真机、性能及基线失败，不把运行中或环境失败写成通过。
+> 状态：本地实现与真实自动化已完成（2026-10-28），最终开发联调产物为 final4；后续门禁暴露的隐私流式读取阻塞已补生产修复与回归测试，见文末。`b4f5508` 的三平台成功不代表后续 head；最新修复仍须核对对应提交的检查。本文区分模块、真机、性能及基线失败，不把运行中或环境失败写成通过。
 
 ## 基线与产物
 
@@ -237,3 +237,26 @@ PR #60 的首轮运行 `40620223448`（提交 `482fd2d`）已进入终态：macO
 该 fixture 先 `StartBackground`，再注册 `SubscribeWithJournal`，却忽略订阅时返回的 journal；若唯一文本在订阅前送达，测试就只能等一个不会再来的回调。失败路径又先执行 `defer srv.Close()`，之后才由 `t.Cleanup` 释放阻塞信号，导致等待客户端 10 分钟超时。修复仅改变测试 fixture：SSE 写入前等订阅 gate、注册后打开 gate；释放信号使用 `sync.OnceFunc`，按 defer 顺序在 `srv.Close` 前执行，任何退出路径都取消任务。回调阻塞期间 List 和 Cancel 不得死锁的核心断言保留，没有增加超时或跳过用例，没有改 agent 业务。
 
 精确 `-count=100` 通过，0.913 秒；`-race -count=30` 通过，1.448 秒。日志分别为 `%TEMP%/kbrain-pr60-blocking-subscriber-fixed-count100.log` 和 `%TEMP%/kbrain-pr60-blocking-subscriber-fixed-race30.log`。workflow 另增加该 fixture 的独立 Linux race30，最终完整套件仍须在修复后的 head 实际通过。
+
+## 后续门禁：隐私响应读取阻塞与测试时序修复
+
+`3173169342e3cc9ac63f50bbbc2677e0b18b4e53` 的运行 [40623833224](https://github.com/Stack-Cairn/K-brain/actions/runs/40623833224) 中，Windows/macOS 通过，Linux 完整测试仍在 `TestRunningTaskViewReplaysThenStreams` 等待 pre-open 文本超时；原有 session/backend race30 和阻塞订阅 fixture race30 通过。精确用例单跑（包括 clean baseline/current 各 30 次）未复现，不能据此认为完整测试失败只是 runner 负载。
+
+在 macOS 整个 TUI 包 `-count=10` 中复现后，临时 goroutine 栈明确显示 SSE scanner 阻塞在 `internal/privacy.(*restoreReader).Read` 的底层响应读取；测试服务端已经发送并 Flush 了 early-text 事件，正在等客户端读到事件后释放后续输出。响应还原器即使末尾和脱敏 token 无关，也固定保留最长 token 长度减一的字节，截留了 SSE 的事件结束空行。只要该响应持有非空 token 映射，就会等待后续数据或 EOF，形成双向等待。此前“资源竞争”的假设未获证实，栈定位结果取代该假设；临时完整栈与任务内容打印已移除，没有提交到源码。
+
+生产修复改为从左到右匹配完整 token，只保留真正可能组成未完成 token 的后缀；普通文本和完整 SSE 事件立即透传，完整 token 即时还原，跨 chunk token 在补齐后还原。还原值不会再次当作另一个 token 替换。EOF/底层错误前剩余数据仍会排空，零长度读取不消耗输入。这次实际修改了 `internal/privacy/gateway.go`，不再属于此前仅 CI/测试变更；上文 final4 二进制和旧生产源码清单不包含此修复。
+
+新增 `TestTransportStreamsBeforeResponseEnds` 使用保持打开的 `io.Pipe` 响应，通过真实 Transport 覆盖 remembered token、无新敏感请求、普通 SSE、短文本、完整 token、分段 token 和带 token 的 SSE。在未修复代码上，五个子用例全部超时（10.912 秒，`/tmp/kb-pr60-review/privacy-stream-before.log`）；修复后通过。额外覆盖每个分段位置、逐字节输入、相邻 token、部分 token EOF、原始错误和还原值隔离。TUI 增加显式启用隐私且存在 remembered token 的同等任务回放/实时流测试，服务端释放改为在 Close 前执行，避免失败路径挂住清理。
+
+追加压力验证还发现 `TestSummaryChangesCoalescesWaiterWakeups` 的另一个 fixture 假设：50 次独立磁盘写入被要求在 25 毫秒合并窗口内完成。负载下首个 poll 正常返回 `coalesced-30`，不应被误判为必须返回 `coalesced-49`。测试改为通过 channel 确认 waiter 已进入，并在同一次 Store 锁内执行真实 read/write 批次，让 waiter 观察一个确定的完整 burst；保留 50 次变更、最终标题和最多 3 次 waiter 循环断言，没有增加超时、修改生产合并窗口或跳过用例。首轮失败保存在 `/tmp/kb-pr60-review/race-after.log`。
+
+本地验证（macOS arm64，Go 1.27；隔离工作树 `/tmp/kb-pr60-gates`）：
+
+- `go build ./...`、受影响包 `go vet`、`git diff --check`：通过。
+- 隐私生产修复后的 `go test -json -p 2 ./... -count=1 -timeout=10m`：47 个包通过，3,982 个测试/子测试 pass，无 fail；日志 `/tmp/kb-pr60-review/full-macos-after.jsonl`。该轮早于新增显式隐私 TUI 用例与 coalescing fixture 的最后调整，不代替最终 head 的 CI。
+- 隐私生产修复后的 TUI 整包 `-count=10`：通过，215.182 秒；日志 `/tmp/kb-pr60-review/tui-after.log`。
+- 最终测试调整后，隐私/session/backend 定向 `-race -count=30`：通过，分别 5.499/81.070/16.941 秒；日志 `/tmp/kb-pr60-review/race-final.log`。
+- 最终普通/隐私 TUI 回放实时流及阻塞订阅 fixture `-race -count=100`：通过，TUI 9.105 秒，agent 1.844 秒；日志 `/tmp/kb-pr60-review/task-race-final.log`。
+- Linux `golang:1.27-alpine` 容器：隐私包 `-count=30` 和任务回放实时流精确 `-count=100` 均通过；日志 `/tmp/kb-pr60-review/linux-fixed.log`。这不替代 Ubuntu 浏览器全套与 Windows/macOS CI。
+
+workflow 保留所有既有门禁，包括浏览器 sandbox、Linux 完整测试、clean baseline 诊断与原 race30；另将 privacy 纳入触发路径、gofmt/vet/三平台测试，普通及隐私 TUI 用例纳入三平台定向与 Linux 独立 race30。最终修复提交的三平台结果以对应 GitHub Actions 终态为准；没有合并或发布。
