@@ -1,0 +1,200 @@
+name: Session synchronization tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/session-sync-tests.yml'
+      - 'cmd/kn/**'
+      - 'docs/liveagent-backend.md'
+      - 'internal/acp/**'
+      - 'internal/agent/parallel_test.go'
+      - 'internal/backend/**'
+      - 'internal/privacy/**'
+      - 'internal/protocol/**'
+      - 'internal/session/**'
+      - 'internal/tui/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/session-sync-tests.yml'
+      - 'cmd/kn/**'
+      - 'docs/liveagent-backend.md'
+      - 'internal/acp/**'
+      - 'internal/agent/parallel_test.go'
+      - 'internal/backend/**'
+      - 'internal/privacy/**'
+      - 'internal/protocol/**'
+      - 'internal/session/**'
+      - 'internal/tui/**'
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: Session sync (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+          - os: windows-latest
+            target: windows-amd64
+          - os: macos-15
+            target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Preserve committed LF on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Prepare pinned Computer Use runtime
+        run: python scripts/prepare-cua.py --target ${{ matrix.target }}
+      - name: Check formatting of session-sync files
+        shell: pwsh
+        run: |
+          $files = @(
+            'internal/backend/history.go',
+            'internal/backend/server.go',
+            'internal/backend/session_sync.go',
+            'internal/backend/session_sync_test.go',
+            'internal/backend/session_sync_review_test.go',
+            'internal/agent/parallel_test.go',
+            'internal/privacy/gateway.go',
+            'internal/privacy/gateway_stream_test.go',
+            'internal/protocol/protocol.go',
+            'internal/session/metadata.go',
+            'internal/session/page.go',
+            'internal/session/session.go',
+            'internal/session/summary.go',
+            'internal/session/summary_test.go',
+            'internal/session/summary_review_test.go',
+            'internal/session/transcript.go',
+            'internal/tui/tasks_test.go'
+          )
+          $bad = gofmt -l $files
+          if ($LASTEXITCODE -ne 0) { throw 'gofmt execution failed' }
+          if ($bad) { $bad; throw 'gofmt check failed' }
+      - name: Build and vet affected packages
+        shell: pwsh
+        run: |
+          go build ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./internal/session ./internal/backend ./internal/protocol ./internal/acp ./internal/privacy ./internal/tui ./cmd/kn
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Session, protocol and integration tests
+        shell: pwsh
+        run: |
+          go test ./internal/session ./internal/protocol -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/privacy -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/acp -run 'Test(ListSessions|SessionListWirePaginationAndProjectFilter)$' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./cmd/kn -run 'TestSessionsCLI' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./internal/tui -run 'Test(CtrlCBusyInterruptsNotQuits|RunningTaskViewReplaysThenStreams(WithPrivacy)?)$' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare Linux browser sandbox and display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Ubuntu restricts user namespaces for downloaded Chromium builds.
+          # Allow the namespace sandbox on this disposable runner; keep Chrome's sandbox enabled.
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare --user --map-root-user true
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends xvfb xauth
+          fi
+      - name: Compare task-stream timing against the clean baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BASELINE_SHA: 0dad9fdec4adbb2a6324974edc1d610c69b2a79b
+        run: |
+          task_baseline_dir=$(mktemp -d "$RUNNER_TEMP/session-sync-baseline.XXXXXX")
+          git archive "$BASELINE_SHA" | tar -x -C "$task_baseline_dir"
+          python "$task_baseline_dir/scripts/prepare-cua.py" --target linux-amd64
+          echo "SESSION_SYNC_BASELINE_DIR=$task_baseline_dir" >> "$GITHUB_ENV"
+          set +e
+          go -C "$task_baseline_dir" test ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams$' -count=30 -v -timeout=5m 2>&1 | tee "$RUNNER_TEMP/task-stream-baseline.log"
+          task_baseline_status=${PIPESTATUS[0]}
+          go test ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams$' -count=30 -v -timeout=5m 2>&1 | tee "$RUNNER_TEMP/task-stream-current.log"
+          task_current_status=${PIPESTATUS[0]}
+          set -e
+          echo "Clean baseline exit: $task_baseline_status; current exit: $task_current_status" | tee "$RUNNER_TEMP/task-stream-status.log"
+          # Baseline output is diagnostic evidence; the current revision remains a required check.
+          exit "$task_current_status"
+      - name: Full Linux suite
+        id: full_linux
+        if: runner.os == 'Linux'
+        shell: bash
+        # Browser launches and executable builds otherwise compete across every
+        # package on the small runner. Bound package concurrency, retaining all tests.
+        run: |
+          set +e
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' go test -json -p 2 ./... -timeout 10m -count=1 2>&1 | tee "$RUNNER_TEMP/session-sync-full-linux.jsonl"
+          task_status=${PIPESTATUS[0]}
+          exit "$task_status"
+      - name: Upload current Linux test evidence
+        if: ${{ always() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-sync-linux-current-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/session-sync-full-linux.jsonl
+            ${{ runner.temp }}/task-stream-*.log
+      - name: Diagnose a full-suite failure on the clean baseline
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.full_linux.outcome == 'failure' }}
+        shell: bash
+        run: |
+          set +e
+          xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' go -C "$SESSION_SYNC_BASELINE_DIR" test -json -p 2 ./... -timeout 10m -count=1 2>&1 | tee "$RUNNER_TEMP/session-sync-clean-baseline.jsonl"
+          task_baseline_status=${PIPESTATUS[0]}
+          echo "Clean baseline full-suite exit: $task_baseline_status" | tee "$RUNNER_TEMP/session-sync-clean-baseline-status.log"
+          # Preserve the current full-suite failure; this comparison is diagnostic.
+          exit 0
+      - name: Race session summaries (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/session -run 'Test(Summary|TUIStore)' -count=30 -timeout 30m
+      - name: Race blocking task subscriber fixture (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/agent -run '^TestBroadcastBlockingSubscriberCannotDeadlock$' -count=30 -timeout 5m
+      - name: Race privacy streaming restoration (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/privacy -count=30 -timeout 5m
+      - name: Race task history and live streaming (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams(WithPrivacy)?$' -count=30 -timeout 5m
+      - name: Race backend synchronization (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=30 -timeout 30m
+      - name: Upload Linux verification evidence
+        if: ${{ always() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-sync-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/session-sync-*.jsonl
+            ${{ runner.temp }}/session-sync-*-status.log
+            ${{ runner.temp }}/task-stream-*.log

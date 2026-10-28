@@ -82,10 +82,12 @@ type SessionSummary struct {
 
 type Session struct {
 	SessionSummary
-	Revision string     `json:"revision"`
-	Messages []Message  `json:"messages"`
-	Tasks    []Subagent `json:"tasks,omitempty"`
-	LastSeq  int64      `json:"last_seq"`
+	Revision     string     `json:"revision"`
+	SyncEpoch    string     `json:"sync_epoch,omitempty"`
+	SyncRevision string     `json:"sync_revision,omitempty"`
+	Messages     []Message  `json:"messages"`
+	Tasks        []Subagent `json:"tasks,omitempty"`
+	LastSeq      int64      `json:"last_seq"`
 }
 
 type SessionPage struct {
@@ -93,6 +95,51 @@ type SessionPage struct {
 	TotalCount int              `json:"total_count"`
 	Next       *PageCursor      `json:"next,omitempty"`
 	Version    string           `json:"version"`
+	Epoch      string           `json:"epoch,omitempty"`
+	Revision   string           `json:"revision,omitempty"`
+}
+
+type SessionChange struct {
+	ID       string          `json:"id"`
+	Revision string          `json:"revision"`
+	Kind     string          `json:"kind"`
+	Listed   bool            `json:"listed"`
+	Session  *SessionSummary `json:"session,omitempty"`
+}
+
+type SessionChanges struct {
+	Epoch        string          `json:"epoch"`
+	HeadRevision string          `json:"head_revision"`
+	MinSince     string          `json:"min_since"`
+	NextSince    *string         `json:"next_since"`
+	Reset        bool            `json:"reset"`
+	ResetReason  string          `json:"reset_reason,omitempty"`
+	More         bool            `json:"more"`
+	Changes      []SessionChange `json:"changes"`
+}
+
+type SessionWorkdir struct {
+	CWD       string    `json:"cwd"`
+	Count     int       `json:"count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type SessionSnapshotInfo struct {
+	Epoch            string           `json:"epoch"`
+	Revision         string           `json:"revision"`
+	SnapshotID       string           `json:"snapshot_id"`
+	ExpiresInSeconds int              `json:"expires_in_seconds"`
+	TotalCount       int              `json:"total_count"`
+	Workdirs         []SessionWorkdir `json:"workdirs"`
+}
+
+type SessionSnapshotPage struct {
+	Epoch      string           `json:"epoch"`
+	Revision   string           `json:"revision"`
+	SnapshotID string           `json:"snapshot_id"`
+	TotalCount int              `json:"total_count"`
+	Sessions   []SessionSummary `json:"sessions"`
+	NextOffset *int             `json:"next_offset"`
 }
 
 type PageCursor struct {

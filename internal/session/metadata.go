@@ -195,6 +195,7 @@ func (s *Store) Delete(id string) error {
 				_ = os.Remove(parent)
 			}
 		}
+		s.removeSummaryLocked(id)
 		return nil
 	})
 }

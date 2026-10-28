@@ -16,6 +16,7 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/agent"
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/privacy"
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
@@ -465,6 +466,18 @@ func TestTaskViewReplaysJournal(t *testing.T) {
 }
 
 func TestRunningTaskViewReplaysThenStreams(t *testing.T) {
+	testRunningTaskViewReplaysThenStreams(t)
+}
+
+func TestRunningTaskViewReplaysThenStreamsWithPrivacy(t *testing.T) {
+	privacy.SetEnabled(true)
+	t.Cleanup(func() { privacy.SetEnabled(false) })
+	privacy.MaskText("alice@example.com")
+	testRunningTaskViewReplaysThenStreams(t)
+}
+
+func testRunningTaskViewReplaysThenStreams(t *testing.T) {
+	t.Helper()
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -478,8 +491,8 @@ func TestRunningTaskViewReplaysThenStreams(t *testing.T) {
 		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"late-text"},"finish_reason":"stop"}]}`+"\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
-	t.Cleanup(func() { close(release) })
 	defer srv.Close()
+	defer close(release)
 	m := tasksModel(srv.URL)
 	task := m.agent.StartBackground("probe", "p", agent.SubModel{})
 	defer m.agent.Tasks().Cancel(task.ID)
