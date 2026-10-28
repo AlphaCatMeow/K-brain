@@ -200,5 +200,17 @@ go test ./internal/session ./internal/protocol ./internal/backend -skip TestFile
 
 ## 尚未完成
 
-- 新增跨平台 workflow 的首次 PR 运行和 required checks。
-- 独立对抗性复审最终轮已完成，关闭/admission、嵌套深拷贝及空页缺陷已补先失败回归并修复。提交、PR 与 CI 尚未执行。
+- 新增跨平台 workflow 的修复后 PR 运行和 required checks。
+- 独立对抗性复审最终轮已完成，关闭/admission、嵌套深拷贝及空页缺陷已补先失败回归并修复。实现已提交为 `482fd2d` 并创建 PR #60；CI 正在收敛。
+
+## PR CI 收敛记录
+
+PR #60 的首轮运行 `40620223448`（提交 `482fd2d`）已进入终态：macOS 通过，Windows 和 Linux 失败。
+
+- Windows 在 gofmt 阶段列出全部 13 个任务 Go 文件。Git checkout 的自动 CRLF 转换改变了工作树字节；workflow 改为 checkout 前设置 `core.autocrlf=false`，继续检查原始提交的 LF 内容，不重写源码或跳过格式检查。
+- Linux 完整测试只有 `internal/browser` 失败，共 9 个用例：`TestE2EHeadless`、`TestE2EDedicated`、`TestEvalImmediatelyAfterAttach`、`TestE2ELiveFallsBackToLaunched`、`TestE2EDedicatedReattach`、`TestConcurrentSessionsDriveIsolatedBrowsers`、`TestChurnOpenClose`、`TestRecoverFromClosedBrowser`、`TestManySequentialCalls`。全部日志均为 Chromium `No usable sandbox`；其他包通过。首轮原始失败日志保存在 `%TEMP%/kbrain-pr60-ci-first.log`。
+- Linux workflow 在临时 runner 上允许非特权 user namespace，并通过 `unshare` 检查该能力；完整测试用 Xvfb 提供 dedicated 浏览器所需的显示服务。Chromium sandbox 仍开启，没有传入 `--no-sandbox` 或跳过浏览器测试。
+- 原 race30 步骤因完整测试失败而被跳过。现在 session 和 backend race30 各为独立步骤，使用 `!cancelled()`，完整测试失败也会继续执行两组检查。
+- 多命令 PowerShell 步骤逐条检查 native exit code，防止早期失败被后续成功命令覆盖。
+
+修正后的下一轮 CI 结果尚待实际执行；本记录不把 runner 修复方案写成测试通过。

@@ -41,6 +41,10 @@ jobs:
             target: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Preserve committed LF on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
@@ -70,23 +74,48 @@ jobs:
             'internal/session/transcript.go'
           )
           $bad = gofmt -l $files
+          if ($LASTEXITCODE -ne 0) { throw 'gofmt execution failed' }
           if ($bad) { $bad; throw 'gofmt check failed' }
       - name: Build and vet affected packages
+        shell: pwsh
         run: |
           go build ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet ./internal/session ./internal/backend ./internal/protocol ./internal/acp ./internal/tui ./cmd/kn
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Session, protocol and integration tests
+        shell: pwsh
         run: |
           go test ./internal/session ./internal/protocol -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/acp -run 'Test(ListSessions|SessionListWirePaginationAndProjectFilter)$' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./cmd/kn -run 'TestSessionsCLI' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/tui -run 'TestCtrlCBusyInterruptsNotQuits' -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare Linux browser sandbox and display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Ubuntu restricts user namespaces for downloaded Chromium builds.
+          # Allow the namespace sandbox on this disposable runner; keep Chrome's sandbox enabled.
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare --user --map-root-user true
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends xvfb xauth
+          fi
       - name: Full Linux suite
         if: runner.os == 'Linux'
-        run: go test ./... -timeout 60m -count=1
-      - name: Race session-sync packages (30x)
-        if: runner.os == 'Linux'
-        run: |
-          go test -race ./internal/session -run 'Test(Summary|TUIStore)' -count=30 -timeout 30m
-          go test -race ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=30 -timeout 30m
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' go test ./... -timeout 60m -count=1
+      - name: Race session summaries (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/session -run 'Test(Summary|TUIStore)' -count=30 -timeout 30m
+      - name: Race backend synchronization (30x)
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -race ./internal/backend -run 'TestSession(Snapshot|Changes)' -count=30 -timeout 30m
