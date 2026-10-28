@@ -46,6 +46,8 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -110,9 +112,29 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends xvfb xauth
           fi
+      - name: Compare task-stream timing against the clean baseline
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BASELINE_SHA: 0dad9fdec4adbb2a6324974edc1d610c69b2a79b
+        run: |
+          task_baseline_dir=$(mktemp -d "$RUNNER_TEMP/session-sync-baseline.XXXXXX")
+          git archive "$BASELINE_SHA" | tar -x -C "$task_baseline_dir"
+          python "$task_baseline_dir/scripts/prepare-cua.py" --target linux-amd64
+          set +e
+          go -C "$task_baseline_dir" test ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams$' -count=30 -v -timeout=5m 2>&1 | tee "$RUNNER_TEMP/task-stream-baseline.log"
+          task_baseline_status=${PIPESTATUS[0]}
+          go test ./internal/tui -run '^TestRunningTaskViewReplaysThenStreams$' -count=30 -v -timeout=5m 2>&1 | tee "$RUNNER_TEMP/task-stream-current.log"
+          task_current_status=${PIPESTATUS[0]}
+          set -e
+          echo "Clean baseline exit: $task_baseline_status; current exit: $task_current_status"
+          # Baseline output is diagnostic evidence; the current revision remains a required check.
+          exit "$task_current_status"
       - name: Full Linux suite
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' go test ./... -timeout 60m -count=1
+        # Browser launches and executable builds otherwise compete across every
+        # package on the small runner. Bound package concurrency, retaining all tests.
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' go test -p 2 ./... -timeout 60m -count=1
       - name: Race session summaries (30x)
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: go test -race ./internal/session -run 'Test(Summary|TUIStore)' -count=30 -timeout 30m
