@@ -25,6 +25,7 @@ type PageOptions struct {
 	Shared          *bool
 	SharedOnly      bool
 	IncludeArchived bool
+	Pinned          *bool
 }
 
 type Page struct {
@@ -34,6 +35,8 @@ type Page struct {
 	MessageCounts []int
 	Next          *PageCursor
 	Total         int
+	Epoch         string
+	Revision      uint64
 }
 
 func (s *Store) ListPage(ctx context.Context, options PageOptions) (Page, error) {
@@ -62,25 +65,24 @@ func (s *Store) listPageContext(ctx context.Context, options PageOptions) (Page,
 		count int
 	}
 	entries := make([]entry, 0)
+	page := Page{}
 	total := 0
 	err := s.withLock(func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		ids, err := s.ids()
-		if err != nil {
+		if err := s.syncSummariesLocked(ctx); err != nil {
 			return err
 		}
-		for _, id := range ids {
+		for _, cached := range s.summaries.entries {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			d, err := s.read(id)
-			if err != nil {
-				return err
+			meta := cached.meta
+			if meta.TaskID != "" || (!options.IncludeEmpty && cached.count == 0) || (!options.IncludeArchived && meta.Archived) {
+				continue
 			}
-			meta := d.Meta
-			if meta.TaskID != "" || (!options.IncludeEmpty && len(d.Messages) == 0) || (!options.IncludeArchived && meta.Archived) {
+			if options.Pinned != nil && meta.Pinned != *options.Pinned {
 				continue
 			}
 			if options.SharedOnly && !meta.Shared {
@@ -98,8 +100,10 @@ func (s *Store) listPageContext(ctx context.Context, options PageOptions) (Page,
 					continue
 				}
 			}
-			entries = append(entries, entry{meta: meta, count: len(d.Messages)})
+			entries = append(entries, entry{meta: cloneMeta(meta), count: cached.count})
 		}
+		page.Epoch = s.summaries.epoch
+		page.Revision = s.summaries.revision
 		return ctx.Err()
 	})
 	if err != nil {
@@ -111,7 +115,9 @@ func (s *Store) listPageContext(ctx context.Context, options PageOptions) (Page,
 	entries = entries[min(options.Offset, len(entries)):]
 	hasMore := len(entries) > options.Limit
 	entries = entries[:min(options.Limit, len(entries))]
-	page := Page{Sessions: make([]Meta, len(entries)), MessageCounts: make([]int, len(entries)), Total: total}
+	page.Sessions = make([]Meta, len(entries))
+	page.MessageCounts = make([]int, len(entries))
+	page.Total = total
 	for i, e := range entries {
 		page.Sessions[i], page.MessageCounts[i] = e.meta, e.count
 	}

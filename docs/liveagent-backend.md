@@ -61,6 +61,10 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | POST | `/v1/text/generate` | 无状态辅助文本生成；canonical `messages` 仅允许文本与 system/developer/user/assistant，后端不转发 tools |
 | GET / POST | `/v1/sessions` | 列出 / 创建会话 |
 | POST | `/v1/sessions/exists` | 传 `{"ids":[...]}`（最多 5000 个），返回 `{"existing":[...]}`；只看文件是否存在、不读会话内容，`capabilities.session_exists` 表示支持 |
+| POST | `/v1/sessions/snapshots` | 建立 60 秒不可变会话摘要快照，返回 epoch、revision、token、总数和 workdirs |
+| GET / DELETE | `/v1/sessions/snapshots/{token}` | 按 `offset` / `limit`（最多 500）读取或释放快照；过期或不可续传返回 410 |
+| GET | `/v1/sessions/changes` | 按 epoch、since、wait、rescan 长轮询最终列表变化，返回独立的 head_revision 与 next_since |
+| GET | `/v1/sessions/workdirs` | 从同一摘要缓存汇总默认可见会话的工作目录、数量和最新时间 |
 | GET | `/v1/sessions/{id}` | 消息、子代理任务与最近事件序号 |
 | PATCH | `/v1/sessions/{id}` | 持久化 title、pinned、archived 或 model |
 | DELETE | `/v1/sessions/{id}` | 删除会话与运行日志，活动运行/子任务返回 409 |
@@ -75,7 +79,15 @@ VITE_KBRAIN_TOKEN=<backend-token>
 | POST | `/v1/sessions/{id}/permissions/{permission}` | 提交审批结果 |
 | POST | `/v1/sessions/{id}/close` | 结束当前会话运行并保存 |
 
-列表支持 `page`、`page_size`、`cwd`、`cwd_empty`、`shared`，返回 `sessions` 和 `total_count`。历史窗口支持 `max_messages`、`before_offset`、`expected_revision`、`include_active`；返回 `session`、`revision`、`oldest_offset`、`has_more_before`、`total_message_count`、与消息数组一一对应的原始 `message_offsets`，以及可选 `active_messages`。原始 offset 可以不连续，客户端应按返回值构造消息引用。
+列表支持 `page`、`page_size`、`cwd`、`cwd_empty`、`shared`、`pinned`，返回 `sessions`、`total_count`、`epoch` 和字符串 `revision`。`/v1/health` 的 `capabilities.session_changes: 2` 表示同时支持不可变快照、增量、pinned、workdirs、字符串游标和过期 reset；客户端必须探测完整契约后才能放宽旧轮询。
+
+增量响应的 `head_revision` 只表示服务端当前水位，客户端只能用实际交付批次的 `next_since` 续传；空批不推进。epoch 不匹配、游标早于回收水位或超出 head 时返回 `reset:true`、`next_since:null`。upsert 携带完整 `SessionSummary`；delete 不携带 session。会话列表和变化清单保存在内存中，不修改 transcript 格式。首次列表/快照/changes 才惰性建立摘要缓存；普通 TUI、ACP 与 `kn run` 不启动 HTTP 扫描器。存在 HTTP changes 订阅时，同 Store 共用有界外部文件扫描，退出租约后释放。
+
+HTTP 快照最多保留 4 份，合计 JSON 摘要预算为 64MiB；正在构建的快照也占用这 4 个槽位，并且同一后端同时只允许一个构建者。槽位在读取 Store 和复制摘要之前预约，数量或容量不足返回 `429` 和 `Retry-After`，不驱逐有效快照、不截断内容。取消或构建失败会释放预约；关闭后端会取消构建并停止已保存快照的 TTL 计时器，迟到的构建不能在关闭后重新留下快照。
+
+快照分页的 `sessions` 始终是数组，包括空库和空页；读取完毕返回 `next_offset:null`，不会用 `sessions:null` 表示空集合。
+
+PATCH 会话响应和 DELETE 响应额外返回 `sync_epoch` / `sync_revision`，表示该操作对应的列表变化水位，与历史内容 revision 不同。历史窗口支持 `max_messages`、`before_offset`、`expected_revision`、`include_active`；返回 `session`、`revision`、`oldest_offset`、`has_more_before`、`total_message_count`、与消息数组一一对应的原始 `message_offsets`，以及可选 `active_messages`。原始 offset 可以不连续，客户端应按返回值构造消息引用。
 
 编辑请求为 `{message_ref:{message_id},replacement:<规范 user 消息>,expected_revision}`。分支请求为 `{message_ref:{message_id},expected_revision?,title?}`。过期 revision 返回 409。分支会话的摘要（列表、详情、分支响应）带 `forked_from`（来源会话 ID）和 `fork_seq`（复制到的最后一条消息序号），普通会话省略这两个字段。编辑完成后启动运行时传入 `resume_message_id`，后端验证它指向已持久化的末尾用户消息，避免重复追加。普通发送不使用该字段。
 

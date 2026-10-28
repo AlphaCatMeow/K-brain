@@ -85,12 +85,16 @@ type Server struct {
 	hookRunner           *BackendHookRunner
 	mcp                  *mcp.LiveManager
 
-	mu           sync.Mutex
-	sessions     map[string]*runtimeSession
-	closed       bool
-	shuttingDown atomic.Bool
-	reaperStop   chan struct{}
-	reaperDone   chan struct{}
+	mu                  sync.Mutex
+	sessions            map[string]*runtimeSession
+	closed              bool
+	shuttingDown        atomic.Bool
+	reaperStop          chan struct{}
+	reaperDone          chan struct{}
+	snapshotMu          sync.Mutex
+	snapshots           map[string]sessionHTTPSnapshot
+	snapshotBuilders    int
+	snapshotBuildCancel context.CancelFunc
 }
 
 type runRecord struct {
@@ -186,7 +190,7 @@ func New(opts Options) (*Server, error) {
 		filesystemRoots: append([]string(nil), opts.FilesystemRoots...),
 		store:           opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
 		settings: opts.Settings, usage: NewProviderUsageService(opts.Settings), prompts: opts.Prompts,
-		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession),
+		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession), snapshots: make(map[string]sessionHTTPSnapshot),
 	}
 	if len(server.filesystemRoots) == 0 && opts.DefaultCWD != "" {
 		server.filesystemRoots = []string{opts.DefaultCWD}
@@ -213,6 +217,17 @@ func New(opts Options) (*Server, error) {
 
 func (s *Server) Close() error {
 	s.shuttingDown.Store(true)
+	s.snapshotMu.Lock()
+	if s.snapshotBuildCancel != nil {
+		s.snapshotBuildCancel()
+	}
+	for id, snapshot := range s.snapshots {
+		if snapshot.timer != nil {
+			snapshot.timer.Stop()
+		}
+		delete(s.snapshots, id)
+	}
+	s.snapshotMu.Unlock()
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -315,7 +330,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "image_model_toggle": 1, "session_exists": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_changes": 2, "session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "image_model_toggle": 1, "session_exists": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
@@ -408,6 +423,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/exists" {
 		s.sessionsExist(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/changes" {
+		s.sessionChanges(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/workdirs" {
+		s.sessionWorkdirs(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/snapshots" {
+		s.createSessionSnapshot(w, r)
+		return
+	}
+	if snapshotID, ok := snapshotPathID(r.URL.Path); ok && (r.Method == http.MethodGet || r.Method == http.MethodDelete) {
+		s.sessionSnapshot(w, r, snapshotID)
 		return
 	}
 	if r.URL.Path == "/v1/sessions" {

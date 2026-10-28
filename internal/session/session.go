@@ -90,11 +90,18 @@ type Compaction struct {
 }
 
 type Store struct {
-	filesDir      string
-	mu            sync.Mutex
-	lock          *flock.Flock
-	closed        bool
-	projectScoped bool
+	filesDir             string
+	mu                   sync.Mutex
+	lock                 *flock.Flock
+	closed               bool
+	projectScoped        bool
+	summaries            *summaryState
+	summaryScanInterval  time.Duration
+	summaryScanLease     time.Duration
+	summaryCoalesce      time.Duration
+	summarySnapshotLease time.Duration
+	readObserver         func(string)
+	summaryWaitObserver  func()
 }
 
 type sessionData struct {
@@ -162,7 +169,14 @@ func Open(dir string) (*Store, error) {
 	if err := prepareLockFile(filepath.Join(root, ".lock")); err != nil {
 		return nil, fmt.Errorf("prepare session lock: %w", err)
 	}
-	s := &Store{filesDir: root, lock: flock.New(filepath.Join(root, ".lock"))}
+	s := &Store{
+		filesDir:             root,
+		lock:                 flock.New(filepath.Join(root, ".lock")),
+		summaryScanInterval:  30 * time.Second,
+		summaryScanLease:     90 * time.Second,
+		summaryCoalesce:      500 * time.Millisecond,
+		summarySnapshotLease: 60 * time.Second,
+	}
 	if err := s.withLock(func() error { return nil }); err != nil {
 		return nil, err
 	}
@@ -220,11 +234,33 @@ func (s *Store) withLock(fn func() error) (err error) {
 
 func (s *Store) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
+	var scannerDone chan struct{}
+	if s.summaries != nil {
+		if s.summaries.publishTimer != nil {
+			s.summaries.publishTimer.Stop()
+			s.summaries.publishTimer = nil
+		}
+		if s.summaries.journalTimer != nil {
+			s.summaries.journalTimer.Stop()
+			s.summaries.journalTimer = nil
+		}
+		if s.summaries.scannerStop != nil {
+			close(s.summaries.scannerStop)
+			s.summaries.scannerStop = nil
+		}
+		scannerDone = s.summaries.scannerDone
+		close(s.summaries.notify)
+		s.summaries.notify = make(chan struct{})
+	}
+	s.mu.Unlock()
+	if scannerDone != nil {
+		<-scannerDone
+	}
 	return s.lock.Close()
 }
 

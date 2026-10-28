@@ -44,6 +44,13 @@ func (s *Store) read(id string) (*sessionData, error) {
 	if path == "" {
 		return nil, fmt.Errorf("invalid session id %q", id)
 	}
+	return s.readPath(id, path)
+}
+
+func (s *Store) readPath(id, path string) (*sessionData, error) {
+	if s.readObserver != nil {
+		s.readObserver(id)
+	}
 	info, err := os.Lstat(filepath.Dir(path))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("session %s: %w", id, ErrNotFound)
@@ -237,5 +244,8 @@ func (s *Store) write(d *sessionData) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	return s.updateSummaryAfterWriteLocked(d, path)
 }

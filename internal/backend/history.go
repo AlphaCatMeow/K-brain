@@ -123,7 +123,12 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, 400, err.Error())
 		return
 	}
-	opts := session.PageOptions{Limit: size, Offset: (page - 1) * size, Shared: shared}
+	pinned, err := boolQuery(r, "pinned")
+	if err != nil {
+		writeJSONError(w, 400, err.Error())
+		return
+	}
+	opts := session.PageOptions{Limit: size, Offset: (page - 1) * size, Shared: shared, Pinned: pinned}
 	if values, exists := r.URL.Query()["cwd"]; exists {
 		cwd := values[0]
 		opts.CWD = &cwd
@@ -141,7 +146,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		mutationError(w, err)
 		return
 	}
-	out := protocol.SessionPage{Version: protocol.Version, TotalCount: result.Total, Sessions: []protocol.SessionSummary{}}
+	out := protocol.SessionPage{Version: protocol.Version, TotalCount: result.Total, Sessions: []protocol.SessionSummary{}, Epoch: result.Epoch, Revision: strconv.FormatUint(result.Revision, 10)}
 	for i, meta := range result.Sessions {
 		out.Sessions = append(out.Sessions, summary(meta, result.MessageCounts[i]))
 	}
@@ -249,6 +254,10 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
+	if cursor, cursorErr := s.store.SummaryCursor(r.Context()); cursorErr == nil {
+		view.SyncEpoch = cursor.Epoch
+		view.SyncRevision = strconv.FormatUint(cursor.Revision, 10)
+	}
 	writeJSON(w, 200, view)
 }
 
@@ -345,7 +354,12 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request, id string
 		mutationError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "session_id": id})
+	cursor, cursorErr := s.store.SummaryCursor(r.Context())
+	if cursorErr != nil {
+		mutationError(w, cursorErr)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "session_id": id, "sync_epoch": cursor.Epoch, "sync_revision": strconv.FormatUint(cursor.Revision, 10)})
 }
 
 type historyResponse struct {
