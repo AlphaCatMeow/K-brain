@@ -552,7 +552,14 @@ func TestRestoreTaskSettledAndVisible(t *testing.T) {
 
 func TestBroadcastBlockingSubscriberCannotDeadlock(t *testing.T) {
 	release := make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	subscribed := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-subscribed:
+		case <-r.Context().Done():
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"hi"}}]}`+"\n\n")
 		w.(http.Flusher).Flush()
@@ -562,11 +569,12 @@ func TestBroadcastBlockingSubscriberCannotDeadlock(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	}))
-	t.Cleanup(func() { close(release) })
 	defer srv.Close()
+	defer finish()
 
 	ag := New(ai.New(srv.URL, "k"), "m", 100, "sys")
 	task := ag.StartBackground("probe", "p", SubModel{})
+	defer ag.Tasks().Cancel(task.ID)
 
 	inCallback := make(chan struct{})
 	notify := sync.OnceFunc(func() { close(inCallback) })
@@ -578,6 +586,7 @@ func TestBroadcastBlockingSubscriberCannotDeadlock(t *testing.T) {
 	}); !ok {
 		t.Fatal("task should accept a subscriber while running")
 	}
+	close(subscribed)
 
 	select {
 	case <-inCallback:

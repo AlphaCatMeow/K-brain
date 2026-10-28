@@ -231,3 +231,9 @@ PR #60 的首轮运行 `40620223448`（提交 `482fd2d`）已进入终态：macO
 该 TUI 包相对 `0dad9fd` 没有源码修改；相同生产源码的上一轮完整测试已通过。因此不修改业务或扩大测试超时，也不通过重试覆盖这次失败。下一轮 workflow 在同一 Linux runner 上，对只读 clean `0dad9fd` 与当前源码分别执行精确用例 `-count=30` 并保留输出，当前用例仍是必须通过的检查；完整套件将 package 并发限制为 2，避免浏览器进程与测试内可执行文件构建在小 runner 上同时争用资源，全部原测试保持执行。资源竞争目前是待验证原因，不视为已经定位。
 
 诊断提交 `aaf2c0a` 的运行 `40622088793` 中 Windows/macOS 通过，精确对照步骤完成；Linux 完整套件从 `02:39:38Z` 起超过 10 分钟仍未结束。进行中 job 日志接口返回 `BlobNotFound`，尚不能定位阻塞包。已请求取消这轮并保留取消事实，不将其写成成功。后续 workflow 对完整套件启用 `go test -json` 实时输出、每包 10 分钟超时以及 `always()` 上传日志；当前失败后才对 clean 基线运行完整套件。原完整测试范围、Chromium sandbox 和 race30 要求均保留。
+
+该运行最终状态为 `cancelled`。取消后可取的日志确认精确 TUI 用例在 clean 基线和当前源码各执行 30 次均退出 0；完整套件阻塞的是另一个原有测试 `internal/agent.TestBroadcastBlockingSubscriberCannotDeadlock`。它在 `parallel_test.go:585` 报 `subscriber never received the stream's OnText`，`httptest.Server` 同时报告 Close 等待 active TCP 连接，测试耗时 600.01 秒；原始日志 `%TEMP%/kbrain-pr60-ci-aaf2c0a-cancelled.log`。
+
+该 fixture 先 `StartBackground`，再注册 `SubscribeWithJournal`，却忽略订阅时返回的 journal；若唯一文本在订阅前送达，测试就只能等一个不会再来的回调。失败路径又先执行 `defer srv.Close()`，之后才由 `t.Cleanup` 释放阻塞信号，导致等待客户端 10 分钟超时。修复仅改变测试 fixture：SSE 写入前等订阅 gate、注册后打开 gate；释放信号使用 `sync.OnceFunc`，按 defer 顺序在 `srv.Close` 前执行，任何退出路径都取消任务。回调阻塞期间 List 和 Cancel 不得死锁的核心断言保留，没有增加超时或跳过用例，没有改 agent 业务。
+
+精确 `-count=100` 通过，0.913 秒；`-race -count=30` 通过，1.448 秒。日志分别为 `%TEMP%/kbrain-pr60-blocking-subscriber-fixed-count100.log` 和 `%TEMP%/kbrain-pr60-blocking-subscriber-fixed-race30.log`。workflow 另增加该 fixture 的独立 Linux race30，最终完整套件仍须在修复后的 head 实际通过。
