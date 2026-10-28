@@ -1,6 +1,6 @@
 # 会话摘要同步实现验证记录
 
-> 状态：进行中（2026-10-28）。本文只记录已执行的 K-brain 验证；最终产物的整应用资源采样与 PR CI 尚未完成。
+> 状态：本地实现与真实自动化已完成（2026-10-28），最终开发产物为 final4；PR #60 的 CI 修复提交 `b4f5508` 已通过三平台检查，后续仅证据文档更新仍需核对最终 head 的检查。本文区分模块、真机、性能及基线失败，不把运行中或环境失败写成通过。
 
 ## 基线与产物
 
@@ -198,10 +198,10 @@ go test ./internal/session ./internal/protocol ./internal/backend -skip TestFile
 - 独立TUI前后同248会话/251MiB、无HTTP，各约40秒，实际picker50条、导航3项、Esc、quit0：baseline CPU5.891秒、read528.323MB、private峰558.76MB/end76.07MB；final4CPU6.281秒、read531.508MB、private峰593.26MB/end87.94MB。冷启动/preview仍严格解析；final4峰约+34.5MB、末值+11.9MB是真实缓存/分配取舍，不宣称TUI全面提速。导航时点有数秒差异，不计算精确百分比。
 - 旧LA+旧KB两个WebUI未达到列表ready，虽然桌面248条、后端列表200约2.5秒；未取得可比的三端空闲旧基线。记录为限制，不能将失败界面负载当作同视图对照；已有独立后端同90次列表30分钟对照保持有效。
 
-## 尚未完成
+## 提交与检查范围
 
-- 新增跨平台 workflow 的修复后 PR 运行和 required checks。
-- 独立对抗性复审最终轮已完成，关闭/admission、嵌套深拷贝及空页缺陷已补先失败回归并修复。实现已提交为 `482fd2d` 并创建 PR #60；CI 正在收敛。
+- 独立对抗性复审最终轮已完成，关闭/admission、嵌套深拷贝及空页缺陷已补先失败回归并修复。实现提交为 `482fd2d`，CI 配置修复为 `b4f5508`，PR #60 目标为上游 `main`，没有合并或发布。
+- 以下成功结果对应 `b4f5508`；仅证据文档更新后仍须确认最新 PR head 的所有 checks 进入成功终态。开发构建仍是开发覆盖，不能替代真实发布依赖。
 
 ## PR CI 收敛记录
 
@@ -213,4 +213,15 @@ PR #60 的首轮运行 `40620223448`（提交 `482fd2d`）已进入终态：macO
 - 原 race30 步骤因完整测试失败而被跳过。现在 session 和 backend race30 各为独立步骤，使用 `!cancelled()`，完整测试失败也会继续执行两组检查。
 - 多命令 PowerShell 步骤逐条检查 native exit code，防止早期失败被后续成功命令覆盖。
 
-修正后的下一轮 CI 结果尚待实际执行；本记录不把 runner 修复方案写成测试通过。
+修正提交 `b4f5508434d337a17a1f01899466db42543552c0` 的运行 [40620963007](https://github.com/Stack-Cairn/K-brain/actions/runs/40620963007) 已全部成功：
+
+| Job / 检查 | 结果 |
+|---|---|
+| Windows | 2分43秒；LF 格式检查、构建、vet、session/protocol/backend/ACP/CLI/TUI 定向测试全部通过 |
+| macOS arm64 | 1分33秒；格式、构建、vet 和相同定向测试通过 |
+| Linux | 3分8秒；格式、构建、vet、定向测试及完整 `go test ./...` 通过，完整测试共 47 个包报告 ok |
+| Linux 浏览器包 | `internal/browser` 47.857秒通过，Chromium sandbox 开启，没有新增测试跳过 |
+| Linux session race30 | 25.808秒通过 |
+| Linux backend race30 | 3.152秒通过 |
+
+原始成功日志 `%TEMP%/kbrain-pr60-ci-b4f5508-success.log`。本次生产 Go 源码和正式发布锁未随 CI 修复改变；浏览器包相对 `0dad9fd` 也无源码差异。首轮失败保留，不能用后续通过抹去初次结果。
