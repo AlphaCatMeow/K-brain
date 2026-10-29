@@ -199,6 +199,7 @@ func backendCLI(args []string) error {
 		Prompts:                 promptStore,
 		DefaultCWD:              cwd(),
 		FilesystemRoots:         filesystemRoots,
+		Build:                   protocol.NewBuild(version, revision),
 	})
 	if err != nil {
 		return err

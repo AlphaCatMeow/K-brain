@@ -94,7 +94,7 @@ jobs:
         run: |
           mkdir -p dist
           python3 scripts/prepare-cua.py --target "$GOOS-$GOARCH"
-          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME} -X main.revision=${GITHUB_SHA}" \
             -o "dist/k-brain-${GOOS}-${{ matrix.asset_arch }}${{ matrix.extension }}" ./cmd/kn
           go build -trimpath -ldflags "-s -w" \
             -o "dist/k-brain-computer-${GOOS}-${{ matrix.asset_arch }}${{ matrix.extension }}" ./cmd/k-brain-computer

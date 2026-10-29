@@ -48,6 +48,8 @@ VITE_KBRAIN_TOKEN=<backend-token>
 
 ## HTTP 接口
 
+`/v1/health` 按 [兼容契约](compatibility.md) 第 2 节返回结构化握手：旧字段 `version: "kbrain.agent.v1"` 与全部历史能力值保持不变，另有 `protocol`（`name`、`major`、`minor`，minor 只用于日志）、`build`（`version`、`revision`、`channel`，由构建参数 `-X main.version` 与 `-X main.revision` 注入；只有 `vX.Y.Z` 形式的发布 tag 报 `stable` 或带 `-` 后缀的 `prerelease`，提交 SHA、`git describe` 的 `-<n>-g<sha>`/`-dirty` 输出和本地标签一律报 `dev`）、`startupContract`、每次进程启动重新生成的 `instanceId`，以及运行时能力状态的 `capabilityRevision`。能力的类型、比较方式、首次发布 tag 与缺失行为登记在 `internal/protocol/capabilities.json`，测试要求 health 与登记表一致。`instance_precondition`、`backend_drain`、`storage` 与 `build.releaseSequence` 尚未实现，不会出现在响应中。
+
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/v1/health` | 健康状态与协议版本 |

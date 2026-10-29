@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "kind": "capability-registry",
+  "repository": "Stack-Cairn/K-brain",
+  "protocol": {"name": "kbrain.agent", "major": 1},
+  "notes": "firstRelease is the earliest published tag containing evidenceCommit, checked with `git tag --contains`. Compare kinds: eq = frozen value, gte = monotonic integer, members = string list membership, object = fixed-shape object.",
+  "capabilities": [
+    {
+      "name": "session_queue",
+      "type": "integer",
+      "compare": "eq",
+      "value": 1,
+      "firstRelease": "v0.107.6-beta.16",
+      "evidenceCommit": "2f1fab7",
+      "missing": "Do not take over backend queues; existing queues keep their owner."
+    },
+    {
+      "name": "computer_session_approval",
+      "type": "integer",
+      "compare": "eq",
+      "value": 1,
+      "firstRelease": "v0.107.6-beta.17",
+      "evidenceCommit": "093cb92",
+      "missing": "Hide session-wide approval; confirm each computer action."
+    },
+    {
+      "name": "memory_switch",
+      "type": "integer",
+      "compare": "eq",
+      "value": 1,
+      "firstRelease": "v0.107.6-beta.20",
+      "evidenceCommit": "e16f1fa",
+      "missing": "Do not send the memory switch field; keep the saved value."
+    },
+    {
+      "name": "image_model_toggle",
+      "type": "integer",
+      "compare": "eq",
+      "value": 1,
+      "firstRelease": "v0.107.6-beta.20",
+      "evidenceCommit": "ee59580",
+      "missing": "Do not send model-level image toggles; keep legacy probing."
+    },
+    {
+      "name": "session_exists",
+      "type": "integer",
+      "compare": "eq",
+      "value": 1,
+      "firstRelease": "v0.107.6-beta.22",
+      "evidenceCommit": "85dd9dd",
+      "missing": "Use the existing migration check; never treat unknown as absent."
+    },
+    {
+      "name": "session_changes",
+      "type": "integer",
+      "compare": "gte",
+      "value": 2,
+      "firstRelease": "v0.107.6-beta.23",
+      "evidenceCommit": "482fd2d",
+      "missing": "Disable incremental sync and fall back to full refresh."
+    },
+    {
+      "name": "permission_modes",
+      "type": "string[]",
+      "compare": "members",
+      "value": ["normal", "plan", "auto_edit", "full_access", "always", "auto_review"],
+      "firstRelease": "v0.107.6-beta.15",
+      "evidenceCommit": "aebc32b",
+      "missing": "Block a send whose saved mode is unsupported; let the user pick per-call confirmation."
+    },
+    {
+      "name": "image",
+      "type": "object",
+      "compare": "object",
+      "value": {"supported": "boolean", "version": "kbrain.image.v1"},
+      "firstRelease": "v0.107.6-beta.12",
+      "evidenceCommit": "b1fe9f0",
+      "missing": "Disable image UI; supported may change at runtime and bumps capabilityRevision."
+    }
+  ]
+}

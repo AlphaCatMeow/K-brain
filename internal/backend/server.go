@@ -57,6 +57,8 @@ type Options struct {
 	QuestionTimeout         time.Duration
 	MCP                     *mcp.LiveManager
 	MCPCredentialBridge     mcp.CredentialBridge
+	// Build identifies this binary in /v1/health; zero value reports a dev build.
+	Build protocol.Build
 }
 
 type Server struct {
@@ -84,6 +86,8 @@ type Server struct {
 	hookStore            *HookStore
 	hookRunner           *BackendHookRunner
 	mcp                  *mcp.LiveManager
+	build                protocol.Build
+	instance             instanceIdentity
 
 	mu                  sync.Mutex
 	sessions            map[string]*runtimeSession
@@ -191,6 +195,7 @@ func New(opts Options) (*Server, error) {
 		store:           opts.Store, factory: opts.Factory, token: opts.Token, models: append([]protocol.ModelRef(nil), opts.Models...),
 		settings: opts.Settings, usage: NewProviderUsageService(opts.Settings), prompts: opts.Prompts,
 		eventDir: opts.EventDir, defaultCWD: opts.DefaultCWD, memoryStore: memoryStore, questionWait: opts.QuestionTimeout, memoryRuntimeFactory: opts.MemoryRuntimeFactory, cron: cron, hookStore: hookStore, hookRunner: NewBackendHookRunner(hookStore), mcp: opts.MCP, sessions: make(map[string]*runtimeSession), snapshots: make(map[string]sessionHTTPSnapshot),
+		build: opts.Build,
 	}
 	if len(server.filesystemRoots) == 0 && opts.DefaultCWD != "" {
 		server.filesystemRoots = []string{opts.DefaultCWD}
@@ -330,7 +335,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/health" {
-		writeJSON(w, http.StatusOK, map[string]any{"version": protocol.Version, "status": "ok", "capabilities": map[string]any{"session_changes": 2, "session_queue": 1, "computer_session_approval": 1, "memory_switch": 1, "image_model_toggle": 1, "session_exists": 1, "permission_modes": []string{"normal", "plan", "auto_edit", "full_access", "always", "auto_review"}, "image": map[string]any{"supported": s.image != nil, "version": imageWireVersion()}}})
+		writeJSON(w, http.StatusOK, s.health())
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
