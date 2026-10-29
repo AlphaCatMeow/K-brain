@@ -114,6 +114,19 @@ func endpointURL(raw string) error {
 	return nil
 }
 
+// resolveEditedURL applies an edited provider address. Clients edit the projected
+// address GET /v1/settings returns (secret query fields and the trailing slash
+// dropped); sending that back unchanged keeps the stored address with those parts,
+// on save and on model discovery alike. A stored address that is no longer a
+// valid endpoint (for example one with user credentials) is replaced as sent.
+func resolveEditedURL(stored, edited string, project func(string) string) string {
+	edited = strings.TrimSpace(edited)
+	if stored != "" && edited == project(stored) && endpointURL(stored) == nil {
+		return stored
+	}
+	return edited
+}
+
 func updateProvider(p config.Provider, in settingsProviderUpdate) (config.Provider, error) {
 	if in.CacheCapabilities != nil {
 		if err := in.CacheCapabilities.Validate(); err != nil {
@@ -179,7 +192,7 @@ func updateProvider(p config.Provider, in settingsProviderUpdate) (config.Provid
 		p.IsFullURL = *in.IsFullURL
 	}
 	if in.BaseURL != "" {
-		p.BaseURL = strings.TrimSpace(in.BaseURL)
+		p.BaseURL = resolveEditedURL(p.BaseURL, in.BaseURL, publicBaseURL)
 	}
 	if p.BaseURL != "" {
 		if err := endpointURL(p.BaseURL); err != nil {
@@ -190,7 +203,7 @@ func updateProvider(p config.Provider, in settingsProviderUpdate) (config.Provid
 		p.BaseURL = strings.TrimRight(p.BaseURL, "/")
 	}
 	if in.ModelsURL != nil {
-		p.ModelsURL = strings.TrimSpace(*in.ModelsURL)
+		p.ModelsURL = resolveEditedURL(p.ModelsURL, *in.ModelsURL, publicModelsURL)
 	}
 	if p.ModelsURL != "" {
 		if err := endpointURL(p.ModelsURL); err != nil {
@@ -332,11 +345,9 @@ func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, 404, "provider not found")
 		return
 	}
-	// Stored credentials may not be forwarded to a different draft endpoint.
-	if exists && (draft.BaseURL != "" && draft.BaseURL != p.BaseURL || draft.ModelsURL != nil && *draft.ModelsURL != p.ModelsURL) {
-		p.APIKey = ""
-		p.CustomHeaders = nil
-	}
+	// Like saving a provider (updateProvider), discovery keeps the stored key and
+	// headers when only the address changes; a key or header typed in the draft
+	// replaces them.
 	p, err = updateProvider(p, draft.settingsProviderUpdate)
 	if err != nil {
 		writeJSONError(w, 400, err.Error())
