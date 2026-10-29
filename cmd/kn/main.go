@@ -17,6 +17,9 @@ import (
 
 var version = "dev"
 
+// revision is the source commit, injected with -X main.revision at build time.
+var revision = ""
+
 func cwd() string {
 	wd, err := os.Getwd()
 	if err != nil {
