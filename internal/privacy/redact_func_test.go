@@ -9,11 +9,12 @@ import (
 	"testing"
 )
 
-// redactTextBefore is RedactText as of 52a0ef2, before it became a wrapper of RedactTextFunc.
+// redactTextBefore is RedactText as of 52a0ef2, before it became a wrapper of RedactTextFunc,
+// with the digit boundary of the PHONE and LANDLINE rules (replaceAll) applied.
 func redactTextBefore(text string) (string, bool) {
 	changed := false
 	for _, rule := range rules {
-		text = rule.rx.ReplaceAllStringFunc(text, func(match string) string {
+		text = rule.replaceAll(text, func(match string) string {
 			value := match
 			if rule.valueGroup > 0 {
 				groups := rule.rx.FindStringSubmatch(match)
