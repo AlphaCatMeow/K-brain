@@ -1270,7 +1270,7 @@ func (s *Server) executeRun(rt *runtimeSession, ctx context.Context, runID strin
 	}
 	message.Content = append(message.Content, in.Content...)
 	converted, _ := message.ToAIMessage()
-	reviewer := s.newRunReviewer(ctx, rt, in.Prompt, options.PermissionMode, options.ReviewScope)
+	reviewer := s.newRunReviewer(ctx, rt, in.Prompt, options.PermissionMode, options.ReviewScope, options.Reasoning)
 	gate := func(req tools.GateRequest) (tools.GateDecision, string) {
 		if options.Mode == "chat" {
 			return tools.GateReject, "chat mode disables tools"

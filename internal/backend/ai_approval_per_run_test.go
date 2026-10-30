@@ -104,3 +104,66 @@ func TestAIApprovalPerRunIsAdvertised(t *testing.T) {
 		t.Fatalf("settings aiApproval = %v", doc.AIApproval)
 	}
 }
+
+// Reviewing with the session's model must not inherit its full reasoning: a "high" run on a
+// large model timed out the 15s output review. A run that sets reasoning shows the model takes
+// an effort, so the review asks for "low" ("off" stays off); a run without reasoning sends
+// none, since non-reasoning models may reject the parameter. A configured override keeps its
+// own default.
+func TestAIApprovalSessionReviewerUsesLowEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name, reasoning string
+		approval        config.AIApprovalConfig
+		want            any // reasoning_effort in the review request; nil = absent
+	}{
+		{"high-run-reviews-low", "high", config.AIApprovalConfig{Mode: "off"}, "low"},
+		{"off-run-reviews-off", "off", config.AIApprovalConfig{Mode: "off"}, "none"},
+		{"unset-run-sends-none", "", config.AIApprovalConfig{Mode: "off"}, nil},
+		{"override-keeps-default", "high", config.AIApprovalConfig{Mode: "off", Provider: "fixture", Model: "small"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var efforts []any
+			seen := false
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if model, _ := req["model"].(string); model != "" {
+					mu.Lock()
+					seen = true
+					efforts = append(efforts, req["reasoning_effort"])
+					mu.Unlock()
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": reviewLow}}}})
+			}))
+			defer provider.Close()
+			root := t.TempDir()
+			args, _ := json.Marshal(map[string]string{"path": filepath.Join(root, "marker.txt"), "content": "changed"})
+			store, err := session.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			server, httpServer := newToolHistoryServer(t, store, t.TempDir(), &runControlsClient{tool: "Write", args: string(args)})
+			server.settings = NewSettingsStore(&config.Config{AIApproval: tc.approval, Providers: map[string]config.Provider{"fixture": {API: "openai-completions", BaseURL: provider.URL, APIKey: "fixture-key"}}, Models: map[string]config.Model{"small": {Providers: []string{"fixture"}}, "fixture-model": {Providers: []string{"fixture"}}}}, nil)
+			sess := createTestSession(t, httpServer.URL)
+			options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask", PermissionMode: "auto_review", ReviewScope: "per_run", Reasoning: tc.reasoning, WorkspaceRoots: []protocol.WorkspaceRoot{{Path: root, Access: "write"}}}
+			var accepted protocol.RunAccepted
+			resp := postJSON(t, http.DefaultClient, httpServer.URL+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "effort", Prompt: "write marker", Options: &options}, &accepted)
+			if resp.StatusCode != http.StatusAccepted {
+				t.Fatalf("status=%d", resp.StatusCode)
+			}
+			readToolHistoryRun(t, httpServer.URL, sess.ID, accepted.RunID, "reject")
+			mu.Lock()
+			defer mu.Unlock()
+			if !seen {
+				t.Fatal("reviewer not contacted")
+			}
+			for _, got := range efforts {
+				if got != tc.want {
+					t.Fatalf("review reasoning_effort = %v, want %v (all: %v)", got, tc.want, efforts)
+				}
+			}
+		})
+	}
+}

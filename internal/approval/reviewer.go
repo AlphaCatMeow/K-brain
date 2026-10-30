@@ -64,23 +64,26 @@ type Reviewer struct {
 }
 
 func New(ctx context.Context, cfg *config.Config) *Reviewer {
-	return NewWithFallback(ctx, cfg, "", "")
+	return NewWithFallback(ctx, cfg, "", "", "")
 }
 
-// reviewerCandidate is one provider and model the reviewer may route to.
-type reviewerCandidate struct{ provider, model string }
+// reviewerCandidate is one provider and model the reviewer may route to, with the reasoning
+// effort its review requests ask for ("" keeps the model's default and sends no parameter).
+type reviewerCandidate struct{ provider, model, effort string }
 
 // NewWithFallback reviews with the configured aiApproval provider and model and, when that
 // pair is unset or cannot be routed (a deleted provider or model), with the fallback pair:
-// the session's own model, so auto review works without a separate reviewer setting.
-func NewWithFallback(_ context.Context, cfg *config.Config, provider, model string) *Reviewer {
+// the session's own model, so auto review works without a separate reviewer setting. The
+// fallback asks for effort, so a large session model classifies quickly instead of
+// reasoning at full depth; the configured reviewer keeps its own default.
+func NewWithFallback(_ context.Context, cfg *config.Config, provider, model, effort string) *Reviewer {
 	snapshot := cfg.Snapshot()
 	var candidates []reviewerCandidate
 	if snapshot.AIApproval.Provider != "" && snapshot.AIApproval.Model != "" {
-		candidates = append(candidates, reviewerCandidate{snapshot.AIApproval.Provider, snapshot.AIApproval.Model})
+		candidates = append(candidates, reviewerCandidate{snapshot.AIApproval.Provider, snapshot.AIApproval.Model, ""})
 	}
-	if fallback := (reviewerCandidate{provider, model}); provider != "" && model != "" && (len(candidates) == 0 || candidates[0] != fallback) {
-		candidates = append(candidates, fallback)
+	if provider != "" && model != "" && (len(candidates) == 0 || candidates[0].provider != provider || candidates[0].model != model) {
+		candidates = append(candidates, reviewerCandidate{provider, model, effort})
 	}
 	if len(candidates) == 0 {
 		return &Reviewer{unavailable: true}
@@ -98,37 +101,41 @@ func NewWithFallback(_ context.Context, cfg *config.Config, provider, model stri
 	}
 	var mu sync.Mutex
 	var route routing.Route
+	var chosen reviewerCandidate
 	var resolved bool
 	var routeErr error
 	// A resolution cut short by a cancelled or timed-out review is not cached: the next review
 	// of the turn resolves again instead of blaming the model setting without a request.
-	resolve := func(ctx context.Context) (routing.Route, error) {
+	resolve := func(ctx context.Context) (routing.Route, reviewerCandidate, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if resolved || routeErr != nil {
-			return route, routeErr
+			return route, chosen, routeErr
 		}
 		var last error
 		for _, candidate := range candidates {
 			next, err := routing.ResolveRouteContext(ctx, snapshot, candidate.model, candidate.provider, false)
 			switch {
 			case err == nil:
-				route, resolved = next, true
-				return route, nil
+				route, chosen, resolved = next, candidate, true
+				return route, chosen, nil
 			case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-				return next, err
+				return next, candidate, err
 			}
 			last = err
 		}
 		routeErr = routeError{last}
-		return route, routeErr
+		return route, chosen, routeErr
 	}
 	return &Reviewer{model: candidates[0].model, secrets: secrets, slots: make(chan struct{}, 2), complete: func(ctx context.Context, req ai.Request) (string, ai.Usage, error) {
-		route, err := resolve(ctx)
+		route, candidate, err := resolve(ctx)
 		if err != nil {
 			return "", ai.Usage{}, err
 		}
 		req.Model = route.APIModel
+		if candidate.effort != "" {
+			req.ReasoningEffort = candidate.effort
+		}
 		if route.MaxOutput > 0 && req.MaxTokens > route.MaxOutput {
 			req.MaxTokens = route.MaxOutput
 		}
