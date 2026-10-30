@@ -2,6 +2,7 @@ package direct
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -125,17 +126,25 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 			// may arrive as URLs, which the rolldek response path already accepts.
 			b.ResponseFormat = "b64_json"
 		}
+		flexible := openAIFlexibleModel.MatchString(r.Target.RemoteID)
+		var ratio, tier string
 		for k, v := range r.Request.Parameters {
-			switch k {
-			case "size":
+			switch {
+			case k == "size" && flexible:
+				b.Size, err = openAIPixelSize(v)
+			case k == "size":
 				b.Size, err = enum(v, "1024x1024", "1536x1024", "1024x1536")
-			case "quality":
-				b.Quality, err = enum(v, "low", "medium", "high", "auto")
-			case "output_format":
+			case k == "aspectRatio" && flexible:
+				ratio, err = enum(v, openAIAspectRatios...)
+			case k == "imageSize" && flexible:
+				tier, err = enum(v, openAIImageSizes...)
+			case k == "quality":
+				b.Quality, err = enum(v, openAIQualities(r.Target.RemoteID)...)
+			case k == "output_format":
 				b.Format, err = enum(v, "png", "jpeg", "webp")
-			case "background":
+			case k == "background":
 				b.Background, err = enum(v, "opaque", "transparent", "auto")
-			case "output_compression":
+			case k == "output_compression":
 				b.Compression, err = integer(v, 0, 100)
 			default:
 				err = badInput()
@@ -143,6 +152,13 @@ func (a *Adapter) request(ctx context.Context, r imaging.ExecuteRequest) (string
 			if err != nil {
 				return "", nil, err
 			}
+		}
+		if ratio != "" || tier != "" {
+			if b.Size != "" {
+				return "", nil, badInput()
+			}
+			// A ratio alone uses the 1K budget; a tier alone is square.
+			b.Size = openAISize(cmp.Or(ratio, "1:1"), cmp.Or(tier, "1K"))
 		}
 		if b.Compression != nil && b.Format != "jpeg" && b.Format != "webp" {
 			return "", nil, badInput()
