@@ -447,18 +447,19 @@ func locateIPv6Run(match string) (int, int, bool) {
 	return ipv6Span(match, start)
 }
 
-// ipv6StartAmbiguous reports an address that would also be valid if it started one or two
-// hex digits and a colon earlier ("ip6:2001:db8::", "-sab:2001:db8::1"): a word label or the
-// address's own first group, which only the reader can tell apart.
-func ipv6StartAmbiguous(match string, start, end int) bool {
+// ipv6AmbiguousStart reports where an address would also start if it began one or two hex
+// digits and a colon earlier ("ip6:2001:db8::" -> "6:2001:db8::", "-sab:2001:db8::1" ->
+// "ab:2001:db8::1"): a word label or the address's own first group, which only the reader
+// can tell apart. Characters before that point (a JSON "\n", a longer label) do not count.
+func ipv6AmbiguousStart(match string, start, end int) (int, bool) {
 	if start < 2 || match[start-1] != ':' {
-		return false
+		return 0, false
 	}
 	tail := start - 1
 	for tail > 0 && start-1-tail < 2 && isHexDigit(match[tail-1]) {
 		tail--
 	}
-	return tail < start-1 && validIPv6(match[tail:end])
+	return tail, tail < start-1 && validIPv6(match[tail:end])
 }
 
 func isHexDigit(c byte) bool {
@@ -747,8 +748,8 @@ func RedactTextFunc(text string, replace func(kind, value string) (string, bool)
 }
 
 // RedactTextIdentity is RedactTextFunc that also reports an identity for each value: the
-// value itself, or the whole match when the located address has an ambiguous start (see
-// ipv6StartAmbiguous). Callers that treat equal values as the same thing compare identities.
+// value itself, or the address extended over its ambiguous start ("0:fe80::1" for
+// "eth0:fe80::1", see ipv6AmbiguousStart). Callers that treat equal values as the same thing compare identities.
 func RedactTextIdentity(text string, replace func(kind, value, identity string) (string, bool)) (string, bool) {
 	changed := false
 	for _, rule := range rules {
@@ -770,8 +771,10 @@ func RedactTextIdentity(text string, replace func(kind, value, identity string) 
 					return match
 				}
 				identity := match[start:end]
-				if rule.name == "IPV6" && ipv6StartAmbiguous(match, start, end) {
-					identity = match
+				if rule.name == "IPV6" {
+					if tail, ok := ipv6AmbiguousStart(match, start, end); ok {
+						identity = match[tail:end]
+					}
 				}
 				out, sensitive := replace(rule.name, match[start:end], identity)
 				changed = changed || sensitive

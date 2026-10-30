@@ -196,8 +196,8 @@ func (r *Reviewer) Review(ctx context.Context, e Evidence) Report {
 			if !userIdentifierKinds[kind] {
 				return "[REDACTED_" + kind + "]", true
 			}
-			// An address with an ambiguous start ("-sab:2001:db8::1") keys on its whole match, so
-			// it only shares a placeholder with the same text, never with a bare user address.
+			// An address with an ambiguous start ("-sab:2001:db8::1") keys on the extended span
+			// ("ab:2001:db8::1"), so it never shares a placeholder with the bare user address.
 			key := kind + "\x00" + identity
 			placeholder, ok := userValues[key]
 			if !ok {
