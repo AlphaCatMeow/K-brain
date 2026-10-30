@@ -891,8 +891,17 @@ func TestSettledTasksLingerUntilUserMessage(t *testing.T) {
 }
 
 func TestDockSpaceExpandsTask(t *testing.T) {
-	srv := sseTextServer(t, "ok")
+	// The row shows the latest output once there is any; hold the reply so the task is still
+	// silent when the dock expands (an instant "ok" raced the render on loaded CI runners).
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
 	defer srv.Close()
+	defer close(release)
 	m := tasksModel(srv.URL)
 	task := m.agent.StartBackground("research", "p", agent.SubModel{})
 	defer m.agent.Tasks().Cancel(task.ID)
