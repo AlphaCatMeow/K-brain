@@ -73,7 +73,8 @@ OpenAI size schemas depend on the model:
 - GPT Image 1, 1-mini and 1.5, and unrecognized aliases, keep the `size` enum `1024x1024` / `1536x1024` / `1024x1536`.
 - GPT Image 2 and 2.5 (`gpt-image-2`, `gpt-image-2.5`, `-flare`, `-sunburst` and their dated snapshots) expose `aspectRatio` (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`) and `imageSize` (`1K`, `2K`, `4K`). The request sends one `size`: the largest exact-ratio `WxH` with edges divisible by 16, at most 3840 px per edge, and an area within the tier budget. The budgets are 1024x1024, 2560x1440 (OpenAI's reliable upper bound) and 3840x2160 (the maximum; above 2560x1440 is experimental). Example sizes are 16:9 → `1280x720` / `2560x1440` / `3840x2160` and 1:1 → `1024x1024` / `1920x1920` / `2880x2880`.
 - A ratio alone uses 1K, and a tier alone is square. With neither, `size` is omitted and the provider default applies.
-- Job snapshots that still carry `size` stay executable. These models accept any `WxH` that meets OpenAI's rules: edges divisible by 16, long edge at most 3840 px and at most 3× the short edge, and 655,360–8,294,400 pixels.
+- Configured (standalone) targets keep their persisted `size` schema. For these models the adapter accepts any `WxH` that meets OpenAI's rules: edges divisible by 16, long edge at most 3840 px and at most 3× the short edge, and 655,360–8,294,400 pixels.
+- A provider job queued before this schema change was accepted against the old target snapshot. Like any other provider target change, it fails with `IMAGE_REVISION_CONFLICT` before sending and has to be submitted again.
 - GPT Image 2.5 adds `xhigh` and `max` to `quality`.
 - An OpenAI-compatible proxy may not pass custom sizes through. That is the proxy's own limit.
 

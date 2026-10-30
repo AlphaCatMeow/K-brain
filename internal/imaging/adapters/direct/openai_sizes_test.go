@@ -130,7 +130,7 @@ func TestOpenAIRatioAndTierMapToSize(t *testing.T) {
 		// A ratio alone uses the 1K budget; a tier alone is square.
 		wire{"gpt-image-2", map[string]any{"aspectRatio": "16:9"}, "1280x720"},
 		wire{"gpt-image-2-2026-04-21", map[string]any{"imageSize": "2K"}, "1920x1920"},
-		// Snapshots written before this change still carry size.
+		// Configured targets may persist their own size schema.
 		wire{"gpt-image-2", map[string]any{"size": "1536x1024"}, "1536x1024"},
 		wire{"gpt-image-2.5-sunburst", map[string]any{"size": "2560x1440"}, "2560x1440"},
 		wire{"gpt-image-1.5", map[string]any{"size": "1024x1536"}, "1024x1536"},
