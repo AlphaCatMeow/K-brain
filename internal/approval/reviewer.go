@@ -79,15 +79,33 @@ func New(_ context.Context, cfg *config.Config) *Reviewer {
 			}
 		}
 	}
-	var once sync.Once
+	var mu sync.Mutex
 	var route routing.Route
+	var resolved bool
 	var routeErr error
+	// A resolution cut short by a cancelled or timed-out review is not cached: the next review
+	// of the turn resolves again instead of blaming the model setting without a request.
+	resolve := func(ctx context.Context) (routing.Route, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if resolved || routeErr != nil {
+			return route, routeErr
+		}
+		next, err := routing.ResolveRouteContext(ctx, snapshot, snapshot.AIApproval.Model, snapshot.AIApproval.Provider, false)
+		switch {
+		case err == nil:
+			route, resolved = next, true
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			return next, err
+		default:
+			routeErr = routeError{err}
+		}
+		return route, routeErr
+	}
 	return &Reviewer{model: snapshot.AIApproval.Model, secrets: secrets, slots: make(chan struct{}, 2), complete: func(ctx context.Context, req ai.Request) (string, ai.Usage, error) {
-		once.Do(func() {
-			route, routeErr = routing.ResolveRouteContext(ctx, snapshot, snapshot.AIApproval.Model, snapshot.AIApproval.Provider, false)
-		})
-		if routeErr != nil {
-			return "", ai.Usage{}, routeError{routeErr}
+		route, err := resolve(ctx)
+		if err != nil {
+			return "", ai.Usage{}, err
 		}
 		req.Model = route.APIModel
 		if route.MaxOutput > 0 && req.MaxTokens > route.MaxOutput {
@@ -173,12 +191,14 @@ func (r *Reviewer) Review(ctx context.Context, e Evidence) Report {
 			return value
 		}
 		added := map[string]string{}
-		out, found := privacy.RedactTextFunc(value, func(kind, match string) (string, bool) {
+		out, found := privacy.RedactTextIdentity(value, func(kind, match, identity string) (string, bool) {
 			// Placeholders add word boundaries, so later rules can match here what they did not above.
 			if !userIdentifierKinds[kind] {
 				return "[REDACTED_" + kind + "]", true
 			}
-			key := kind + "\x00" + match
+			// An address with an ambiguous start ("-sab:2001:db8::1") keys on its whole match, so
+			// it only shares a placeholder with the same text, never with a bare user address.
+			key := kind + "\x00" + identity
 			placeholder, ok := userValues[key]
 			if !ok {
 				placeholder, ok = added[key]
