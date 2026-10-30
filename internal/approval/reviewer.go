@@ -104,6 +104,8 @@ func NewWithFallback(_ context.Context, cfg *config.Config, provider, model, eff
 	var chosen reviewerCandidate
 	var resolved bool
 	var routeErr error
+	// effortRejected is set once the provider refuses the requested effort for this model.
+	var effortRejected bool
 	// A resolution cut short by a cancelled or timed-out review is not cached: the next review
 	// of the turn resolves again instead of blaming the model setting without a request.
 	resolve := func(ctx context.Context) (routing.Route, reviewerCandidate, error) {
@@ -133,13 +135,31 @@ func NewWithFallback(_ context.Context, cfg *config.Config, provider, model, eff
 			return "", ai.Usage{}, err
 		}
 		req.Model = route.APIModel
-		if candidate.effort != "" {
-			req.ReasoningEffort = candidate.effort
-		}
 		if route.MaxOutput > 0 && req.MaxTokens > route.MaxOutput {
 			req.MaxTokens = route.MaxOutput
 		}
-		return route.Client.Complete(ctx, req)
+		mu.Lock()
+		effort := candidate.effort
+		if effortRejected {
+			effort = ""
+		}
+		mu.Unlock()
+		if effort == "" {
+			return route.Client.Complete(ctx, req)
+		}
+		req.ReasoningEffort = effort
+		text, usage, err := route.Client.Complete(ctx, req)
+		// Models list their own effort levels (some have only "medium" or "high"), and K-brain
+		// may not know them. A refused parameter falls back to the model's default, once per run.
+		var status *ai.HTTPError
+		if errors.As(err, &status) && (status.StatusCode == 400 || status.StatusCode == 422) && ctx.Err() == nil {
+			mu.Lock()
+			effortRejected = true
+			mu.Unlock()
+			req.ReasoningEffort = ""
+			return route.Client.Complete(ctx, req)
+		}
+		return text, usage, err
 	}}
 }
 

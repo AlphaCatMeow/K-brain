@@ -447,6 +447,7 @@ func liveagentProcessStart(ctx context.Context, manager *liveagentProcessManager
 		return "", ctx.Err()
 	}
 	snap := p.snapshot()
+	reportProcessStarted(ctx, snap.ID)
 	return fmt.Sprintf("ManagedProcess started\nprocess_id=%s\npid=%d\ncwd=%s\nlog=%s\ncommand=%s\nisolated=%t\n\nWait with ManagedProcess(action=\"wait\", process_id=\"%s\", cursor=0).", snap.ID, snap.PID, snap.CWD, snap.LogPath, snap.Command, snap.Isolated, snap.ID), nil
 }
 

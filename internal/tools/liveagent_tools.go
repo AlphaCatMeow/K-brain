@@ -407,6 +407,7 @@ func liveagentBash(ctx context.Context, manager *liveagentProcessManager, a map[
 		if startErr != nil {
 			return "", startErr
 		}
+		reportProcessStarted(ctx, p.id)
 		waitArgs := map[string]any{"process_id": p.id, "cursor": float64(0), "yield_time_ms": float64(yield), "max_bytes": float64(liveagentProcessMaxLog)}
 		out, waitErr := liveagentProcessWait(ctx, manager, waitArgs)
 		if waitErr != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -20,16 +19,19 @@ type RunReviewer struct {
 	publish    func(string, string, Report, bool)
 	mu         sync.Mutex
 	outputRisk bool
-	// owned holds process and terminal ids that actions of this run started after review.
+	// owned holds process and terminal ids that actions of this run started after review. Tools
+	// report them on start (tools.WithProcessStarted); output text, which a foreground command
+	// controls, never supplies one.
 	owned map[string]bool
 }
 
-// processStarts reads the id a start tool reports on its first line. That line is written by
-// the tool itself; the command's own output follows it and can never supply an id here.
-var processStarts = map[string]*regexp.Regexp{
-	"Bash":            regexp.MustCompile(`\ABash session_id=(\S+)\n`),
-	"ManagedProcess":  regexp.MustCompile(`\AManagedProcess started\nprocess_id=(\S+)\n`),
-	"TerminalSession": regexp.MustCompile(`\ATerminalSession started\nsession_id=(\S+)\n`),
+func (r *RunReviewer) recordOwned(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.owned == nil {
+		r.owned = map[string]bool{}
+	}
+	r.owned[id] = true
 }
 
 // pollTarget returns the process a read-only poll addresses: waiting for, checking or reading
@@ -94,7 +96,7 @@ func (r *RunReviewer) Hooks(gate func(tools.GateRequest) (tools.GateDecision, st
 		ctx = context.WithValue(ctx, ActionReportKey{}, report)
 		if r.Mode == "risk_only" {
 			r.publish("action", name, report, false)
-			return ctx, nil
+			return tools.WithProcessStarted(ctx, r.recordOwned), nil
 		}
 		r.publish("action", name, report, false)
 		decision, reason := gate(tools.GateRequest{Context: ctx, Tool: name, Command: string(args), Description: report.Description()})
@@ -108,20 +110,11 @@ func (r *RunReviewer) Hooks(gate func(tools.GateRequest) (tools.GateDecision, st
 		if err := ctx.Err(); err != nil {
 			return ctx, err
 		}
-		return context.WithValue(ctx, ReviewedActionKey{}, name), nil
+		// Only an approved call may record the processes it starts.
+		return tools.WithProcessStarted(context.WithValue(ctx, ReviewedActionKey{}, name), r.recordOwned), nil
 	}, After: func(ctx context.Context, name string, args json.RawMessage, result tools.Result) tools.Result {
 		if ctx.Err() != nil {
 			return result
-		}
-		if start, ok := processStarts[name]; ok && !result.Failed {
-			if match := start.FindStringSubmatch(result.Text); match != nil {
-				r.mu.Lock()
-				if r.owned == nil {
-					r.owned = map[string]bool{}
-				}
-				r.owned[match[1]] = true
-				r.mu.Unlock()
-			}
 		}
 		report := r.reviewer.Review(ctx, Evidence{Phase: "tool_output", Tool: name, Action: string(args), UserIntent: r.intent, Output: result.Text})
 		if len(result.Parts) > 0 {

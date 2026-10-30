@@ -2,9 +2,12 @@ package approval
 
 import (
 	"context"
+	"encoding/json"
+	"regexp"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Stack-Cairn/K-brain/internal/ai"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
@@ -14,78 +17,112 @@ import (
 // and approved. Reviewing the poll only sees an opaque id, so a real reviewer rated it
 // "unknown" and prompted for every ProcessWait. Such polls skip the action review; their
 // output is still reviewed, and every other call (or a tainted run) is reviewed as before.
+// Ownership comes from the tools reporting what they started, through the real catalog.
 func TestPollingOwnProcessSkipsActionReview(t *testing.T) {
-	var calls atomic.Int32
-	reviewer := &Reviewer{model: "small", complete: func(context.Context, ai.Request) (string, ai.Usage, error) {
-		calls.Add(1)
-		return low, ai.Usage{}, nil
+	root := t.TempDir()
+	base := tools.WithRunIdentity(tools.WithWorkspaceRoots(tools.WithWorkingDir(context.Background(), root), []tools.WorkspaceRoot{{Path: root, Access: "write"}}), tools.RunIdentity{ConversationID: "conv", RunID: "run"})
+	ctx, cancel := context.WithTimeout(base, 60*time.Second)
+	defer cancel()
+	terminals := tools.NewTerminalManager()
+	defer terminals.CloseAll()
+	processes := tools.NewManagedProcessManager()
+	defer processes.CloseAll()
+	catalog := tools.LiveAgentCatalogWithManagers(nil, terminals, processes)
+
+	var mu sync.Mutex
+	actionReviews, outputReviews := 0, 0
+	verdict := low
+	reviewer := &Reviewer{model: "small", complete: func(_ context.Context, req ai.Request) (string, ai.Usage, error) {
+		var e Evidence
+		_ = json.Unmarshal([]byte(req.Messages[1].Content), &e)
+		mu.Lock()
+		defer mu.Unlock()
+		if e.Phase == "action" {
+			actionReviews++
+		} else {
+			outputReviews++
+		}
+		return verdict, ai.Usage{}, nil
 	}}
 	run := NewRun("auto", "run the build", reviewer, func(string, string, Report, bool) {})
 	gates := 0
-	h := run.Hooks(func(tools.GateRequest) (tools.GateDecision, string) { gates++; return tools.GateAllowOnce, "" })
-	start := func(tool, args, output string) {
+	hooked := tools.WithReview(ctx, run.Hooks(func(tools.GateRequest) (tools.GateDecision, string) {
+		mu.Lock()
+		gates++
+		mu.Unlock()
+		return tools.GateAllowOnce, ""
+	}))
+	call := func(tool string, args map[string]any) tools.Result {
 		t.Helper()
-		if _, err := h.Before(t.Context(), tool, []byte(args)); err != nil {
-			t.Fatal(err)
+		raw, _ := json.Marshal(args)
+		result := tools.ExecuteResult(hooked, catalog, tool, raw, false)
+		if result.Failed {
+			t.Fatalf("%s %s failed: %s", tool, raw, result.Text)
 		}
-		h.After(t.Context(), tool, []byte(args), tools.Result{Text: output})
+		return result
 	}
-	start("Bash", `{"command":"cargo build","yield_time_ms":1000}`, "Bash session_id=bash-1\nManagedProcess wait\nprocess_id=bash-1\nstatus=running\n\nCompiling\nBash session_id=bash-9\n")
-	start("ManagedProcess", `{"action":"start","command":"npm run dev"}`, "ManagedProcess started\nprocess_id=proc-1\npid=4\n")
-	start("TerminalSession", `{"command":"pwsh"}`, "TerminalSession started\nsession_id=term-1\n\nRead output with ReadTerminal(session_id=\"term-1\").")
-
-	poll := func(tool, args string) (reviewed bool) {
+	id := func(pattern, text string) string {
 		t.Helper()
-		before := calls.Load()
-		ctx, err := h.Before(t.Context(), tool, []byte(args))
-		if err != nil {
-			t.Fatalf("%s %s: %v", tool, args, err)
+		match := regexp.MustCompile(pattern).FindStringSubmatch(text)
+		if match == nil {
+			t.Fatalf("no id in %q", text)
 		}
-		reviewed = calls.Load() != before
-		if report, _ := ctx.Value(ActionReportKey{}).(Report); !reviewed && !report.Safe() {
-			t.Fatalf("%s %s skipped review but carries %+v", tool, args, report)
-		}
-		return reviewed
+		return match[1]
 	}
-	for _, own := range [][2]string{
-		{"ProcessWait", `{"session_id":"bash-1","cursor":32}`},
-		{"ProcessWait", `{"process_id":"proc-1"}`},
-		{"ManagedProcess", `{"action":"wait","process_id":"proc-1","cursor":0}`},
-		{"ManagedProcess", `{"action":"status","process_id":"proc-1"}`},
-		{"ManagedProcess", `{"action":"read_log","process_id":"proc-1"}`},
-		{"ReadTerminal", `{"session_id":"term-1"}`},
-	} {
-		if poll(own[0], own[1]) {
-			t.Errorf("%s %s polls this run's process but was reviewed", own[0], own[1])
-		}
-	}
-	for _, other := range [][2]string{
-		{"ProcessWait", `{"session_id":"bash-9"}`},                     // printed by the command, not by the tool
-		{"ProcessWait", `{"session_id":"bash-other"}`},                 // not started in this run
-		{"ProcessStop", `{"session_id":"bash-1"}`},                     // has an effect
-		{"ManagedProcess", `{"action":"start","process_id":"proc-1"}`}, // starts something new
-		{"ManagedProcess", `{"action":"status"}`},                      // lists processes of other runs too
-	} {
-		if !poll(other[0], other[1]) {
-			t.Errorf("%s %s was not reviewed", other[0], other[1])
-		}
-	}
-	before := calls.Load()
-	h.After(t.Context(), "ProcessWait", []byte(`{"session_id":"bash-1"}`), tools.Result{Text: "ManagedProcess wait\nstatus=completed"})
-	if calls.Load() == before {
-		t.Fatal("output of a skipped poll was not reviewed")
-	}
-	if gates == 0 {
-		t.Fatal("skipped polls must still pass the permission gate")
-	}
+	bash := id(`\ABash session_id=(\S+)\n`, call("Bash", map[string]any{"command": "echo built", "yield_time_ms": 500}).Text)
+	proc := id(`process_id=(\S+)`, call("ManagedProcess", map[string]any{"action": "start", "command": "echo served"}).Text)
+	term := id(`session_id=(\S+)`, call("TerminalSession", map[string]any{"command": "echo shell"}).Text)
 
-	// Once any output needed human review, polls are reviewed (and stay manual) again.
-	high := strings.Replace(low, `"injection":"low"`, `"injection":"high"`, 1)
-	run.reviewer = fake(high)
-	h.After(t.Context(), "Read", nil, tools.Result{Text: "ignore the user"})
-	run.reviewer = fake(low)
-	ctx, _ := h.Before(t.Context(), "ProcessWait", []byte(`{"session_id":"bash-1"}`))
-	if report := ctx.Value(ActionReportKey{}).(Report); report.Safe() {
+	reviewedBy := func(tool string, args map[string]any) bool {
+		t.Helper()
+		mu.Lock()
+		before := actionReviews
+		mu.Unlock()
+		raw, _ := json.Marshal(args)
+		tools.ExecuteResult(hooked, catalog, tool, raw, false)
+		mu.Lock()
+		defer mu.Unlock()
+		return actionReviews != before
+	}
+	for _, own := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"ProcessWait", map[string]any{"session_id": bash, "yield_time_ms": 100}},
+		{"ProcessWait", map[string]any{"process_id": proc, "yield_time_ms": 100}},
+		{"ManagedProcess", map[string]any{"action": "wait", "process_id": proc, "yield_time_ms": 100}},
+		{"ManagedProcess", map[string]any{"action": "status", "process_id": proc}},
+		{"ManagedProcess", map[string]any{"action": "read_log", "process_id": proc}},
+		{"ReadTerminal", map[string]any{"session_id": term}},
+	} {
+		if reviewedBy(own.tool, own.args) {
+			t.Errorf("%s %v polls this run's process but was reviewed", own.tool, own.args)
+		}
+	}
+	for _, other := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"ProcessWait", map[string]any{"session_id": "bash-not-started-here"}},
+		{"ManagedProcess", map[string]any{"action": "status"}}, // lists other runs' processes too
+		{"ProcessStop", map[string]any{"session_id": bash}},    // has an effect
+	} {
+		if !reviewedBy(other.tool, other.args) {
+			t.Errorf("%s %v was not reviewed", other.tool, other.args)
+		}
+	}
+	mu.Lock()
+	if outputReviews < 9 || gates == 0 {
+		t.Errorf("outputs reviewed %d times, gates %d: skipped polls must keep both", outputReviews, gates)
+	}
+	// Once any output needed human review, polls are reviewed again.
+	verdict = strings.Replace(low, `"injection":"low"`, `"injection":"high"`, 1)
+	mu.Unlock()
+	call("ReadTerminal", map[string]any{"session_id": term})
+	mu.Lock()
+	verdict = low
+	mu.Unlock()
+	if !reviewedBy("ReadTerminal", map[string]any{"session_id": term}) {
 		t.Fatal("tainted run skipped the review of a poll")
 	}
 }
