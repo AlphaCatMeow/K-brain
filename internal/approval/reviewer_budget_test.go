@@ -75,7 +75,7 @@ func TestTruncatedReviewNeverApproves(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, calls := thinkingReviewer(t, reasoning, 0, low, true)
 			report := r.Review(t.Context(), Evidence{Phase: "tool_output", Tool: "Bash", Action: `{"command":"cargo build"}`, Output: cargoE0308})
-			if calls.Load() != 1 || report.Safe() || report.Reason != "Reviewer failed or timed out; manual approval required" {
+			if calls.Load() != 1 || report.Safe() || report.Reason != "Reviewer reply was truncated; manual approval required" {
 				t.Fatalf("calls=%d report=%+v", calls.Load(), report)
 			}
 		})
