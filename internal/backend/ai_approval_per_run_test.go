@@ -16,9 +16,10 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/session"
 )
 
-// LiveAgent hides the global AI approval setting: the permission mode picked in the composer
-// decides. Auto review reviews with the configured override model or, without a usable one,
-// the session's own model; "ask" (normal) and "auto edit" no longer follow a global mode.
+// With review_scope "per_run" (sent by hosts that hide the global AI approval setting) the
+// permission mode picked in the composer decides. Auto review reviews with the configured
+// override model or, without a usable one, the session's own model; every other mode ignores
+// the global mode. Without the opt-in, ai_approval_test.go keeps the global semantics.
 func TestAIApprovalPerRunModeAndSessionModel(t *testing.T) {
 	high := strings.Replace(reviewLow, `"risk":"low"`, `"risk":"high"`, 1)
 	for _, tc := range []struct {
@@ -32,6 +33,8 @@ func TestAIApprovalPerRunModeAndSessionModel(t *testing.T) {
 		{"auto-review-uses-valid-override", reviewLow, "auto_review", config.AIApprovalConfig{Mode: "off", Provider: "fixture", Model: "small"}, false, true, "small"},
 		{"normal-ignores-global-auto", reviewLow, "normal", config.AIApprovalConfig{Mode: "auto", Provider: "fixture", Model: "small"}, true, false, ""},
 		{"auto-edit-ignores-global-auto", high, "auto_edit", config.AIApprovalConfig{Mode: "auto", Provider: "fixture", Model: "small"}, false, true, ""},
+		{"full-access-ignores-global-auto", high, "full_access", config.AIApprovalConfig{Mode: "auto", Provider: "fixture", Model: "small"}, false, true, ""},
+		{"unset-mode-ignores-global-auto", high, "", config.AIApprovalConfig{Mode: "auto", Provider: "fixture", Model: "small"}, true, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -59,7 +62,7 @@ func TestAIApprovalPerRunModeAndSessionModel(t *testing.T) {
 			server, httpServer := newToolHistoryServer(t, store, t.TempDir(), &runControlsClient{tool: "Write", args: string(args)})
 			server.settings = NewSettingsStore(&config.Config{AIApproval: tc.approval, Providers: map[string]config.Provider{"fixture": {API: "openai-completions", BaseURL: provider.URL, APIKey: "fixture-key"}}, Models: map[string]config.Model{"small": {Providers: []string{"fixture"}}, "fixture-model": {Providers: []string{"fixture"}}}}, nil)
 			sess := createTestSession(t, httpServer.URL)
-			options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask", PermissionMode: tc.permissionMode, WorkspaceRoots: []protocol.WorkspaceRoot{{Path: root, Access: "write"}}}
+			options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask", PermissionMode: tc.permissionMode, ReviewScope: "per_run", WorkspaceRoots: []protocol.WorkspaceRoot{{Path: root, Access: "write"}}}
 			var accepted protocol.RunAccepted
 			resp := postJSON(t, http.DefaultClient, httpServer.URL+"/v1/sessions/"+sess.ID+"/runs", protocol.PromptRequest{ConversationID: sess.ID, ClientRequestID: "review", Prompt: "write marker", Options: &options}, &accepted)
 			if resp.StatusCode != http.StatusAccepted {

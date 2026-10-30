@@ -366,7 +366,7 @@ func TestReviewComputerGrantEndsWhenRuntimeUnloads(t *testing.T) {
 	}
 }
 
-// An AI reviewer's manual-review verdict (auto review) prompts once per call through the review hook;
+// An AI reviewer's manual-review verdict prompts once per call through the review hook;
 // approving it never records the session grant, and each prompt names its tool call.
 func TestReviewComputerManualReviewApprovalGrantsNothing(t *testing.T) {
 	highRisk := strings.Replace(reviewLow, `"risk":"low"`, `"risk":"high"`, 1)
@@ -380,7 +380,7 @@ func TestReviewComputerManualReviewApprovalGrantsNothing(t *testing.T) {
 		Models:     map[string]config.Model{"small": {Providers: []string{"fixture"}}, "fixture-model": {Providers: []string{"fixture"}}},
 	}
 	f := newReviewComputerFixture(t, "ask", cfg)
-	options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask", PermissionMode: "auto_review"}
+	options := protocol.RunOptions{Mode: "agent", ApprovalPolicy: "ask", PermissionMode: "normal"}
 	requests, executed := f.run(options, allowOnce, []string{reviewClick(1)}, []string{reviewClick(2)})
 	if executed != 2 || promptRules(requests) != "call:click/ call:click/" {
 		t.Fatalf("manual review executed %d with prompts %q", executed, promptRules(requests))

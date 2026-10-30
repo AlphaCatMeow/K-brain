@@ -377,6 +377,10 @@ type RunOptions struct {
 	Search          string          `json:"search,omitempty"`
 	ApprovalPolicy  string          `json:"approval_policy,omitempty"`
 	PermissionMode  string          `json:"permission_mode,omitempty"`
+	// ReviewScope "per_run" (capability ai_review_per_run) lets the permission mode alone decide
+	// AI review: only auto_review reviews, with the session's model when no reviewer is set.
+	// Without it the global aiApproval mode keeps applying as before.
+	ReviewScope string `json:"review_scope,omitempty"`
 	WorkspaceRoots  []WorkspaceRoot `json:"workspace_roots,omitempty"`
 	Tools           *ToolSelection  `json:"tools,omitempty"`
 	PlanModeEnabled bool            `json:"plan_mode_enabled,omitempty"`

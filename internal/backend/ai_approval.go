@@ -8,13 +8,16 @@ import (
 	"github.com/Stack-Cairn/K-brain/internal/permissions"
 )
 
-// newRunReviewer follows the run's permission mode (capability ai_review_per_run): auto
-// review reviews every action, while normal ("ask") and auto edit never review, whatever the
-// global aiApproval mode says. Runs without a mode, plan and full access keep the global mode.
-// The reviewer uses the configured aiApproval model or, without a usable one, the session's.
-func (s *Server) newRunReviewer(ctx context.Context, rt *runtimeSession, intent, mode string) *approval.RunReviewer {
-	switch mode {
-	case permissions.Always, permissions.Normal, permissions.AutoEdit:
+// newRunReviewer builds the run's AI reviewer. With review scope "per_run" (capability
+// ai_review_per_run, sent by hosts that hide the global setting) only auto review reviews,
+// with the configured aiApproval model or, without a usable one, the session's model. Without
+// it the global aiApproval mode applies to every mode except always, as before.
+func (s *Server) newRunReviewer(ctx context.Context, rt *runtimeSession, intent, mode, scope string) *approval.RunReviewer {
+	if mode == permissions.Always {
+		return nil
+	}
+	perRun := scope == "per_run"
+	if perRun && mode != permissions.AutoReview {
 		return nil
 	}
 	cfg := &config.Config{}
@@ -27,13 +30,17 @@ func (s *Server) newRunReviewer(ctx context.Context, rt *runtimeSession, intent,
 	if !cfg.AIApproval.Enabled() {
 		return nil
 	}
-	var provider, model string
-	rt.mu.Lock()
-	if rt.agent != nil {
-		provider, model = rt.agent.Provider, rt.agent.ModelName
+	reviewer := approval.New(ctx, cfg)
+	if perRun {
+		var provider, model string
+		rt.mu.Lock()
+		if rt.agent != nil {
+			provider, model = rt.agent.Provider, rt.agent.ModelName
+		}
+		rt.mu.Unlock()
+		reviewer = approval.NewWithFallback(ctx, cfg, provider, model)
 	}
-	rt.mu.Unlock()
-	return approval.NewRun(cfg.AIApproval.Mode, intent, approval.NewWithFallback(ctx, cfg, provider, model), func(phase, tool string, report approval.Report, automatic bool) {
+	return approval.NewRun(cfg.AIApproval.Mode, intent, reviewer, func(phase, tool string, report approval.Report, automatic bool) {
 		s.publish(rt, "approval.reviewed", struct {
 			Phase     string          `json:"phase"`
 			Tool      string          `json:"tool"`
