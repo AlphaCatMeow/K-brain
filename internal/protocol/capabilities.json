@@ -65,7 +65,7 @@
       "compare": "eq",
       "value": 1,
       "firstRelease": "v0.107.6-beta.25",
-      "evidenceCommit": "pending",
+      "evidenceCommit": "1d9c4ab",
       "missing": "Keep the global AI approval setting visible: it applies to every permission mode and auto review needs a configured reviewer model."
     },
     {
