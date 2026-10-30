@@ -153,11 +153,15 @@ func NewWithFallback(_ context.Context, cfg *config.Config, provider, model, eff
 		// may not know them. A refused parameter falls back to the model's default, once per run.
 		var status *ai.HTTPError
 		if errors.As(err, &status) && (status.StatusCode == 400 || status.StatusCode == 422) && ctx.Err() == nil {
-			mu.Lock()
-			effortRejected = true
-			mu.Unlock()
 			req.ReasoningEffort = ""
-			return route.Client.Complete(ctx, req)
+			text, usage, err = route.Client.Complete(ctx, req)
+			// Only a retry that succeeds without the effort shows the effort was refused; a 400
+			// for another reason (a content filter) keeps the effort for later reviews.
+			if err == nil {
+				mu.Lock()
+				effortRejected = true
+				mu.Unlock()
+			}
 		}
 		return text, usage, err
 	}}
