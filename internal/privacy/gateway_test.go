@@ -123,8 +123,8 @@ func TestIPv6RuleStillFindsAddresses(t *testing.T) {
 		{"ip_2001:db8::1", "ip_[REDACTED_IPV6]"},
 		{"x2001:db8::1", "x[REDACTED_IPV6]"},
 		{"tag:fe80::1c2d:3e4f", "tag:[REDACTED_IPV6]"},
-		{"src:fe80::1c2d:3e4f", "sr[REDACTED_IPV6]"},
-		{"[IPv6:2001:db8::25]", "[IPv[REDACTED_IPV6]]"},
+		{"src:fe80::1c2d:3e4f", "src:[REDACTED_IPV6]"},
+		{"[IPv6:2001:db8::25]", "[IPv6:[REDACTED_IPV6]]"},
 		{"lo:::1", "lo:[REDACTED_IPV6]"},
 		{"64 bytes from 2001:db8::1: icmp_seq=1", "64 bytes from [REDACTED_IPV6]: icmp_seq=1"},
 	} {

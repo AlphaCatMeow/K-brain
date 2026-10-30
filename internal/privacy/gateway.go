@@ -430,6 +430,14 @@ func locateIPv6Run(match string) (int, int, bool) {
 				return 0, 0, false
 			}
 		} else if seg > 0 {
+			// A short hex tail after a letter belongs to a word label ("ip6:", "eth0:", "src:"):
+			// keep it out when the rest is an address on its own. A longer tail ("x2001:")
+			// may be the address's first group and stays inside.
+			if start > 0 && seg <= 2 {
+				if s, e, ok := ipv6Span(match, start+seg+1); ok {
+					return s, e, true
+				}
+			}
 			if s, e, ok := ipv6Span(match, start); ok {
 				return s, e, true
 			}

@@ -32,7 +32,7 @@ func TestReview4SplitOffsetsKeepNeighbourTokensIntact(t *testing.T) {
 		{"__KBR_API_KEY_12345__:2001:db8::1", "2001:db8::1"},
 		{"__KBR_ACCESS_KEY_0001____KBR_IP_0002__:fe80::1c2d:__KBR_IP_0003__", "fe80::1c2d"},
 		{"2001:db8:64::__KBR_IP_0004__", "2001:db8:64::"},
-		{"src:2001:db8::5efe:__KBR_IP_10000__", "c:2001:db8::5efe"},
+		{"src:2001:db8::5efe:__KBR_IP_10000__", "2001:db8::5efe"},
 		{"__KBR_IPV6_0005__:__KBR_IP_0006__", ""},
 		{"crate::abc1__KBR_EMAIL_0007__::fs", ""},
 	} {
