@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 var enabled atomic.Bool
@@ -31,6 +32,12 @@ type rule struct {
 	rx         *regexp.Regexp
 	valueGroup int
 	check      func(string) bool
+	// locate returns the sensitive span inside a match; text outside it is kept.
+	locate func(string) (int, int, bool)
+	// digitBoundary rejects matches that touch another ASCII digit, so a
+	// phone-shaped run inside a longer number (timestamps, IDs) is ignored.
+	digitBoundary bool
+	bounded       *regexp.Regexp
 }
 
 var rules = []rule{
@@ -44,15 +51,25 @@ var rules = []rule{
 	{name: "JWT", rx: regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`), check: validJWT},
 	{name: "CONNSTR", rx: regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]{0,63}://[^\s:@/]+:([^\s@/]{4,})@`), valueGroup: 1},
 	{name: "EMAIL", rx: regexp.MustCompile(`(?i)(?:[A-Z0-9._%+\-\x{4e00}-\x{9fff}]+)@(?:[A-Z0-9\-\x{4e00}-\x{9fff}]+\.)+[A-Z\x{4e00}-\x{9fff}]{2,}`)},
-	{name: "PHONE", rx: regexp.MustCompile(`(?:\+?86[\s-]?)?1[3-9][0-9](?:[\s-]?[0-9]{4}){2}`)},
+	{name: "PHONE", rx: regexp.MustCompile(`(?:(?:\+|00)?86[\s-]?|0)?1[3-9][0-9](?:[\s-]?[0-9]{4}){2}`), digitBoundary: true},
 	{name: "IP", rx: regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b`), check: validIPv4},
-	{name: "IPV6", rx: regexp.MustCompile(`(?i)[0-9a-f:]{2,45}`), check: validIPv6},
+	{name: "IPV6", rx: regexp.MustCompile(`(?i)[0-9a-z_]*:[0-9a-z_]*:[0-9a-z_:]*`), locate: locateIPv6},
 	{name: "IDCARD", rx: regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), check: validIDCard},
-	{name: "LANDLINE", rx: regexp.MustCompile(`(?:\+?86[\s-]?)?(?:\(0\d{2,3}\)|0\d{2,3})[\s-]?[2-9]\d{6,7}(?:[\s-]?(?:转|分机|ext\.?|x|#)[\s-]?\d{1,5})?`)},
+	{name: "LANDLINE", rx: regexp.MustCompile(`(?:\+?86[\s-]?)?(?:\(0\d{2,3}\)|0\d{2,3})[\s-]?[2-9]\d{6,7}(?:[\s-]?(?:转|分机|ext\.?|x|#)[\s-]?\d{1,5})?`), digitBoundary: true},
 	{name: "CARD", rx: regexp.MustCompile(`\b[3-6][0-9]{12,18}\b`), check: validCardNumber},
 	{name: "IBAN", rx: regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`), check: validIBAN},
 	{name: "MAC", rx: regexp.MustCompile(`(?i)\b[0-9a-f]{2}(?::[0-9a-f]{2}){5}\b`)},
 	{name: "SECRET", rx: regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|pwd|secret|token|private[_-]?key|密码|口令|令牌|密钥|秘钥|凭据|凭证|私钥)["'“”「」]?\s*[:=：＝]\s*["'“”「」]?([A-Za-z0-9!@#$%^&*_~+=-]{6,64})`), valueGroup: 1, check: validSecret},
+}
+
+func init() {
+	for i := range rules {
+		if rules[i].digitBoundary {
+			// The trailing non-digit lets the regexp itself fall back to a shorter
+			// alternative (e.g. a landline without an over-long extension).
+			rules[i].bounded = regexp.MustCompile(`(` + rules[i].rx.String() + `)(?:[^0-9]|$)`)
+		}
+	}
 }
 
 var (
@@ -145,12 +162,20 @@ func MaskText(text string) (string, map[string]string) {
 		return token
 	}
 	for _, r := range rules {
-		text = r.rx.ReplaceAllStringFunc(text, func(match string) string {
-			if strings.Contains(match, "__KBR_") {
+		text = r.replaceAll(text, func(match string) string {
+			// A located span is hex and colons only, so it never overlaps a token.
+			if r.locate == nil && strings.Contains(match, "__KBR_") {
 				return match
 			}
 			if r.check != nil && !r.check(match) {
 				return match
+			}
+			if r.locate != nil {
+				start, end, ok := r.locate(match)
+				if !ok {
+					return match
+				}
+				return match[:start] + mask(r.name, match[start:end]) + match[end:]
 			}
 			if r.valueGroup > 0 {
 				parts := r.rx.FindStringSubmatchIndex(match)
@@ -168,6 +193,41 @@ func MaskText(text string) (string, map[string]string) {
 	}
 	return text, values
 }
+
+// replaceAll behaves like ReplaceAllStringFunc. For digitBoundary rules a match
+// must not touch another digit on either side: the right side is part of the
+// bounded regexp, and a match preceded by a digit is skipped with the search
+// resuming one rune later. "proc-1793291828607127000" is left alone while
+// "008613812345678" and "021-62345678转123456" are still found.
+func (r rule) replaceAll(text string, fn func(string) string) string {
+	if !r.digitBoundary {
+		return r.rx.ReplaceAllStringFunc(text, fn)
+	}
+	var out strings.Builder
+	last, pos := 0, 0
+	for pos < len(text) {
+		loc := r.bounded.FindStringSubmatchIndex(text[pos:])
+		if loc == nil {
+			break
+		}
+		start, end := pos+loc[2], pos+loc[3]
+		if start > 0 && isASCIIDigit(text[start-1]) {
+			_, size := utf8.DecodeRuneInString(text[start:])
+			pos = start + size
+			continue
+		}
+		out.WriteString(text[last:start])
+		out.WriteString(fn(text[start:end]))
+		last, pos = end, end
+	}
+	if last == 0 {
+		return text
+	}
+	out.WriteString(text[last:])
+	return out.String()
+}
+
+func isASCIIDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 func rememberToken(token, key, value string) {
 	now := time.Now()
@@ -318,8 +378,110 @@ func luhn(value string) bool {
 	return sum%10 == 0
 }
 
+// locateIPv6 finds an address inside a whole identifier-like run around the
+// colons. An address holds only hex digits and colons, so it starts after the
+// last other letter or underscore: "ip6:2001:db8::" and "[IPv6:2001:db8::25]"
+// are found (a hex tail of the tag, "6:" or "c:" in "src:", is masked along
+// with the address), while std::io::Result and crate::fs::read have nothing left.
+// A cut inside a segment that "::" follows is a code path ("crate::abc1"), not
+// an address. A tag colon in front and a single colon behind
+// ("2001:db8::1: icmp_seq") are not part of the address. When the hex tail
+// of a tag breaks a full address ("src:2001:db8:85a3:0:0:8a2e:370:7334",
+// "added:2001:db8::1"), the part after the tag colon is tried as well.
+// MaskText tokens from earlier rules ("2001:db8:64::__KBR_IP_0001__" for an
+// embedded IPv4) split the run, so each piece between them is tried on its own.
+func locateIPv6(match string) (int, int, bool) {
+	prev := 0
+	for _, token := range maskTokenRx.FindAllStringIndex(match, -1) {
+		if start, end, ok := locateIPv6Run(match[prev:token[0]]); ok {
+			return prev + start, prev + end, true
+		}
+		prev = token[1]
+	}
+	start, end, ok := locateIPv6Run(match[prev:])
+	return prev + start, prev + end, ok
+}
+
+var maskTokenRx = regexp.MustCompile(`__KBR_[A-Z0-9_]+?_[0-9]+__`)
+
+func locateIPv6Run(match string) (int, int, bool) {
+	start := 0
+	for i := len(match) - 1; i >= 0; i-- {
+		if c := match[i] | 0x20; c != ':' && (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			start = i + 1
+			break
+		}
+	}
+	rest := match[start:]
+	switch {
+	case strings.HasPrefix(rest, ":::"):
+		start++
+	case strings.HasPrefix(rest, "::"):
+		if start > 0 {
+			return 0, 0, false
+		}
+	case strings.HasPrefix(rest, ":"):
+		// Tag colon, also after a tag the run does not include ("地址:", "]:").
+		start++
+	default:
+		seg := strings.IndexByte(rest, ':')
+		if seg >= 0 && strings.HasPrefix(rest[seg:], "::") {
+			if start > 0 {
+				return 0, 0, false
+			}
+		} else if seg > 0 {
+			// A short hex tail after a letter belongs to a word label ("ip6:", "eth0:", "src:"):
+			// keep it out when the rest is an address on its own. A longer tail ("x2001:")
+			// may be the address's first group and stays inside.
+			if start > 0 && seg <= 2 {
+				if s, e, ok := ipv6Span(match, start+seg+1); ok {
+					return s, e, true
+				}
+			}
+			if s, e, ok := ipv6Span(match, start); ok {
+				return s, e, true
+			}
+			start += seg + 1
+		}
+	}
+	return ipv6Span(match, start)
+}
+
+// ipv6AmbiguousStart reports where an address would also start if it began one or two hex
+// digits and a colon earlier ("ip6:2001:db8::" -> "6:2001:db8::", "-sab:2001:db8::1" ->
+// "ab:2001:db8::1"): a word label or the address's own first group, which only the reader
+// can tell apart. Characters before that point (a JSON "\n", a longer label) do not count.
+func ipv6AmbiguousStart(match string, start, end int) (int, bool) {
+	if start < 2 || match[start-1] != ':' {
+		return 0, false
+	}
+	tail := start - 1
+	for tail > 0 && start-1-tail < 2 && isHexDigit(match[tail-1]) {
+		tail--
+	}
+	return tail, tail < start-1 && validIPv6(match[tail:end])
+}
+
+func isHexDigit(c byte) bool {
+	c |= 0x20
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f'
+}
+
+func ipv6Span(match string, start int) (int, int, bool) {
+	end := len(match)
+	if strings.HasSuffix(match[start:], ":") && !strings.HasSuffix(match[start:], "::") {
+		end--
+	}
+	if start >= end || !validIPv6(match[start:end]) {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+// validIPv6 skips addresses without any decimal digit (a::b, fd::ab, "::"):
+// in tool output they are far more often C++/Rust paths than real addresses.
 func validIPv6(value string) bool {
-	if strings.Count(value, ":") < 2 {
+	if strings.Count(value, ":") < 2 || !strings.ContainsAny(value, "0123456789") {
 		return false
 	}
 	return net.ParseIP(value) != nil
@@ -576,9 +738,22 @@ func (r *restoreReader) Close() error { return r.src.Close() }
 // RedactText irreversibly masks recognized sensitive values without retaining a
 // restoration map. Use this when forwarding evidence to a separate reviewer.
 func RedactText(text string) (string, bool) {
+	return RedactTextFunc(text, func(kind, _ string) (string, bool) { return "[REDACTED_" + kind + "]", true })
+}
+
+// RedactTextFunc is RedactText with a caller-chosen replacement for each
+// recognized value; changed reports whether any replace call returned true.
+func RedactTextFunc(text string, replace func(kind, value string) (string, bool)) (string, bool) {
+	return RedactTextIdentity(text, func(kind, value, _ string) (string, bool) { return replace(kind, value) })
+}
+
+// RedactTextIdentity is RedactTextFunc that also reports an identity for each value: the
+// value itself, or the address extended over its ambiguous start ("0:fe80::1" for
+// "eth0:fe80::1", see ipv6AmbiguousStart). Callers that treat equal values as the same thing compare identities.
+func RedactTextIdentity(text string, replace func(kind, value, identity string) (string, bool)) (string, bool) {
 	changed := false
 	for _, rule := range rules {
-		text = rule.rx.ReplaceAllStringFunc(text, func(match string) string {
+		text = rule.replaceAll(text, func(match string) string {
 			value := match
 			if rule.valueGroup > 0 {
 				groups := rule.rx.FindStringSubmatch(match)
@@ -590,8 +765,24 @@ func RedactText(text string) (string, bool) {
 			if rule.name != "SECRET" && rule.check != nil && !rule.check(value) {
 				return match
 			}
-			changed = true
-			return "[REDACTED_" + rule.name + "]"
+			if rule.locate != nil {
+				start, end, ok := rule.locate(match)
+				if !ok {
+					return match
+				}
+				identity := match[start:end]
+				if rule.name == "IPV6" {
+					if tail, ok := ipv6AmbiguousStart(match, start, end); ok {
+						identity = match[tail:end]
+					}
+				}
+				out, sensitive := replace(rule.name, match[start:end], identity)
+				changed = changed || sensitive
+				return match[:start] + out + match[end:]
+			}
+			out, sensitive := replace(rule.name, value, value)
+			changed = changed || sensitive
+			return out
 		})
 	}
 	return text, changed

@@ -16,6 +16,7 @@ func liveagentTerminalSession(ctx context.Context, manager *TerminalManager, arg
 	if err != nil {
 		return "", err
 	}
+	reportProcessStarted(ctx, id)
 	return fmt.Sprintf("TerminalSession started\nsession_id=%s\n\nRead output with ReadTerminal(session_id=\"%s\").", id, id), nil
 }
 

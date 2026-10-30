@@ -18,6 +18,7 @@ type healthCapabilities struct {
 	MemorySwitch            int           `json:"memory_switch"`
 	ImageModelToggle        int           `json:"image_model_toggle"`
 	SessionExists           int           `json:"session_exists"`
+	AIReviewPerRun          int           `json:"ai_review_per_run"`
 	PermissionModes         []string      `json:"permission_modes"`
 	Image                   healthImageV1 `json:"image"`
 }
@@ -90,6 +91,7 @@ func (s *Server) health() healthResponse {
 			MemorySwitch:            1,
 			ImageModelToggle:        1,
 			SessionExists:           1,
+			AIReviewPerRun:          1,
 			PermissionModes:         append([]string(nil), permissionModes...),
 			Image:                   healthImageV1{Supported: s.image != nil, Version: imageWireVersion()},
 		},

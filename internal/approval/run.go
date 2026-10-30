@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Stack-Cairn/K-brain/internal/tools"
@@ -18,6 +19,47 @@ type RunReviewer struct {
 	publish    func(string, string, Report, bool)
 	mu         sync.Mutex
 	outputRisk bool
+	// owned holds process and terminal ids that actions of this run started after review. Tools
+	// report them on start (tools.WithProcessStarted); output text, which a foreground command
+	// controls, never supplies one.
+	owned map[string]bool
+}
+
+func (r *RunReviewer) recordOwned(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.owned == nil {
+		r.owned = map[string]bool{}
+	}
+	r.owned[id] = true
+}
+
+// pollTarget returns the process a read-only poll addresses: waiting for, checking or reading
+// output of one process. Calls with an effect (start, stop, input) or without an id are not polls.
+func pollTarget(tool string, args json.RawMessage) string {
+	var a map[string]any
+	if json.Unmarshal(args, &a) != nil {
+		return ""
+	}
+	str := func(key string) string {
+		value, _ := a[key].(string)
+		return strings.TrimSpace(value)
+	}
+	switch tool {
+	case "ProcessWait":
+		if id := str("process_id"); id != "" {
+			return id
+		}
+		return str("session_id")
+	case "ManagedProcess":
+		switch strings.ToLower(str("action")) {
+		case "wait", "status", "read_log":
+			return str("process_id")
+		}
+	case "ReadTerminal":
+		return str("session_id")
+	}
+	return ""
 }
 
 func NewRun(mode, intent string, reviewer *Reviewer, publish func(string, string, Report, bool)) *RunReviewer {
@@ -31,10 +73,19 @@ func (r *RunReviewer) Hooks(gate func(tools.GateRequest) (tools.GateDecision, st
 	return tools.ReviewHooks{Before: func(ctx context.Context, name string, args json.RawMessage) (context.Context, error) {
 		// Nested calls must receive a fresh review, never inherit approval of their parent.
 		ctx = context.WithValue(ctx, ReviewedActionKey{}, "")
-		report := r.reviewer.Review(ctx, Evidence{Phase: "action", Tool: name, Action: string(args), UserIntent: r.intent})
+		target := pollTarget(name, args)
 		r.mu.Lock()
 		tainted := r.outputRisk
+		ownPoll := target != "" && r.owned[target] && !tainted
 		r.mu.Unlock()
+		var report Report
+		if ownPoll {
+			// The poll adds no action: its process was started by a reviewed, approved call of
+			// this run. Its output is still reviewed in After.
+			report = Report{Risk: "low", Sandbox: "low", SensitiveData: "low", ModelBehavior: "low", Injection: "low", Reason: "Reads a process this run started after review; no new action."}
+		} else {
+			report = r.reviewer.Review(ctx, Evidence{Phase: "action", Tool: name, Action: string(args), UserIntent: r.intent})
+		}
 		if tainted {
 			report.Injection = "unknown"
 			if report.Risk == "low" {
@@ -45,7 +96,7 @@ func (r *RunReviewer) Hooks(gate func(tools.GateRequest) (tools.GateDecision, st
 		ctx = context.WithValue(ctx, ActionReportKey{}, report)
 		if r.Mode == "risk_only" {
 			r.publish("action", name, report, false)
-			return ctx, nil
+			return tools.WithProcessStarted(ctx, r.recordOwned), nil
 		}
 		r.publish("action", name, report, false)
 		decision, reason := gate(tools.GateRequest{Context: ctx, Tool: name, Command: string(args), Description: report.Description()})
@@ -59,7 +110,8 @@ func (r *RunReviewer) Hooks(gate func(tools.GateRequest) (tools.GateDecision, st
 		if err := ctx.Err(); err != nil {
 			return ctx, err
 		}
-		return context.WithValue(ctx, ReviewedActionKey{}, name), nil
+		// Only an approved call may record the processes it starts.
+		return tools.WithProcessStarted(context.WithValue(ctx, ReviewedActionKey{}, name), r.recordOwned), nil
 	}, After: func(ctx context.Context, name string, args json.RawMessage, result tools.Result) tools.Result {
 		if ctx.Err() != nil {
 			return result

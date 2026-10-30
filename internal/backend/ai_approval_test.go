@@ -109,7 +109,7 @@ func TestAIApprovalSettingsValidationAndProjection(t *testing.T) {
 		if err := applySettings(cfg, settingsUpdate{AIApproval: &c}); err != nil {
 			t.Fatal(err)
 		}
-		if projectSettings(cfg).AIApproval != c {
+		if projectSettings(cfg).AIApproval.AIApprovalConfig != c {
 			t.Fatal("lost review settings")
 		}
 	}

@@ -54,6 +54,9 @@ func normalizeRunOptions(in *protocol.RunOptions, cwd string, available []tools.
 	if err := permissions.Validate(out.PermissionMode); err != nil {
 		return protocol.RunOptions{}, fmt.Errorf("options.permission_mode: %w", err)
 	}
+	if out.ReviewScope != "" && out.ReviewScope != "per_run" {
+		return protocol.RunOptions{}, fmt.Errorf("options.review_scope must be per_run")
+	}
 	if out.PermissionMode == permissions.Plan {
 		out.PlanModeEnabled = true
 	}

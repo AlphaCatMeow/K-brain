@@ -33,7 +33,7 @@ func TestIsolatedBudgetedAndRedacted(t *testing.T) {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("no deadline")
 		}
-		if len(req.Tools) != 0 || len(req.Messages) != 2 || req.Model != "small" || req.MaxTokens != 512 {
+		if len(req.Tools) != 0 || len(req.Messages) != 2 || req.Model != "small" || req.MaxTokens != MaxOutputTokens {
 			t.Fatalf("bad isolated request %+v", req)
 		}
 		text := req.Messages[1].Content
@@ -105,6 +105,31 @@ func TestRunReviewModesAndNestedCalls(t *testing.T) {
 		t.Fatal("host denial bypassed")
 	}
 }
+func TestManagedProcessBuildOutputWithRustPathsIsNotSensitive(t *testing.T) {
+	output := strings.Join([]string{
+		"ManagedProcess start",
+		"status=exited",
+		"exit_code=101",
+		`   Compiling demo v0.1.0 (D:\work\demo)`,
+		"error[E0308]: mismatched types",
+		"  --> src/main.rs:4:5",
+		"  |     expected `std::io::Result<()>`, found `()`",
+		"  = note: use std::io::Result; see a::b and fd::ab",
+	}, "\n")
+	report := fake(low).Review(t.Context(), Evidence{Tool: "ManagedProcess", Action: `{"action":"start","command":"cargo build"}`, Output: output})
+	if !report.Safe() || report.SensitiveData != "low" || strings.Contains(report.Reason, "redacted") {
+		t.Fatalf("rust path treated as sensitive: %+v", report)
+	}
+	run := NewRun("auto", "build the crate", fake(low), func(string, string, Report, bool) {})
+	h := run.Hooks(func(tools.GateRequest) (tools.GateDecision, string) { return tools.GateAllowOnce, "" })
+	if result := h.After(t.Context(), "ManagedProcess", nil, tools.Result{Text: output}); result.Text != output {
+		t.Fatalf("build output withheld: %q", result.Text)
+	}
+	report = fake(low).Review(t.Context(), Evidence{Tool: "ManagedProcess", Output: output + "\nlisten 2001:db8::1"})
+	if report.Safe() || report.SensitiveData != "unknown" {
+		t.Fatalf("real IPv6 address no longer forces manual review: %+v", report)
+	}
+}
 func TestRiskyOutputWithheldAndTaintsNextAction(t *testing.T) {
 	high := strings.Replace(low, `"injection":"low"`, `"injection":"high"`, 1)
 	for _, mode := range []string{"risk_only", "auto"} {
@@ -152,5 +177,62 @@ func TestInFlightReviewerCancellationCannotApprove(t *testing.T) {
 	cancel()
 	if report := <-done; report.Safe() {
 		t.Fatal("late reviewer reply approved a cancelled action")
+	}
+}
+
+func TestUserProvidedIdentifiersKeepStablePlaceholders(t *testing.T) {
+	var evidence string
+	r := &Reviewer{model: "small", complete: func(_ context.Context, req ai.Request) (string, ai.Usage, error) {
+		evidence = req.Messages[1].Content
+		return low, ai.Usage{}, nil
+	}}
+	intent := "ping 2001:db8:4860::1 and mail ops@example.com"
+	report := r.Review(t.Context(), Evidence{Phase: "tool_output", Tool: "Bash", Action: `{"command":"ping 2001:db8:4860::1"}`, UserIntent: intent, Output: "reply from 2001:db8:4860::1 to ops@example.com"})
+	if !report.Safe() || strings.Contains(evidence, "2001:db8") || strings.Contains(evidence, "ops@example.com") {
+		t.Fatalf("report=%+v evidence=%s", report, evidence)
+	}
+	if strings.Count(evidence, "[USER_IPV6_2]") != 3 || strings.Count(evidence, "[USER_EMAIL_1]") != 2 {
+		t.Fatalf("placeholders do not line up: %s", evidence)
+	}
+	for name, e := range map[string]Evidence{
+		"other address":     {Action: "ping 2001:db8:4860::2", UserIntent: intent},
+		"credential":        {Action: "use sk-abcdefghijklmnopqrstuv", UserIntent: "use sk-abcdefghijklmnopqrstuv"},
+		"only in output":    {Output: "ops@example.org", UserIntent: intent},
+		"intent case drift": {Action: "mail OPS@example.com", UserIntent: intent},
+	} {
+		if report := r.Review(t.Context(), e); report.Safe() || report.SensitiveData != "unknown" {
+			t.Fatalf("%s approved: %+v", name, report)
+		}
+	}
+}
+
+func TestManagedProcessOutputIsNotTreatedAsSensitive(t *testing.T) {
+	output := strings.Join([]string{
+		"ManagedProcess start",
+		"process_id=proc-1793291828607127000",
+		"status=running",
+		"pid=4242",
+		`cwd=D:\work`,
+		`log=C:\Users\me\AppData\Local\Temp\k-brain-managed-process-1793291828.log`,
+		"cursor=37",
+		"bytes=37",
+		"timed_out=true",
+		"",
+		"README.md\ndocs/liveagent-backend.md",
+		`Continue with ManagedProcess(action="wait", process_id="proc-1793291828607127000", cursor=37).`,
+	}, "\n")
+	report := fake(low).Review(t.Context(), Evidence{Tool: "ManagedProcess", Action: `{"action":"start","command":"Get-ChildItem -Recurse -Filter *.md"}`, Output: output})
+	if !report.Safe() || report.SensitiveData != "low" || strings.Contains(report.Reason, "redacted") {
+		t.Fatalf("process id treated as sensitive: %+v", report)
+	}
+	run := NewRun("auto", "list markdown files", fake(low), func(string, string, Report, bool) {})
+	h := run.Hooks(func(tools.GateRequest) (tools.GateDecision, string) { return tools.GateAllowOnce, "" })
+	result := h.After(t.Context(), "ManagedProcess", nil, tools.Result{Text: output})
+	if result.Text != output {
+		t.Fatalf("managed process output withheld: %q", result.Text)
+	}
+	report = fake(low).Review(t.Context(), Evidence{Tool: "ManagedProcess", Output: output + "\ncontact 13812345678"})
+	if report.Safe() || report.SensitiveData != "unknown" {
+		t.Fatalf("real phone number no longer forces manual review: %+v", report)
 	}
 }

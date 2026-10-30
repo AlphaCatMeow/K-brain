@@ -90,6 +90,53 @@ func TestMaskTextRejectsMalformedStructuredValues(t *testing.T) {
 	}
 }
 
+func TestIPv6RuleIgnoresCodePaths(t *testing.T) {
+	for _, input := range []string{
+		"error[E0308]: expected `std::io::Result<()>`, found `()`",
+		"use std::io::Result;",
+		"a::b",
+		"call ns::fn(x) then fd::ab and dead::beef",
+		"impl ad::Be for cafe::Dead {}",
+		"crate::fs::read_to_string",
+		"crate::abc1 and Foo::f00d2()",
+		"   Compiling k-brain v0.1.0 (D:\\work)\nerror: could not compile `cc::Build`",
+		"std::vector<int> v; std::cout << v.size();",
+		"Foo :: Bar",
+	} {
+		if masked, changed := RedactText(input); changed || masked != input {
+			t.Errorf("RedactText(%q) = %q, %v; want unchanged", input, masked, changed)
+		}
+		if masked, values := MaskText(input); len(values) != 0 || masked != input {
+			t.Errorf("MaskText(%q) = %q, %v; want unchanged", input, masked, values)
+		}
+	}
+}
+
+func TestIPv6RuleStillFindsAddresses(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{"ip=2001:db8::1", "ip=[REDACTED_IPV6]"},
+		{"[2001:db8::42]:8080", "[[REDACTED_IPV6]]:8080"},
+		{"link fe80::1%eth0 up", "link [REDACTED_IPV6]%eth0 up"},
+		{"loopback ::1.", "loopback [REDACTED_IPV6]."},
+		{"full 2001:0DB8:85A3:0000:0000:8A2E:0370:7334,", "full [REDACTED_IPV6],"},
+		{"地址2001:db8::1。", "地址[REDACTED_IPV6]。"},
+		{"ip_2001:db8::1", "ip_[REDACTED_IPV6]"},
+		{"x2001:db8::1", "x[REDACTED_IPV6]"},
+		{"tag:fe80::1c2d:3e4f", "tag:[REDACTED_IPV6]"},
+		{"src:fe80::1c2d:3e4f", "src:[REDACTED_IPV6]"},
+		{"[IPv6:2001:db8::25]", "[IPv6:[REDACTED_IPV6]]"},
+		{"lo:::1", "lo:[REDACTED_IPV6]"},
+		{"64 bytes from 2001:db8::1: icmp_seq=1", "64 bytes from [REDACTED_IPV6]: icmp_seq=1"},
+	} {
+		if masked, changed := RedactText(tc.input); !changed || masked != tc.want {
+			t.Errorf("RedactText(%q) = %q, %v; want %q", tc.input, masked, changed, tc.want)
+		}
+		if _, values := MaskText(tc.input); len(values) != 1 {
+			t.Errorf("MaskText(%q) values = %v; want one IPv6", tc.input, values)
+		}
+	}
+}
+
 func TestTransportMasksRequestAndRestoresStreamingResponse(t *testing.T) {
 	SetEnabled(true)
 	defer SetEnabled(false)
@@ -222,5 +269,96 @@ func TestReviewerRedactionHasNoRestorableTokens(t *testing.T) {
 	defer tokenMu.Unlock()
 	if len(remembered) != 0 {
 		t.Fatal("irreversible redaction retained secrets")
+	}
+}
+
+func TestRedactTextIgnoresDigitsInsideLongerNumbers(t *testing.T) {
+	for _, input := range []string{
+		"process_id=proc-1793291828607127000",
+		"Continue with ManagedProcess(action=\"wait\", process_id=\"proc-1793291828607127000\", cursor=0).",
+		`log=C:\Users\me\AppData\Local\Temp\proc-1761715200123456789\output.log`,
+		"log=/tmp/k-brain/proc-1700012345678901234.log",
+		"unix_nano=1700012345678901234",
+		"order 201381234567800 total",
+		"id=99913812345678",
+		"seq 1381234567890",
+		"run 2013812345678",
+		"build 9990108765432100",
+	} {
+		if masked, changed := RedactText(input); changed || masked != input {
+			t.Errorf("RedactText(%q) = %q, %v; want unchanged", input, masked, changed)
+		}
+		if masked, values := MaskText(input); len(values) != 0 || masked != input {
+			t.Errorf("MaskText(%q) = %q, %v; want unchanged", input, masked, values)
+		}
+	}
+}
+
+func TestRedactTextKeepsPhoneNumbersAtNonDigitBoundaries(t *testing.T) {
+	for _, tc := range []struct{ input, plain string }{
+		{"13812345678", "13812345678"},
+		{"phone 13812345678.", "13812345678"},
+		{"+86 138 1234 5678", "138 1234 5678"},
+		{"138-1234-5678", "138-1234-5678"},
+		{"手机13812345678，请回电", "13812345678"},
+		{"（13812345678）", "13812345678"},
+		{"tel:+8613812345678;", "13812345678"},
+		{"0086 13812345678", "13812345678"},
+		{"国际拨号 008613812345678", "13812345678"},
+		{"tel:008613812345678;", "13812345678"},
+		{"异地拨打 013812345678", "13812345678"},
+		{"总机 021-62345678转123456", "62345678"},
+		{"021-62345678#123456", "62345678"},
+		{"联系电话：010-87654321。", "87654321"},
+		{"a13812345678b", "13812345678"},
+	} {
+		masked, changed := RedactText(tc.input)
+		if !changed || strings.Contains(masked, tc.plain) {
+			t.Errorf("RedactText(%q) = %q, %v; want %q redacted", tc.input, masked, changed, tc.plain)
+		}
+		masked, values := MaskText(tc.input)
+		if len(values) == 0 || strings.Contains(masked, tc.plain) {
+			t.Errorf("MaskText(%q) = %q; want %q masked", tc.input, masked, tc.plain)
+		}
+	}
+}
+
+// Adjacent numbers, multi-byte neighbours and token restore after masking.
+func TestMaskTextDigitBoundaryEdgesRestore(t *testing.T) {
+	for _, tc := range []struct {
+		input  string
+		plains []string
+	}{
+		{"13812345678,13912345678", []string{"13812345678", "13912345678"}},
+		{"13812345678 13912345678", []string{"13812345678", "13912345678"}},
+		{"13812345678\n13912345678", []string{"13812345678", "13912345678"}},
+		{"13812345678、021-62345678", []string{"13812345678", "62345678"}},
+		{"021-62345678", []string{"62345678"}},
+		{"021-62345678转1234", []string{"62345678"}},
+		{"号13812345678号", []string{"13812345678"}},
+		{"😀13812345678😀", []string{"13812345678"}},
+		{"：13812345678，", []string{"13812345678"}},
+		{"\xff13812345678\xff", []string{"13812345678"}},
+		{"9,13812345678", []string{"13812345678"}},
+		{"1+8613812345678", []string{"13812345678"}},
+		{"0x013812345678", []string{"13812345678"}},
+	} {
+		masked, _ := RedactText(tc.input)
+		mt, values := MaskText(tc.input)
+		for _, p := range tc.plains {
+			if strings.Contains(masked, p) {
+				t.Errorf("RedactText(%q) = %q leaks %q", tc.input, masked, p)
+			}
+			if strings.Contains(mt, p) {
+				t.Errorf("MaskText(%q) = %q leaks %q", tc.input, mt, p)
+			}
+		}
+		restored := mt
+		for token, v := range values {
+			restored = strings.ReplaceAll(restored, token, v)
+		}
+		if restored != tc.input {
+			t.Errorf("MaskText(%q) restore = %q", tc.input, restored)
+		}
 	}
 }

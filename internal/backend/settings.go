@@ -87,16 +87,24 @@ type settingsModel struct {
 	InputModalities []string `json:"inputModalities,omitempty"`
 	Vision          bool     `json:"vision,omitempty"`
 }
+
+// settingsAIApproval is the reviewer setting as read; perRun tells hosts that the permission
+// mode decides when to review (capability ai_review_per_run), so they may hide the setting.
+type settingsAIApproval struct {
+	config.AIApprovalConfig
+	PerRun bool `json:"perRun"`
+}
+
 type settingsProjection struct {
-	AIApproval      config.AIApprovalConfig `json:"aiApproval"`
-	Computer        config.ComputerConfig   `json:"computer"`
-	Memory          settingsMemory          `json:"memory"`
-	Version         string                  `json:"version"`
-	Mode            string                  `json:"mode"`
-	DefaultModel    string                  `json:"defaultModel"`
-	DefaultProvider string                  `json:"defaultProvider"`
-	Providers       []settingsProvider      `json:"providers"`
-	Models          []settingsModel         `json:"models"`
+	AIApproval      settingsAIApproval    `json:"aiApproval"`
+	Computer        config.ComputerConfig `json:"computer"`
+	Memory          settingsMemory        `json:"memory"`
+	Version         string                `json:"version"`
+	Mode            string                `json:"mode"`
+	DefaultModel    string                `json:"defaultModel"`
+	DefaultProvider string                `json:"defaultProvider"`
+	Providers       []settingsProvider    `json:"providers"`
+	Models          []settingsModel       `json:"models"`
 }
 
 // settingsMemory projects the memory master switch with its default resolved.
@@ -179,7 +187,7 @@ func projectSettings(cfg *config.Config) settingsProjection {
 	out := settingsProjection{Version: protocol.Version, Mode: "kbrain", DefaultModel: cfg.DefaultModel, DefaultProvider: cfg.DefaultProvider, Providers: []settingsProvider{}, Models: []settingsModel{}}
 	out.Computer = cfg.Computer
 	out.Memory = settingsMemory{Enabled: cfg.Memory.IsEnabled()}
-	out.AIApproval = cfg.AIApproval
+	out.AIApproval = settingsAIApproval{AIApprovalConfig: cfg.AIApproval, PerRun: true}
 	if out.AIApproval.Mode == "" {
 		out.AIApproval.Mode = "off"
 	}
