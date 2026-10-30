@@ -63,9 +63,26 @@ type Reviewer struct {
 	calls       atomic.Int32
 }
 
-func New(_ context.Context, cfg *config.Config) *Reviewer {
+func New(ctx context.Context, cfg *config.Config) *Reviewer {
+	return NewWithFallback(ctx, cfg, "", "")
+}
+
+// reviewerCandidate is one provider and model the reviewer may route to.
+type reviewerCandidate struct{ provider, model string }
+
+// NewWithFallback reviews with the configured aiApproval provider and model and, when that
+// pair is unset or cannot be routed (a deleted provider or model), with the fallback pair:
+// the session's own model, so auto review works without a separate reviewer setting.
+func NewWithFallback(_ context.Context, cfg *config.Config, provider, model string) *Reviewer {
 	snapshot := cfg.Snapshot()
-	if snapshot.AIApproval.Provider == "" || snapshot.AIApproval.Model == "" {
+	var candidates []reviewerCandidate
+	if snapshot.AIApproval.Provider != "" && snapshot.AIApproval.Model != "" {
+		candidates = append(candidates, reviewerCandidate{snapshot.AIApproval.Provider, snapshot.AIApproval.Model})
+	}
+	if fallback := (reviewerCandidate{provider, model}); provider != "" && model != "" && (len(candidates) == 0 || candidates[0] != fallback) {
+		candidates = append(candidates, fallback)
+	}
+	if len(candidates) == 0 {
 		return &Reviewer{unavailable: true}
 	}
 	var secrets []string
@@ -91,18 +108,22 @@ func New(_ context.Context, cfg *config.Config) *Reviewer {
 		if resolved || routeErr != nil {
 			return route, routeErr
 		}
-		next, err := routing.ResolveRouteContext(ctx, snapshot, snapshot.AIApproval.Model, snapshot.AIApproval.Provider, false)
-		switch {
-		case err == nil:
-			route, resolved = next, true
-		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-			return next, err
-		default:
-			routeErr = routeError{err}
+		var last error
+		for _, candidate := range candidates {
+			next, err := routing.ResolveRouteContext(ctx, snapshot, candidate.model, candidate.provider, false)
+			switch {
+			case err == nil:
+				route, resolved = next, true
+				return route, nil
+			case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+				return next, err
+			}
+			last = err
 		}
+		routeErr = routeError{last}
 		return route, routeErr
 	}
-	return &Reviewer{model: snapshot.AIApproval.Model, secrets: secrets, slots: make(chan struct{}, 2), complete: func(ctx context.Context, req ai.Request) (string, ai.Usage, error) {
+	return &Reviewer{model: candidates[0].model, secrets: secrets, slots: make(chan struct{}, 2), complete: func(ctx context.Context, req ai.Request) (string, ai.Usage, error) {
 		route, err := resolve(ctx)
 		if err != nil {
 			return "", ai.Usage{}, err

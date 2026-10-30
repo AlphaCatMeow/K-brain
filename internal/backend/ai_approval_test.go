@@ -34,7 +34,7 @@ func TestAIApprovalHTTPModesAndDenyPrecedence(t *testing.T) {
 		{"run-auto-review-unknown", "off", `broken`, "auto", "reject", "auto_review", true, false},
 		{"run-always-skips-review", "auto", `broken`, "ask", "reject", "always", false, true},
 		{"run-full-access-keeps-review", "auto", `broken`, "auto", "reject", "full_access", true, false},
-		{"run-review-missing-model", "off", reviewLow, "ask", "reject", "auto_review", true, false},
+		{"run-review-missing-model", "off", reviewLow, "ask", "reject", "auto_review", false, true},
 		{"run-normal-confirms", "off", reviewLow, "auto", "reject", "normal", true, false},
 		{"run-plan-blocks-write", "off", reviewLow, "auto", "reject", "plan", false, false},
 		{"run-auto-edit-writes", "off", reviewLow, "ask", "reject", "auto_edit", false, true},
@@ -83,7 +83,8 @@ func TestAIApprovalHTTPModesAndDenyPrecedence(t *testing.T) {
 			if (string(data) == "changed") != tc.changed {
 				t.Fatalf("unauthorized or missing mutation %q", data)
 			}
-			reviewExpected := tc.name != "run-review-missing-model" && tc.permissionMode != "always" && (tc.mode != "off" || tc.permissionMode == "auto_review")
+			// Without a configured reviewer, auto review falls back to the session's model.
+			reviewExpected := tc.permissionMode != "always" && tc.permissionMode != "normal" && tc.permissionMode != "auto_edit" && (tc.mode != "off" || tc.permissionMode == "auto_review")
 			if !reviewExpected && reviewCalls.Load() != 0 {
 				t.Fatal("off contacted reviewer")
 			}
@@ -109,7 +110,7 @@ func TestAIApprovalSettingsValidationAndProjection(t *testing.T) {
 		if err := applySettings(cfg, settingsUpdate{AIApproval: &c}); err != nil {
 			t.Fatal(err)
 		}
-		if projectSettings(cfg).AIApproval != c {
+		if projectSettings(cfg).AIApproval.AIApprovalConfig != c {
 			t.Fatal("lost review settings")
 		}
 	}
