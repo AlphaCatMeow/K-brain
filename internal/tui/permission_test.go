@@ -280,3 +280,54 @@ func TestReviewPromptOffersCommandRule(t *testing.T) {
 		t.Fatalf("prompt:\n%s", got)
 	}
 }
+
+// Remembering an edit stores a path inside this project, so it must not apply to the
+// same relative path in other projects; command rules still apply everywhere.
+func TestEditRuleIsRememberedForThisProjectOnly(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	projectA, projectB := t.TempDir(), t.TempDir()
+	root := projectA
+	old := currentRoot
+	currentRoot = func() (string, error) { return root, nil }
+	t.Cleanup(func() { currentRoot = old })
+
+	m := compactCmdModel()
+	m.installPermGate()
+	for _, req := range []tools.GateRequest{
+		{Tool: "edit", Command: filepath.Join(projectA, "sub", "main.go")},
+		{Tool: "bash", Command: "go version", Shell: "pwsh"},
+	} {
+		reply := make(chan permAnswer, 1)
+		m.permDialog = &permDialog{req: req, reply: reply}
+		m.permKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+		if ans := <-reply; ans.decision != tools.GateAllowAlways {
+			t.Fatalf("%s: A should remember, got %v", req.Tool, ans.decision)
+		}
+	}
+
+	editA := tools.GateRequest{Tool: "edit", Command: filepath.Join(projectA, "sub", "other.go")}
+	if m.perms.decide(editA, false).Effect != permissions.Allow {
+		t.Fatal("the edit rule covers its own project")
+	}
+	user, _ := permissions.LoadUserRules()
+	for _, r := range user.Rules {
+		if r.Rule == "Edit(sub/**)" {
+			t.Fatal("an edit rule must not be stored for every project")
+		}
+	}
+
+	root = projectB
+	fresh := loadPermRules()
+	editB := tools.GateRequest{Tool: "edit", Command: filepath.Join(projectB, "sub", "main.go")}
+	if fresh.decide(editB, false).Effect != "" || m.perms.decide(editB, false).Effect != "" {
+		t.Fatal("an edit rule from project A must not cover project B")
+	}
+	if fresh.decide(tools.GateRequest{Tool: "bash", Command: "go version", Shell: "pwsh"}, false).Effect != permissions.Allow {
+		t.Fatal("command rules apply in every project")
+	}
+	root = projectA
+	reloaded := loadPermRules()
+	if reloaded.decide(editA, false).Effect != permissions.Allow {
+		t.Fatal("the project rule persists for project A")
+	}
+}

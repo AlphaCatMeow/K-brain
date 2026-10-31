@@ -206,6 +206,22 @@ func (r Rule) matchesOther(command string) bool {
 	return command == r.Pattern
 }
 
+var drivePath = regexp.MustCompile(`^[A-Za-z]:/`)
+
+// DefaultScope is where "allow and remember" stores a rule. A relative path rule such
+// as Edit(sub/**) names a folder of the project it was approved in, so it stays with
+// that project; command, tool and absolute path rules apply in every project.
+func DefaultScope(text string) Scope {
+	r, err := ParseRule(text)
+	if err != nil || kindOfTool(r.Tool) != kindPath || r.Pattern == "" {
+		return ScopeUser
+	}
+	if strings.HasPrefix(r.Pattern, "/") || drivePath.MatchString(r.Pattern) {
+		return ScopeUser
+	}
+	return ScopeProject
+}
+
 // slashPath turns Windows separators into slashes but keeps a backslash that escapes
 // a glob character, as Suggest writes for paths such as Next.js `[id]` routes.
 func slashPath(p string) string {

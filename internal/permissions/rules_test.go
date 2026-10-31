@@ -395,3 +395,20 @@ func TestCommandPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultScope(t *testing.T) {
+	for rule, want := range map[string]Scope{
+		"Edit(sub/**)":        ScopeProject,
+		"Edit(a.go)":          ScopeProject,
+		"Edit(/tmp/a.txt)":    ScopeUser,
+		"Edit(C:/work/a.txt)": ScopeUser,
+		"Bash(go version:*)":  ScopeUser,
+		"mcp__x__y":           ScopeUser,
+		"Edit":                ScopeUser,
+		"not a rule(":         ScopeUser,
+	} {
+		if got := DefaultScope(rule); got != want {
+			t.Errorf("DefaultScope(%q) = %q, want %q", rule, got, want)
+		}
+	}
+}

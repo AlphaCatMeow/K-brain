@@ -31,11 +31,13 @@ type permDialog struct {
 	rejectIn  string
 }
 
-// permRules holds the user-scope rules shared with the backend. Rules are matched
-// by the permissions engine, which requires every segment of a compound command to
-// be covered.
+// permRules holds the remembered rules shared with the backend: user-scope rules,
+// and project-scope rules loaded per project root as the TUI moves between folders.
+// Rules are matched by the permissions engine, which requires every segment of a
+// compound command to be covered.
 type permRules struct {
-	user permissions.RuleSet
+	user     permissions.RuleSet
+	projects map[string]permissions.RuleSet
 	// saveErr is the last failure to write a remembered rule; the rule still
 	// applies for this session and the next dialog says it was not saved.
 	saveErr string
@@ -43,7 +45,7 @@ type permRules struct {
 
 func loadPermRules() permRules {
 	set, _ := permissions.LoadUserRules()
-	return permRules{user: set}
+	return permRules{user: set, projects: map[string]permissions.RuleSet{}}
 }
 
 func permOptions(readOnly bool) permissions.Options {
@@ -55,35 +57,70 @@ func permRequestOf(req tools.GateRequest) permissions.Request {
 	return permissions.Request{Tool: req.Tool, Command: req.Command, Shell: req.Shell}
 }
 
-func (r permRules) decide(req tools.GateRequest, readOnly bool) permissions.Decision {
-	return permissions.Evaluate(permRequestOf(req), permOptions(readOnly), r.user)
+// project returns the project-scope rules for root, reading them on first use.
+func (r *permRules) project(root string) permissions.RuleSet {
+	if r.projects == nil {
+		r.projects = map[string]permissions.RuleSet{}
+	}
+	if set, ok := r.projects[root]; ok {
+		return set
+	}
+	set := permissions.RuleSet{Scope: permissions.ScopeProject}
+	if path, err := permissions.ProjectRulesPath(root); err == nil {
+		if loaded, err := permissions.LoadRuleSet(path, permissions.ScopeProject); err == nil {
+			set = loaded
+		}
+	}
+	r.projects[root] = set
+	return set
 }
 
-func (r permRules) suggestions(req tools.GateRequest) []string {
+func (r *permRules) decide(req tools.GateRequest, readOnly bool) permissions.Decision {
+	opts := permOptions(readOnly)
+	return permissions.Evaluate(permRequestOf(req), opts, r.user, r.project(opts.ProjectRoot))
+}
+
+func (r *permRules) suggestions(req tools.GateRequest) []string {
 	return permissions.Suggest(permRequestOf(req), permOptions(false))
 }
 
 // remember stores the suggested rules for req and reports whether there were any.
+// Relative path rules go to the current project, the rest to the user scope.
 func (r *permRules) remember(req tools.GateRequest) bool {
 	rules := r.suggestions(req)
 	if len(rules) == 0 {
 		return false
 	}
-	path, err := permissions.UserRulesPath()
+	root := permOptions(false).ProjectRoot
 	r.saveErr = ""
 	for _, rule := range rules {
 		stored := permissions.StoredRule{Rule: rule, Effect: permissions.Allow}
+		project := permissions.DefaultScope(rule) == permissions.ScopeProject
+		var path, projectRoot string
+		var err error
+		if project {
+			projectRoot = root
+			path, err = permissions.ProjectRulesPath(root)
+		} else {
+			path, err = permissions.UserRulesPath()
+		}
 		if err == nil {
 			var saved permissions.StoredRule
-			if saved, err = permissions.AddRule(path, "", stored); err == nil {
+			if saved, err = permissions.AddRule(path, projectRoot, stored); err == nil {
 				stored = saved
 			}
 		}
 		if err != nil {
 			r.saveErr = err.Error()
 		}
-		r.user.Scope = permissions.ScopeUser
-		r.user.Rules = append(r.user.Rules, stored)
+		if project {
+			set := r.project(root)
+			set.Rules = append(set.Rules, stored)
+			r.projects[root] = set
+		} else {
+			r.user.Scope = permissions.ScopeUser
+			r.user.Rules = append(r.user.Rules, stored)
+		}
 	}
 	return true
 }
