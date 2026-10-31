@@ -63,10 +63,20 @@ These loopback URLs are placeholders for local fake servers, not functioning ser
 
 | Adapter | Request | Authentication | Advertised operations |
 | --- | --- | --- | --- |
-| `openai-images` | JSON `POST <base>/images/generations`; multipart `POST <base>/images/edits` with ordered `image[]` files and optional PNG `mask` | `Authorization: Bearer <provider key>` | Generate, reference, edit and mask; up to 16 inputs including mask, one output per request; implemented size/quality/output format/background/compression schema |
+| `openai-images` | JSON `POST <base>/images/generations`; multipart `POST <base>/images/edits` with ordered `image[]` files and optional PNG `mask` | `Authorization: Bearer <provider key>` | Generate, reference, edit and mask; up to 16 inputs including mask, one output per request; implemented size (GPT Image 2/2.5: `aspectRatio` + `imageSize`)/quality/output format/background/compression schema |
 | `google-generate-content-image` | `POST <base>/models/<model>:generateContent`, contents/inlineData and TEXT+IMAGE response modalities | `x-goog-api-key: <provider key>` | Generate, reference, semantic edit; up to 14 ordered inputs, one request count; `aspectRatio` and model-specific `imageSize`; no mask |
 
 Google parameter keys are `aspectRatio` and `imageSize`; requests map them to `generationConfig.imageConfig` using the same camelCase names. Common aspect ratios are `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, `21:9`. Gemini 2.5 exposes aspect ratio only. Gemini 3 Pro Image and Nano Banana 2.1 expose `1K`, `2K`, `4K`; Gemini 3.1 Flash Image additionally exposes `512`. Unknown explicit Google aliases expose aspect ratio only because their resolution capability is not known. Invalid or model-incompatible values fail before HTTP. Schemas come from each target's `parameters`, so the generic frontend parameter form needs no protocol-specific wiring.
+
+OpenAI size schemas depend on the model:
+
+- GPT Image 1, 1-mini and 1.5, and unrecognized aliases, keep the `size` enum `1024x1024` / `1536x1024` / `1024x1536`.
+- GPT Image 2 and 2.5 (`gpt-image-2`, `gpt-image-2.5`, `-flare`, `-sunburst` and their dated snapshots) expose `aspectRatio` (`1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`) and `imageSize` (`1K`, `2K`, `4K`). The request sends one `size`: the largest exact-ratio `WxH` with edges divisible by 16, at most 3840 px per edge, and an area within the tier budget. The budgets are 1024x1024, 2560x1440 (OpenAI's reliable upper bound) and 3840x2160 (the maximum; above 2560x1440 is experimental). Example sizes are 16:9 → `1280x720` / `2560x1440` / `3840x2160` and 1:1 → `1024x1024` / `1920x1920` / `2880x2880`.
+- A ratio alone uses 1K, and a tier alone is square. With neither, `size` is omitted and the provider default applies.
+- Configured (standalone) targets keep their persisted `size` schema. For these models the adapter accepts any `WxH` that meets OpenAI's rules: edges divisible by 16, long edge at most 3840 px and at most 3× the short edge, and 655,360–8,294,400 pixels.
+- A provider job queued before this schema change was accepted against the old target snapshot. Like any other provider target change, it fails with `IMAGE_REVISION_CONFLICT` before sending and has to be submitted again.
+- GPT Image 2.5 adds `xhigh` and `max` to `quality`.
+- An OpenAI-compatible proxy may not pass custom sizes through. That is the proxy's own limit.
 
 Both reuse provider secret resolution, proxy preference and the adapter's existing restricted custom-header contract. No credential, endpoint, header value or resolved execution connection is exposed by the target response or durable job snapshot. Queued/recovered executions and credential use are checked against current configuration; a changed/removed binding fails before sending rather than silently changing a queued job's target.
 
