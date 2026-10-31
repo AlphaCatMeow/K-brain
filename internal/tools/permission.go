@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 )
 
 func Authorize(ctx context.Context, tool, command string) error {
@@ -22,9 +24,12 @@ const (
 )
 
 type GateRequest struct {
-	Context     context.Context
-	Tool        string
-	Command     string
+	Context context.Context
+	Tool    string
+	Command string
+	// Shell is the resolved shell that will run Command, for tools that run one;
+	// empty when unknown, which permission rules parse strictly.
+	Shell       string
 	Rule        string
 	Description string
 }
@@ -39,17 +44,6 @@ type contextGate struct {
 
 func WithGate(ctx context.Context, gate func(GateRequest) (GateDecision, string)) context.Context {
 	return context.WithValue(ctx, gateContextKey{}, contextGate{check: gate})
-}
-
-var arity = map[string]int{
-
-	"ls": 1, "cat": 1, "pwd": 1, "grep": 1, "find": 1, "echo": 1,
-	"rm": 1, "mv": 1, "cp": 1, "mkdir": 1, "touch": 1, "which": 1,
-
-	"git": 2, "npm": 2, "pnpm": 2, "yarn": 2, "go": 2, "cargo": 2,
-	"docker": 2, "kubectl": 2, "brew": 2, "apt": 2, "pip": 2,
-
-	"npm run": 3, "pnpm run": 3, "go tool": 3, "docker compose": 3, "git submodule": 3,
 }
 
 func CommandRule(command string) string {
@@ -69,20 +63,15 @@ func CommandRule(command string) string {
 			i = -1
 		}
 	}
-	if len(tokens) == 0 {
-		return ""
-	}
-
-	for n := len(tokens); n > 0; n-- {
-		prefix := strings.Join(tokens[:n], " ")
-		if a, ok := arity[prefix]; ok {
-			return strings.Join(tokens[:min(a, len(tokens))], " ")
-		}
-	}
-	return tokens[0]
+	return strings.Join(permissions.CommandPrefix(tokens), " ")
 }
 
 func checkGate(ctx context.Context, tool, command string) string {
+	return checkShellGate(ctx, tool, command, "")
+}
+
+// checkShellGate is checkGate for a command that shell will run.
+func checkShellGate(ctx context.Context, tool, command, shell string) string {
 	var gate func(GateRequest) (GateDecision, string)
 	if scoped, ok := ctx.Value(gateContextKey{}).(contextGate); ok {
 		gate = scoped.check
@@ -92,7 +81,7 @@ func checkGate(ctx context.Context, tool, command string) string {
 	if gate == nil {
 		return ""
 	}
-	decision, redirect := gate(GateRequest{Context: ctx, Tool: tool, Command: command, Rule: CommandRule(command)})
+	decision, redirect := gate(GateRequest{Context: ctx, Tool: tool, Command: command, Shell: shell, Rule: CommandRule(command)})
 	if decision == GateReject {
 		if redirect == "" {
 			redirect = "the user rejected this action"

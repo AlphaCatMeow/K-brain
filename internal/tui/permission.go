@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/Stack-Cairn/K-brain/internal/config"
 	"github.com/Stack-Cairn/K-brain/internal/permissions"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
@@ -32,35 +31,61 @@ type permDialog struct {
 	rejectIn  string
 }
 
-type permRules map[string]bool
+// permRules holds the user-scope rules shared with the backend. Rules are matched
+// by the permissions engine, which requires every segment of a compound command to
+// be covered.
+type permRules struct {
+	user permissions.RuleSet
+	// saveErr is the last failure to write a remembered rule; the rule still
+	// applies for this session and the next dialog says it was not saved.
+	saveErr string
+}
 
 func loadPermRules() permRules {
-	out := permRules{}
-	var list []string
-	if err := config.ReadJSON("permissions.json", &list); err == nil {
-		for _, r := range list {
-			out[r] = true
+	set, _ := permissions.LoadUserRules()
+	return permRules{user: set}
+}
+
+func permOptions(readOnly bool) permissions.Options {
+	root, _ := currentRoot()
+	return permissions.Options{ProjectRoot: root, AllowReadOnly: readOnly}
+}
+
+func permRequestOf(req tools.GateRequest) permissions.Request {
+	return permissions.Request{Tool: req.Tool, Command: req.Command, Shell: req.Shell}
+}
+
+func (r permRules) decide(req tools.GateRequest, readOnly bool) permissions.Decision {
+	return permissions.Evaluate(permRequestOf(req), permOptions(readOnly), r.user)
+}
+
+func (r permRules) suggestions(req tools.GateRequest) []string {
+	return permissions.Suggest(permRequestOf(req), permOptions(false))
+}
+
+// remember stores the suggested rules for req and reports whether there were any.
+func (r *permRules) remember(req tools.GateRequest) bool {
+	rules := r.suggestions(req)
+	if len(rules) == 0 {
+		return false
+	}
+	path, err := permissions.UserRulesPath()
+	r.saveErr = ""
+	for _, rule := range rules {
+		stored := permissions.StoredRule{Rule: rule, Effect: permissions.Allow}
+		if err == nil {
+			var saved permissions.StoredRule
+			if saved, err = permissions.AddRule(path, "", stored); err == nil {
+				stored = saved
+			}
 		}
+		if err != nil {
+			r.saveErr = err.Error()
+		}
+		r.user.Scope = permissions.ScopeUser
+		r.user.Rules = append(r.user.Rules, stored)
 	}
-	return out
-}
-
-func (r permRules) save() {
-	list := make([]string, 0, len(r))
-	for k := range r {
-		list = append(list, k)
-	}
-	_ = config.WriteJSON("permissions.json", list)
-}
-
-func ruleKey(tool, rule string) string { return tool + ":" + rule }
-
-func (r permRules) coveredBy(req tools.GateRequest) bool {
-	rule := req.Rule
-	if req.Tool != "bash" {
-		rule = req.Command
-	}
-	return r[ruleKey(req.Tool, rule)]
+	return true
 }
 
 func (m *model) installPermGate() {
@@ -111,11 +136,20 @@ func (m *model) receivePermission(msg permRequest) {
 		name, _ := msg.req.Context.Value(approval.ReviewedActionKey{}).(string)
 		alreadyApproved = name == msg.req.Tool
 	}
+	// A review report means the reviewer wants a say, so read-only commands are not
+	// waved through on their own; remembered rules still apply as before.
+	decision := m.perms.decide(msg.req, !reviewed)
 	switch {
 	case msg.req.Context != nil && msg.req.Context.Err() != nil:
 		msg.reply <- permAnswer{tools.GateReject, "cancelled"}
 	case m.permissionMode == "plan":
 		msg.reply <- permAnswer{tools.GateReject, "Plan mode only allows read-only inspection"}
+	case decision.Effect == permissions.Deny:
+		msg.reply <- permAnswer{tools.GateReject, "denied by permission rule " + decision.Rule}
+	case decision.Effect == permissions.Ask:
+		// The command cannot be checked against the deny rules, so even an
+		// allowing mode asks.
+		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
 	case m.permissionMode == "always":
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	case alreadyApproved || (auto && reviewed && report.Safe()):
@@ -124,7 +158,7 @@ func (m *model) receivePermission(msg permRequest) {
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
 	case m.permissionMode == "auto_review":
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
-	case m.permissionMode == "full_access" || (m.permissionMode == "auto_edit" && permissions.IsEdit(msg.req.Tool)) || m.perms.coveredBy(msg.req):
+	case m.permissionMode == "full_access" || (m.permissionMode == "auto_edit" && permissions.IsEdit(msg.req.Tool)) || decision.Effect == permissions.Allow:
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	default:
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
@@ -165,13 +199,7 @@ func (m *model) permKey(msg tea.KeyMsg) bool {
 		case 0:
 			answer(permAnswer{decision: tools.GateAllowOnce})
 		case 1:
-			rule := d.req.Rule
-			if d.req.Tool != "bash" {
-				rule = d.req.Command
-			}
-			m.perms[ruleKey(d.req.Tool, rule)] = true
-			m.perms.save()
-			answer(permAnswer{decision: tools.GateAllowAlways})
+			answer(m.allowAlways(d.req))
 		case 2:
 			d.rejecting = true
 		}
@@ -180,13 +208,7 @@ func (m *model) permKey(msg tea.KeyMsg) bool {
 		case "a":
 			answer(permAnswer{decision: tools.GateAllowOnce})
 		case "A":
-			rule := d.req.Rule
-			if d.req.Tool != "bash" {
-				rule = d.req.Command
-			}
-			m.perms[ruleKey(d.req.Tool, rule)] = true
-			m.perms.save()
-			answer(permAnswer{decision: tools.GateAllowAlways})
+			answer(m.allowAlways(d.req))
 		case "r":
 			d.rejecting = true
 		}
@@ -194,6 +216,15 @@ func (m *model) permKey(msg tea.KeyMsg) bool {
 		answer(permAnswer{tools.GateReject, "rejected without a reason"})
 	}
 	return true
+}
+
+// allowAlways remembers the request's suggested rules. Actions that cannot be
+// remembered, such as deletions, are allowed once.
+func (m *model) allowAlways(req tools.GateRequest) permAnswer {
+	if m.perms.remember(req) {
+		return permAnswer{decision: tools.GateAllowAlways}
+	}
+	return permAnswer{decision: tools.GateAllowOnce}
 }
 
 func (m *model) permView() string {
@@ -211,11 +242,14 @@ func (m *model) permView() string {
 	if d.req.Description != "" {
 		b.WriteString("\n" + wrap(d.req.Description, max(20, m.width-4)))
 	}
-	rule := d.req.Rule
-	if d.req.Tool != "bash" {
-		rule = d.req.Command
+	if m.perms.saveErr != "" {
+		b.WriteString(youStyle.Render("\n  ⚠ a remembered rule was not saved: " + m.perms.saveErr))
 	}
-	b.WriteString(dimStyle.Render("\n  always allows: " + ruleKey(d.req.Tool, rule)))
+	if rules := m.perms.suggestions(d.req); len(rules) > 0 {
+		b.WriteString(dimStyle.Render("\n  always allows: " + strings.Join(rules, ", ")))
+	} else {
+		b.WriteString(dimStyle.Render("\n  always allow is not available for this action; it allows once"))
+	}
 	if d.rejecting {
 		b.WriteString("\n" + youStyle.Render("  reject with message: ") + d.rejectIn + "█")
 		b.WriteString(dimStyle.Render("\n  Enter sends · Esc Back"))

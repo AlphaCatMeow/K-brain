@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stack-Cairn/K-brain/internal/approval"
 	"github.com/Stack-Cairn/K-brain/internal/config"
+	"github.com/Stack-Cairn/K-brain/internal/permissions"
 	"github.com/Stack-Cairn/K-brain/internal/tools"
 )
 
@@ -37,16 +38,16 @@ func TestCommandRuleArity(t *testing.T) {
 func TestPermissionGateFlow(t *testing.T) {
 	t.Setenv("K_BRAIN_HOME", t.TempDir())
 	m := compactCmdModel()
-	m.perms = permRules{}
+	m.installPermGate()
 
 	req := tools.GateRequest{Tool: "bash", Command: "git checkout main", Rule: "git checkout"}
-	if m.perms.coveredBy(req) {
+	if m.perms.decide(req, false).Effect != "" {
 		t.Fatal("no rules yet — should not be covered")
 	}
 
 	reply := make(chan permAnswer, 1)
 	m.permDialog = &permDialog{req: req, reply: reply}
-	if got := m.permView(); !strings.Contains(got, "always allows: bash:git checkout") {
+	if got := m.permView(); !strings.Contains(got, "always allows: Bash(git checkout:*)") {
 		t.Fatalf("the dialog previews the rule it installs:\n%s", got)
 	}
 	m.permKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
@@ -58,19 +59,62 @@ func TestPermissionGateFlow(t *testing.T) {
 		t.Fatal("the dialog should close on an answer")
 	}
 
-	if !m.perms.coveredBy(tools.GateRequest{Tool: "bash", Command: "git checkout other-branch", Rule: "git checkout"}) {
+	other := tools.GateRequest{Tool: "bash", Command: "git checkout other-branch", Rule: "git checkout"}
+	if m.perms.decide(other, false).Effect != permissions.Allow {
 		t.Fatal("allow-always on 'git checkout' should cover other branches")
 	}
 
-	if reloaded := loadPermRules(); !reloaded[ruleKey("bash", "git checkout")] {
-		t.Fatal("the rule should persist to permissions.json")
+	if reloaded := loadPermRules(); permissions.Evaluate(permissions.Request{Tool: "bash", Command: "git checkout x"}, permissions.Options{}, reloaded.user).Effect != permissions.Allow {
+		t.Fatal("the rule should persist to the shared rules file")
 	}
-	if _, err := os.Stat(filepath.Join(configDir(t), "permissions.json")); err != nil {
-		t.Fatal("permissions.json should exist")
+	if _, err := os.Stat(filepath.Join(configDir(t), "permission-rules.json")); err != nil {
+		t.Fatal("permission-rules.json should exist")
 	}
 
-	if m.perms.coveredBy(tools.GateRequest{Tool: "bash", Command: "rm -rf build", Rule: "rm"}) {
+	if m.perms.decide(tools.GateRequest{Tool: "bash", Command: "rm -rf build", Rule: "rm"}, false).Effect != "" {
 		t.Fatal("an unrelated command must still prompt")
+	}
+}
+
+func TestAllowAlwaysOnDestructiveCommandAllowsOnce(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := compactCmdModel()
+	m.installPermGate()
+	req := tools.GateRequest{Tool: "bash", Command: "rm -rf build", Rule: "rm"}
+	reply := make(chan permAnswer, 1)
+	m.permDialog = &permDialog{req: req, reply: reply}
+	if got := m.permView(); !strings.Contains(got, "always allow is not available") {
+		t.Fatalf("the dialog says removals are not remembered:\n%s", got)
+	}
+	m.permKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	if ans := <-reply; ans.decision != tools.GateAllowOnce {
+		t.Fatalf("A on a removal allows once, got %v", ans.decision)
+	}
+	if m.perms.decide(req, false).Effect != "" {
+		t.Fatal("a removal must not be remembered")
+	}
+}
+
+func TestReadOnlyCommandSkipsPrompt(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := &model{permissionMode: "normal"}
+	reply := make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: t.Context(), Tool: "bash", Command: "git status", Shell: "bash"}, reply: reply})
+	if m.permDialog != nil {
+		t.Fatal("a read-only command runs without a prompt")
+	}
+	if ans := <-reply; ans.decision != tools.GateAllowOnce {
+		t.Fatalf("decision=%v", ans.decision)
+	}
+}
+
+func TestDenyRuleRejectsEvenInAlwaysMode(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := &model{permissionMode: "always", perms: permRules{user: permissions.RuleSet{Scope: permissions.ScopeUser, Rules: []permissions.StoredRule{{Rule: "Bash(git push:*)", Effect: permissions.Deny}}}}}
+	reply := make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: t.Context(), Tool: "bash", Command: "git push origin main"}, reply: reply})
+	if ans := <-reply; ans.decision != tools.GateReject || !strings.Contains(ans.redirect, "Bash(git push:*)") {
+		t.Fatalf("deny rule: %+v", ans)
 	}
 }
 
@@ -178,5 +222,23 @@ func TestPermissionModeDecisions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Regression: remembering `git checkout` must not cover a compound command whose
+// later segments were never approved.
+func TestRememberedRuleDoesNotCoverCompoundCommand(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := compactCmdModel()
+	m.installPermGate()
+	reply := make(chan permAnswer, 1)
+	m.permDialog = &permDialog{req: tools.GateRequest{Tool: "bash", Command: "git checkout main", Rule: "git checkout"}, reply: reply}
+	m.permKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A")})
+	<-reply
+
+	reply = make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: t.Context(), Tool: "bash", Command: "git checkout x && rm -rf ~", Rule: "git checkout"}, reply: reply})
+	if m.permDialog == nil {
+		t.Fatal("a compound command with an unapproved segment must prompt")
 	}
 }
