@@ -242,3 +242,41 @@ func TestRememberedRuleDoesNotCoverCompoundCommand(t *testing.T) {
 		t.Fatal("a compound command with an unapproved segment must prompt")
 	}
 }
+
+// A call the review gate already sent to the user is not asked about again by the
+// tool's own gate, even when deny rules make an unsplittable command ask.
+func TestReviewedCallIsNotAskedTwice(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := &model{permissionMode: "normal", perms: permRules{user: permissions.RuleSet{Scope: permissions.ScopeUser, Rules: []permissions.StoredRule{{Rule: "Bash(git push:*)", Effect: permissions.Deny}}}}}
+	ctx := context.WithValue(t.Context(), approval.ReviewedActionKey{}, "bash")
+	reply := make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: ctx, Tool: "bash", Command: "make > build.log", Shell: "pwsh"}, reply: reply})
+	if m.permDialog != nil {
+		t.Fatal("the user already approved this call at the review gate")
+	}
+	if ans := <-reply; ans.decision != tools.GateAllowOnce {
+		t.Fatalf("decision=%v", ans.decision)
+	}
+	// A deny rule still wins over an earlier approval.
+	reply = make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: ctx, Tool: "bash", Command: "git push > log", Shell: "pwsh"}, reply: reply})
+	if ans := <-reply; ans.decision != tools.GateReject {
+		t.Fatalf("deny after review approval: %v", ans.decision)
+	}
+}
+
+// The prompt raised from the review gate shows the command and offers its rule.
+func TestReviewPromptOffersCommandRule(t *testing.T) {
+	t.Setenv("K_BRAIN_HOME", t.TempDir())
+	m := &model{permissionMode: "normal", cfg: &config.Config{AIApproval: config.AIApprovalConfig{Mode: "auto"}}}
+	report := approval.Report{Risk: "medium", Sandbox: "low", SensitiveData: "low", ModelBehavior: "low", Injection: "low", Reason: "check"}
+	ctx := context.WithValue(t.Context(), approval.ActionReportKey{}, report)
+	reply := make(chan permAnswer, 1)
+	m.receivePermission(permRequest{req: tools.GateRequest{Context: ctx, Tool: "bash", Command: "go version", Shell: "pwsh"}, reply: reply})
+	if m.permDialog == nil {
+		t.Fatal("a medium-risk review asks the user")
+	}
+	if got := m.permView(); !strings.Contains(got, "always allows: Bash(go version:*)") {
+		t.Fatalf("prompt:\n%s", got)
+	}
+}

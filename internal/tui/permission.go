@@ -146,13 +146,16 @@ func (m *model) receivePermission(msg permRequest) {
 		msg.reply <- permAnswer{tools.GateReject, "Plan mode only allows read-only inspection"}
 	case decision.Effect == permissions.Deny:
 		msg.reply <- permAnswer{tools.GateReject, "denied by permission rule " + decision.Rule}
+	case alreadyApproved:
+		// The review gate already decided this call, asking the user when needed.
+		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	case decision.Effect == permissions.Ask:
 		// The command cannot be checked against the deny rules, so even an
 		// allowing mode asks.
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}
 	case m.permissionMode == "always":
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
-	case alreadyApproved || (auto && reviewed && report.Safe()):
+	case auto && reviewed && report.Safe():
 		msg.reply <- permAnswer{decision: tools.GateAllowOnce}
 	case auto && reviewed && !report.Safe():
 		m.permDialog = &permDialog{req: msg.req, reply: msg.reply}

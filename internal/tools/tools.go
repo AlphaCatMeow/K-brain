@@ -207,7 +207,7 @@ func bashTool() Tool {
 			if a.Timeout <= 0 {
 				a.Timeout = 120
 			}
-			if deny := checkShellGate(ctx, "bash", a.Command, bashrun.ResolveShell(bashrun.WithShell(ctx, a.Shell), "")); deny != "" {
+			if deny := checkShellGate(ctx, "bash", a.Command, bashShell(ctx, a.Shell)); deny != "" {
 				return "", errors.New(deny)
 			}
 			if a.Interactive && runtime.GOOS == "windows" {
